@@ -1,0 +1,62 @@
+# Rust build and coverage output
+/target/
+**/*.rs.bk
+*.profraw
+lcov.info
+
+# Cargo credentials are local secrets. Cargo.lock is intentionally tracked.
+.cargo/credentials
+.cargo/credentials.toml
+
+# Bun, frontend, and browser-test output
+node_modules/
+.bun/
+dist/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local.toml
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Runtime state and generated evidence
+*.log
+logs/
+*.pid
+*.sock
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+/target-evidence/
+
+# Temporary files and caches
+.cache/
+tmp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.fleet/
+.DS_Store
+Thumbs.db
