@@ -1,0 +1,20 @@
+[package]
+name = "guard-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "guard_control"
+
+[[bin]]
+name = "vps-guard-control"
+path = "src/main.rs"
+
+[dependencies]
+guard-agent = { path = "../guard-agent", version = "0.1.0" }
+guard-core = { path = "../guard-core", version = "0.1.0" }
+
+[lints]
+workspace = true

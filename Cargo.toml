@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/guard-agent",
+    "crates/guard-cli",
+    "crates/guard-control",
+    "crates/guard-core",
+    "crates/guard-edge",
+    "crates/guard-profiles",
+    "crates/guard-provider",
+    "crates/guard-system",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.0"
+authors = ["VPSGuard Contributors"]
+repository = "https://github.com/jiwonpapa/vpsguard"
+publish = false
+
+[workspace.dependencies]
+ipnet = "2.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
