@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>VPSGuard 운영 콘솔</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">VG</span><strong>VPSGuard</strong><span class="edition">MVP</span></div>
+      <div class="top-status"><span class="pulse" aria-hidden="true"></span><span id="connection">연결 확인 중</span><time id="updated">—</time></div>
+      <button class="theme-button" id="theme" type="button" aria-label="테마 전환">◐</button>
+    </header>
+    <div class="shell">
+      <nav class="rail" aria-label="주요 메뉴">
+        <a class="active" href="#overview">개요</a><a href="#traffic">실시간</a><a href="#resources">자원</a><a href="#policy">정책</a>
+      </nav>
+      <main>
+        <section class="overview" id="overview">
+          <div class="mode-block"><span class="eyebrow">현재 방어 상태</span><h1 id="mode">—</h1><p id="reason">상태를 읽고 있습니다.</p></div>
+          <div class="actions"><button id="hold" type="button">자동 대응 중지</button><button id="resume" class="quiet" type="button">자동 대응 재개</button></div>
+        </section>
+        <section class="service-strip" aria-label="서비스 상태">
+          <div><span>EDGE</span><b id="edge">—</b></div><div><span>ORIGIN</span><b id="origin">—</b></div><div><span>AGENT</span><b id="agent">—</b></div><div><span>PROVIDER</span><b id="provider">—</b></div><div><span>TLS</span><b id="tls">—</b></div>
+        </section>
+        <section id="traffic" class="workspace">
+          <div class="section-head"><div><span class="eyebrow">실시간 집계</span><h2>요청 흐름</h2></div><span class="freshness" id="freshness">5초 갱신</span></div>
+          <div class="metrics">
+            <article><span>수집 요청</span><strong id="requests">0</strong><small>현재 control lifetime</small></article>
+            <article><span>p95 지연</span><strong id="latency">0 ms</strong><small>최근 2,048 요청</small></article>
+            <article><span>외부 client</span><strong id="clients">0</strong><small>bounded cardinality</small></article>
+            <article class="alert-metric"><span>제한 / 거부</span><strong id="blocked">0</strong><small>upstream 미전달</small></article>
+          </div>
+          <div class="status-line" aria-label="응답 상태 분포"><span class="s2" id="s2" style="--value:0">2xx 0</span><span class="s3" id="s3" style="--value:0">3xx 0</span><span class="s4" id="s4" style="--value:0">4xx 0</span><span class="s5" id="s5" style="--value:0">5xx 0</span></div>
+        </section>
+        <section id="resources" class="resource-grid">
+          <div class="section-head"><div><span class="eyebrow">서버 압력</span><h2>OS 자원</h2></div><span id="resource-state" class="freshness">—</span></div>
+          <dl><div><dt>Load 1m</dt><dd id="load">—</dd></div><div><dt>메모리 사용</dt><dd id="memory">—</dd></div><div><dt>Swap 사용</dt><dd id="swap">—</dd></div><div><dt>Uptime</dt><dd id="uptime">—</dd></div></dl>
+        </section>
+      </main>
+      <aside class="context" id="policy"><span class="eyebrow">운영 문맥</span><h2>안전 기본값</h2><ul><li>UI는 loopback 전용입니다.</li><li>Edge 요청은 control 장애와 독립적입니다.</li><li>원본 IP·query 값은 화면에 표시하지 않습니다.</li><li>외부 provider는 현재 미설정입니다.</li></ul><div class="policy-version">POLICY <b id="policy-version">v0</b></div></aside>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

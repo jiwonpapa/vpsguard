@@ -1,0 +1,9 @@
+{
+  "name": "vpsguard-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build app.js --outdir dist --minify",
+    "test": "bun test"
+  }
+}

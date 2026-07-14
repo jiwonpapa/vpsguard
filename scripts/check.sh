@@ -7,3 +7,5 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-it
 cargo test --workspace --all-features
 cargo audit
 cargo deny check
+
+(cd web && bun install --frozen-lockfile && bun run build && bun test)

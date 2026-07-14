@@ -1,0 +1,43 @@
+schema_version = 1
+
+[edge]
+http_bind = "127.0.0.1:18080"
+allowed_hosts = ["example.test"]
+trusted_proxy_cidrs = ["127.0.0.1/32"]
+max_body_bytes = 1024
+upload_max_body_bytes = 4096
+upload_path_prefixes = ["/upload"]
+strict_path_prefixes = ["/login", "/search"]
+upstream_connect_timeout_ms = 1000
+upstream_read_timeout_ms = 3000
+upload_upstream_read_timeout_ms = 5000
+max_tracked_clients = 1000
+rate_limit_rpm = 2
+strict_rate_limit_rpm = 1
+upload_rate_limit_rpm = 1
+telemetry_socket = "/tmp/vps-guard-smoke/telemetry.sock"
+
+[origin]
+address = "127.0.0.1:18081"
+protocol = "http"
+
+[tls]
+certificates = []
+
+[ui]
+bind = "127.0.0.1:17727"
+language = "ko"
+
+[detection]
+profile = "gnuboard"
+mode = "observe"
+
+[cloudflare]
+enabled = false
+
+[retention]
+live_seconds = 900
+detail_hours = 24
+aggregate_days = 30
+incident_days = 90
+raw_ip_days = 7

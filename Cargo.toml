@@ -21,6 +21,7 @@ publish = false
 
 [workspace.dependencies]
 async-trait = "0.1"
+axum = "0.8"
 bytes = "1.10"
 ipnet = { version = "2.11", features = ["serde"] }
 pingora-core = { version = "=0.8.0", features = ["rustls"] }
@@ -33,7 +34,9 @@ serde_json = "1.0"
 sha2 = "0.10"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.9"
+tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
