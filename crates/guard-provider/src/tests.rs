@@ -60,6 +60,11 @@ fn never_locks_origin_before_proxy_verification() -> Result<(), ProviderError> {
     );
     assert_eq!(backend.origin_lock_calls, 0);
     assert_eq!(transaction.stage, ProviderStage::ProxyRequested);
+    assert_eq!(transaction.attempts, 3);
+    assert_eq!(
+        transaction.last_error.as_deref(),
+        Some("PROXY_NOT_VERIFIED")
+    );
     Ok(())
 }
 
@@ -107,7 +112,15 @@ fn restores_snapshot() -> Result<(), ProviderError> {
     };
     let mut transaction = transaction()?;
     transaction.enable(&mut backend)?;
-    transaction.restore(&mut backend)?;
+    assert_eq!(
+        transaction.restore_step(&mut backend)?,
+        ProviderStage::RestoreRequested
+    );
+    assert_eq!(backend.restore_calls, 0);
+    assert_eq!(
+        transaction.restore_step(&mut backend)?,
+        ProviderStage::Restored
+    );
     assert_eq!(transaction.stage, ProviderStage::Restored);
     assert_eq!(backend.restore_calls, 1);
     Ok(())

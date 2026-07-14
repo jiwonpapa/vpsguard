@@ -25,7 +25,7 @@ last_reviewed: 2026-07-14
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
 | `DET-002` | GnuBoard·WordPress 초기 route 비용 profile | profile tests |
 | `ACT-001`~`ACT-005` | client·route 제한, 429, signed clearance, 기능별 정책, TTL client rule | edge limiter·challenge·policy tests |
-| `ACT-006`~`ACT-012` 코드 | 단계별 checkpoint, Cloudflare read-back, 외부 `cf-ray`, nftables 80/443 원본 잠금, 자동 전환·역순 복구·명령 잠금·감사·idempotency | provider/system/control tests |
+| `ACT-006`~`ACT-012` 코드 | 단일 record 단계별 checkpoint, Cloudflare read-back·외부 `cf-ray` 코드 경로, dual-stack nftables 원자 교체·정확 read-back, 복구·실패 사건·idempotency | fake provider/system/control tests; 실제 API 증거 없음 |
 | `TLS-001` 일부 | 단일 certificate chain의 key·유효기간·SAN 검사 | TLS unit tests |
 | `TLS-002`, `TLS-005` 하네스 | cert/key deploy preflight, update·uninstall 인증서 보존 | Certbot hook, ops plan |
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | CSR SPA, SSE 사건, bytes·connection, client 검색·필터·정렬·페이지, provider 진행률, 운영 명령 확인, light/dark, stale/error | Bun·Playwright·control smoke |

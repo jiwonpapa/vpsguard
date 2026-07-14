@@ -46,7 +46,7 @@ impl NftOriginProtection {
 impl OriginProtection for NftOriginProtection {
     fn is_locked(&mut self) -> Result<bool, ProviderError> {
         self.nftables
-            .is_applied()
+            .is_applied(&self.plan)
             .map_err(|error| ProviderError::Backend(error.to_string()))
     }
 

@@ -418,6 +418,51 @@ impl GuardConfig {
                 "활성화 시 zone, record allowlist, token 파일과 IP network가 필요합니다",
             );
         }
+        if self.cloudflare.enabled && self.cloudflare.record_names.len() != 1 {
+            return invalid(
+                "cloudflare.record_names",
+                "MVP provider transaction은 정확히 한 개의 DNS record만 허용합니다",
+            );
+        }
+        if self.cloudflare.enabled {
+            let has_ipv4 = self
+                .cloudflare
+                .ip_networks
+                .iter()
+                .any(|network| matches!(network, IpNet::V4(_)));
+            let has_ipv6 = self
+                .cloudflare
+                .ip_networks
+                .iter()
+                .any(|network| matches!(network, IpNet::V6(_)));
+            if !has_ipv4 || !has_ipv6 {
+                return invalid(
+                    "cloudflare.ip_networks",
+                    "origin lock에는 IPv4와 IPv6 Cloudflare network가 모두 필요합니다",
+                );
+            }
+            let record_name = &self.cloudflare.record_names[0];
+            if record_name.starts_with("*.") {
+                return invalid(
+                    "cloudflare.record_names",
+                    "wildcard가 아닌 실제 DNS record 이름이 필요합니다",
+                );
+            }
+            validate_host_rule(record_name, "cloudflare.record_names")?;
+            let single_served_host = self.edge.allowed_hosts.len() == 1
+                && self.edge.allowed_hosts[0].eq_ignore_ascii_case(record_name)
+                && self
+                    .edge
+                    .canonical_host
+                    .as_deref()
+                    .is_none_or(|canonical| canonical.eq_ignore_ascii_case(record_name));
+            if !single_served_host {
+                return invalid(
+                    "cloudflare.record_names",
+                    "단일-record MVP에서는 allowed_hosts와 canonical_host도 같은 한 hostname이어야 합니다",
+                );
+            }
+        }
         if self.retention.live_seconds == 0
             || self.retention.detail_hours == 0
             || self.retention.aggregate_days == 0

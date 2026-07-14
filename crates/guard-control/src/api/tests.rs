@@ -126,6 +126,9 @@ async fn unconfigured_provider_fails_without_changing_mode()
         .await?;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(state.state.read().await.current_mode, GuardMode::Normal);
+    let events = state.storage.events(10)?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, "provider.action_failed");
     Ok(())
 }
 

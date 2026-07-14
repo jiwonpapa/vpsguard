@@ -33,6 +33,8 @@ pub enum ProviderStage {
     OriginLockRequested,
     /// 원본 보호 read-back을 검증했습니다.
     Complete,
+    /// 저장된 snapshot 복구를 실행하기 직전 checkpoint입니다.
+    RestoreRequested,
     /// 이전 snapshot으로 복구했습니다.
     Restored,
 }
@@ -51,6 +53,9 @@ pub struct ProviderTransaction {
     pub snapshot: Option<ProviderSnapshot>,
     /// 마지막 구조화 오류 코드입니다.
     pub last_error: Option<String>,
+    /// 외부 adapter 단계 실행 시도 횟수입니다.
+    #[serde(default)]
+    pub attempts: u32,
 }
 
 /// provider 외부 작업의 최소 adapter 계약입니다.
@@ -113,6 +118,7 @@ impl ProviderTransaction {
             stage: ProviderStage::Pending,
             snapshot: None,
             last_error: None,
+            attempts: 0,
         })
     }
 
@@ -138,42 +144,59 @@ impl ProviderTransaction {
         &mut self,
         backend: &mut B,
     ) -> Result<ProviderStage, ProviderError> {
-        match self.stage {
-            ProviderStage::Pending => {
-                self.snapshot = Some(backend.snapshot(&self.record_name)?);
-                self.stage = ProviderStage::Snapshotted;
-            }
-            ProviderStage::Snapshotted => {
-                backend.request_proxy_enable(&self.record_name)?;
-                self.stage = ProviderStage::ProxyRequested;
-            }
-            ProviderStage::ProxyRequested => {
-                if !backend.verify_proxy_enabled(&self.record_name)? {
-                    self.last_error = Some("PROXY_NOT_VERIFIED".to_owned());
-                    return Err(ProviderError::ProxyNotVerified);
-                }
-                self.stage = ProviderStage::ProxyVerified;
-            }
-            ProviderStage::ProxyVerified => {
-                backend.request_origin_lock()?;
-                self.stage = ProviderStage::OriginLockRequested;
-            }
-            ProviderStage::OriginLockRequested => {
-                if !backend.verify_origin_lock()? {
-                    self.last_error = Some("ORIGIN_LOCK_NOT_VERIFIED".to_owned());
-                    return Err(ProviderError::OriginLockNotVerified);
-                }
-                self.stage = ProviderStage::Complete;
-                self.last_error = None;
-            }
-            ProviderStage::Complete => {}
-            ProviderStage::Restored => {
-                return Err(ProviderError::Backend(
-                    "RESTORED_TRANSACTION_CANNOT_RESUME".to_owned(),
-                ));
-            }
+        if self.stage == ProviderStage::Complete {
+            return Ok(self.stage);
         }
-        Ok(self.stage)
+        if matches!(
+            self.stage,
+            ProviderStage::RestoreRequested | ProviderStage::Restored
+        ) {
+            return Err(ProviderError::Backend(
+                "RESTORE_TRANSACTION_CANNOT_ENABLE".to_owned(),
+            ));
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        let result = (|| {
+            match self.stage {
+                ProviderStage::Pending => {
+                    self.snapshot = Some(backend.snapshot(&self.record_name)?);
+                    self.stage = ProviderStage::Snapshotted;
+                }
+                ProviderStage::Snapshotted => {
+                    backend.request_proxy_enable(&self.record_name)?;
+                    self.stage = ProviderStage::ProxyRequested;
+                }
+                ProviderStage::ProxyRequested => {
+                    if !backend.verify_proxy_enabled(&self.record_name)? {
+                        return Err(ProviderError::ProxyNotVerified);
+                    }
+                    self.stage = ProviderStage::ProxyVerified;
+                }
+                ProviderStage::ProxyVerified => {
+                    backend.request_origin_lock()?;
+                    self.stage = ProviderStage::OriginLockRequested;
+                }
+                ProviderStage::OriginLockRequested => {
+                    if !backend.verify_origin_lock()? {
+                        return Err(ProviderError::OriginLockNotVerified);
+                    }
+                    self.stage = ProviderStage::Complete;
+                }
+                ProviderStage::Complete
+                | ProviderStage::RestoreRequested
+                | ProviderStage::Restored => {
+                    return Err(ProviderError::Backend(
+                        "INVALID_PROVIDER_ENABLE_STAGE".to_owned(),
+                    ));
+                }
+            }
+            Ok(self.stage)
+        })();
+        match &result {
+            Ok(_) => self.last_error = None,
+            Err(error) => self.last_error = Some(provider_error_code(error).to_owned()),
+        }
+        result
     }
 
     /// snapshot 기반으로 이전 상태를 복구합니다.
@@ -182,14 +205,61 @@ impl ProviderTransaction {
     ///
     /// snapshot 부재 또는 backend 실패를 반환합니다.
     pub fn restore<B: ProviderBackend>(&mut self, backend: &mut B) -> Result<(), ProviderError> {
-        let snapshot = self
-            .snapshot
-            .as_ref()
-            .ok_or(ProviderError::MissingSnapshot)?;
-        backend.restore(snapshot)?;
-        self.stage = ProviderStage::Restored;
-        self.last_error = None;
-        Ok(())
+        loop {
+            if self.restore_step(backend)? == ProviderStage::Restored {
+                return Ok(());
+            }
+        }
+    }
+
+    /// 복구 의도를 먼저 checkpoint한 뒤 snapshot 복구와 read-back을 실행합니다.
+    ///
+    /// # Errors
+    ///
+    /// 완료되지 않은 transaction, snapshot 부재 또는 backend 복구 실패를 반환합니다.
+    pub fn restore_step<B: ProviderBackend>(
+        &mut self,
+        backend: &mut B,
+    ) -> Result<ProviderStage, ProviderError> {
+        match self.stage {
+            ProviderStage::Complete => {
+                if self.snapshot.is_none() {
+                    return Err(ProviderError::MissingSnapshot);
+                }
+                self.stage = ProviderStage::RestoreRequested;
+                self.last_error = None;
+            }
+            ProviderStage::RestoreRequested => {
+                self.attempts = self.attempts.saturating_add(1);
+                let snapshot = self
+                    .snapshot
+                    .as_ref()
+                    .ok_or(ProviderError::MissingSnapshot)?;
+                if let Err(error) = backend.restore(snapshot) {
+                    self.last_error = Some(provider_error_code(&error).to_owned());
+                    return Err(error);
+                }
+                self.stage = ProviderStage::Restored;
+                self.last_error = None;
+            }
+            ProviderStage::Restored => {}
+            _ => {
+                return Err(ProviderError::Backend(
+                    "PROVIDER_TRANSACTION_NOT_COMPLETE".to_owned(),
+                ));
+            }
+        }
+        Ok(self.stage)
+    }
+}
+
+fn provider_error_code(error: &ProviderError) -> &'static str {
+    match error {
+        ProviderError::RecordNotAllowed(_) => "RECORD_NOT_ALLOWED",
+        ProviderError::ProxyNotVerified => "PROXY_NOT_VERIFIED",
+        ProviderError::OriginLockNotVerified => "ORIGIN_LOCK_NOT_VERIFIED",
+        ProviderError::Backend(_) => "PROVIDER_BACKEND_FAILED",
+        ProviderError::MissingSnapshot => "MISSING_SNAPSHOT",
     }
 }
 

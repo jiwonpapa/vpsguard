@@ -251,10 +251,22 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                     Ok(guard_provider::ProviderStage::Complete) => {}
                     Ok(stage) => {
                         warn!(?stage, "provider transaction stopped before completion");
+                        crate::api::record_provider_failure(
+                            &app,
+                            "automatic-emergency",
+                            "emergency_proxy",
+                            &format!("INCOMPLETE_STAGE_{stage:?}"),
+                        );
                         keep_local_guard(&current, &mut next);
                     }
                     Err(error) => {
                         warn!(error, "automatic provider transaction unavailable");
+                        crate::api::record_provider_failure(
+                            &app,
+                            "automatic-emergency",
+                            "emergency_proxy",
+                            &error,
+                        );
                         keep_local_guard(&current, &mut next);
                     }
                 }
@@ -267,10 +279,22 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                     Ok(guard_provider::ProviderStage::Restored) => {}
                     Ok(stage) => {
                         warn!(?stage, "provider restore stopped before completion");
+                        crate::api::record_provider_failure(
+                            &app,
+                            "automatic-recovery",
+                            "provider_restore",
+                            &format!("INCOMPLETE_STAGE_{stage:?}"),
+                        );
                         keep_emergency(&current, &mut next);
                     }
                     Err(error) => {
                         warn!(error, "automatic provider restore failed");
+                        crate::api::record_provider_failure(
+                            &app,
+                            "automatic-recovery",
+                            "provider_restore",
+                            &error,
+                        );
                         keep_emergency(&current, &mut next);
                     }
                 }

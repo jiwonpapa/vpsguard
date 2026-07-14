@@ -118,3 +118,83 @@ fn only_trusts_configured_forwarded_peer() {
     assert!(config.trusts_forwarded_peer(loopback));
     assert!(!config.trusts_forwarded_peer(public));
 }
+
+#[test]
+fn cloudflare_mvp_rejects_multiple_records() {
+    let input = format!(
+        "{VALID_CONFIG}\n{}",
+        cloudflare_config(
+            "[\"example.com\", \"www.example.com\"]",
+            "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
+        )
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "cloudflare.record_names",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn cloudflare_origin_lock_requires_both_address_families() {
+    let input = format!(
+        "{VALID_CONFIG}\n{}",
+        cloudflare_config("[\"example.com\"]", "[\"192.0.2.0/24\"]")
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "cloudflare.ip_networks",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn cloudflare_single_record_requires_one_served_hostname() {
+    let input = format!(
+        "{VALID_CONFIG}\n{}",
+        cloudflare_config(
+            "[\"g7devops.com\"]",
+            "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
+        )
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "cloudflare.record_names",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn accepts_single_host_dual_stack_cloudflare_config() {
+    let base = VALID_CONFIG.replace(
+        "allowed_hosts = [\"g7devops.com\", \"*.g7devops.com\"]",
+        "allowed_hosts = [\"g7devops.com\"]",
+    );
+    let input = format!(
+        "{base}\n{}",
+        cloudflare_config(
+            "[\"g7devops.com\"]",
+            "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
+        )
+    );
+    assert!(GuardConfig::from_toml(&input).is_ok());
+}
+
+fn cloudflare_config(records: &str, networks: &str) -> String {
+    format!(
+        r#"
+[cloudflare]
+enabled = true
+zone_id = "zone-test"
+record_names = {records}
+token_file = "/tmp/cloudflare-token"
+ip_networks = {networks}
+"#
+    )
+}

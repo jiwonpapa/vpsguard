@@ -131,10 +131,20 @@ impl ProviderController {
             .transaction
             .as_mut()
             .ok_or(ProviderError::MissingSnapshot)?;
-        let result = transaction.restore(&mut self.backend);
-        self.store.write(transaction)?;
-        result?;
-        Ok(transaction.stage)
+        loop {
+            let result = transaction.restore_step(&mut self.backend);
+            self.store.write(transaction)?;
+            match result? {
+                ProviderStage::Restored => return Ok(transaction.stage),
+                ProviderStage::RestoreRequested => {}
+                _ => {
+                    return Err(ProviderError::Backend(
+                        "UNEXPECTED_PROVIDER_RESTORE_STAGE".to_owned(),
+                    )
+                    .into());
+                }
+            }
+        }
     }
 }
 
@@ -146,6 +156,7 @@ fn stage_name(stage: ProviderStage) -> &'static str {
         ProviderStage::ProxyVerified => "proxy_verified",
         ProviderStage::OriginLockRequested => "origin_lock_requested",
         ProviderStage::Complete => "complete",
+        ProviderStage::RestoreRequested => "restore_requested",
         ProviderStage::Restored => "restored",
     }
 }

@@ -411,6 +411,7 @@ async fn apply_provider_action(
         Ok(Ok(stage)) => stage,
         Ok(Err(error)) => {
             tracing::warn!(error, operation_id, "provider action failed");
+            record_provider_failure(app, &operation_id, action_name, &error);
             return api_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "PROVIDER_ACTION_FAILED",
@@ -421,6 +422,7 @@ async fn apply_provider_action(
         }
         Err(error) => {
             tracing::warn!(error = %error, "provider task failed");
+            record_provider_failure(app, &operation_id, action_name, &error.to_string());
             return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PROVIDER_TASK_FAILED",
@@ -447,6 +449,7 @@ async fn apply_provider_action(
         tokio::task::spawn_blocking(move || store.write(&value)).await,
         Ok(Ok(()))
     ) {
+        record_provider_failure(app, &operation_id, action_name, "STATE_WRITE_FAILED");
         return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "STATE_WRITE_FAILED",
@@ -778,6 +781,38 @@ fn provider_event(
             "provider snapshot 역순 복구".to_owned(),
         )]),
     }
+}
+
+pub(crate) fn record_provider_failure(
+    app: &AppState,
+    operation_id: &str,
+    action_name: &str,
+    error: &str,
+) {
+    let bounded_error = error.chars().take(256).collect::<String>();
+    let event = GuardEvent {
+        schema_version: 1,
+        event_id: format!("provider-failed-{}", uuid::Uuid::new_v4().simple()),
+        occurred_at: current_timestamp(),
+        severity: Severity::Critical,
+        kind: "provider.action_failed".to_owned(),
+        summary: "Provider 조치가 완료되지 않아 현재 단계를 유지합니다.".to_owned(),
+        reason_codes: Vec::new(),
+        evidence: BTreeMap::from([
+            ("operation_id".to_owned(), operation_id.to_owned()),
+            ("error".to_owned(), bounded_error),
+        ]),
+        action: BTreeMap::from([("name".to_owned(), action_name.to_owned())]),
+        result: BTreeMap::from([("status".to_owned(), "failed".to_owned())]),
+        recovery: BTreeMap::from([(
+            "next_action".to_owned(),
+            "저장된 provider transaction 단계와 실제 DNS·firewall을 read-back하십시오.".to_owned(),
+        )]),
+    };
+    if let Err(storage_error) = app.storage.record_event(&event) {
+        tracing::warn!(error = %storage_error, "provider failure event persistence failed");
+    }
+    let _send_result = app.events.send(event);
 }
 
 const fn mode_name(mode: GuardMode) -> &'static str {
