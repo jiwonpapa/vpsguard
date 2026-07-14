@@ -32,6 +32,12 @@ pub struct GuardConfig {
     pub cloudflare: CloudflareConfig,
     /// 데이터 보존 설정입니다.
     pub retention: RetentionConfig,
+    /// Control 저장 설정입니다.
+    #[serde(default)]
+    pub storage: StorageConfig,
+    /// 읽기 전용 service collector 설정입니다.
+    #[serde(default)]
+    pub collectors: CollectorsConfig,
 }
 
 /// Pingora listener와 정적 안전 한도입니다.
@@ -81,6 +87,18 @@ pub struct EdgeConfig {
     /// non-blocking Unix datagram telemetry socket입니다.
     #[serde(default = "default_telemetry_socket")]
     pub telemetry_socket: PathBuf,
+    /// control이 생성한 검증 대상 정책 파일입니다.
+    #[serde(default = "default_policy_path")]
+    pub policy_path: PathBuf,
+    /// 정책 파일 확인 주기입니다.
+    #[serde(default = "default_policy_reload_interval_ms")]
+    pub policy_reload_interval_ms: u64,
+    /// browser clearance 서명 secret 파일입니다.
+    #[serde(default)]
+    pub challenge_secret_file: Option<PathBuf>,
+    /// clearance cookie 유효시간입니다.
+    #[serde(default = "default_clearance_ttl_seconds")]
+    pub clearance_ttl_seconds: u64,
 }
 
 /// loopback origin 설정입니다.
@@ -206,6 +224,58 @@ pub struct RetentionConfig {
     pub raw_ip_days: u64,
 }
 
+/// Control SQLite와 사건 저장 위치입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    /// SQLite WAL database 파일입니다.
+    pub database_path: PathBuf,
+    /// 구조화 사건 JSONL directory입니다.
+    pub events_directory: PathBuf,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            database_path: PathBuf::from("/var/lib/vps-guard/control.sqlite3"),
+            events_directory: PathBuf::from("/var/lib/vps-guard/events"),
+        }
+    }
+}
+
+/// 선택적인 읽기 전용 service collector endpoint입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectorsConfig {
+    /// Nginx `stub_status` HTTP URL입니다.
+    #[serde(default)]
+    pub nginx_status_url: Option<String>,
+    /// PHP-FPM status HTTP URL입니다.
+    #[serde(default)]
+    pub php_fpm_status_url: Option<String>,
+    /// MySQL handshake 확인 주소입니다.
+    #[serde(default)]
+    pub mysql_address: Option<SocketAddr>,
+    /// Redis PING 확인 주소입니다.
+    #[serde(default)]
+    pub redis_address: Option<SocketAddr>,
+    /// collector별 timeout입니다.
+    #[serde(default = "default_collector_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for CollectorsConfig {
+    fn default() -> Self {
+        Self {
+            nginx_status_url: None,
+            php_fpm_status_url: None,
+            mysql_address: None,
+            redis_address: None,
+            timeout_ms: default_collector_timeout_ms(),
+        }
+    }
+}
+
 /// 설정 parse 또는 의미 검증 실패입니다.
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -292,6 +362,12 @@ impl GuardConfig {
         if self.edge.max_tracked_clients == 0 {
             return invalid("edge.max_tracked_clients", "0보다 커야 합니다");
         }
+        if self.edge.policy_reload_interval_ms < 100 || self.edge.clearance_ttl_seconds == 0 {
+            return invalid(
+                "edge.policy_runtime",
+                "reload 주기는 100ms 이상이고 clearance TTL은 0보다 커야 합니다",
+            );
+        }
         if [
             self.edge.rate_limit_rpm,
             self.edge.strict_rate_limit_rpm,
@@ -348,6 +424,14 @@ impl GuardConfig {
         if self.retention.raw_ip_days > self.retention.incident_days {
             return invalid("retention.raw_ip_days", "사건 보존기간보다 길 수 없습니다");
         }
+        if self.storage.database_path.as_os_str().is_empty()
+            || self.storage.events_directory.as_os_str().is_empty()
+        {
+            return invalid("storage", "database와 events 경로가 필요합니다");
+        }
+        if self.collectors.timeout_ms == 0 {
+            return invalid("collectors.timeout_ms", "0보다 커야 합니다");
+        }
         Ok(())
     }
 
@@ -387,6 +471,22 @@ fn default_language() -> String {
 
 fn default_telemetry_socket() -> PathBuf {
     PathBuf::from("/run/vps-guard/telemetry.sock")
+}
+
+fn default_policy_path() -> PathBuf {
+    PathBuf::from("/var/lib/vps-guard/policy.json")
+}
+
+const fn default_policy_reload_interval_ms() -> u64 {
+    1_000
+}
+
+const fn default_clearance_ttl_seconds() -> u64 {
+    600
+}
+
+const fn default_collector_timeout_ms() -> u64 {
+    500
 }
 
 #[cfg(test)]

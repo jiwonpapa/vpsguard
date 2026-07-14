@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
-cargo test --workspace --all-features
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items
+cargo test --locked --workspace --all-features
 cargo audit --ignore RUSTSEC-2024-0437
 cargo deny check
 
-(cd web && bun install --frozen-lockfile && bun run build && bun test)
+if command -v cargo-machete >/dev/null 2>&1; then
+  cargo machete
+fi
+
+bash scripts/docs-gate.sh
+bash scripts/requirements-gate.sh
+
+(cd web && bun ci && bun run check)

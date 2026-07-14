@@ -324,12 +324,14 @@ stale 값을 최신 정상값처럼 보여주는 것을 금지합니다. 서버 
 
 ## 14. 프런트엔드 기술
 
-초기 UI는 React를 도입하지 않습니다.
+운영 UI는 CSR SPA로 구현합니다. 선택 근거와 대안은 `docs/adr/0001-operations-console-spa.md`를 따릅니다.
 
-- Rust 서버가 정적 asset을 binary에 포함
-- semantic HTML과 vanilla ES module
-- Tailwind CSS CLI
-- daisyUI theme token
+- Rust 서버가 검증된 SPA build asset을 binary에 포함
+- React와 strict TypeScript
+- Bun package manager와 고정된 `bun.lock`
+- Vite static build와 Tailwind CSS CLI
+- 필요한 shadcn/ui source component만 선별 도입
+- TanStack Router와 Query로 URL·REST snapshot 상태 관리
 - light/dark theme
 - SVG 직접 작성 대신 검증된 icon set 사용
 - 서버 -> 브라우저 실시간 갱신은 SSE
@@ -337,7 +339,7 @@ stale 값을 최신 정상값처럼 보여주는 것을 금지합니다. 서버 
 
 대량 테이블은 pagination 또는 virtualization을 사용하고 그래프는 bounded data만 렌더링합니다. 브라우저 tab이 hidden 상태이면 갱신 빈도를 낮춥니다.
 
-프런트엔드 프레임워크 도입은 vanilla 구조로 상태 정합성이나 테스트 가능성을 유지할 수 없다는 증거가 있을 때 ADR로 결정합니다.
+SSR은 SEO와 public first-render 이점이 없는 loopback 운영 콘솔에 도입하지 않습니다. Bun·Vite는 build-time 도구이며 운영 서버에는 설치하지 않습니다.
 
 ## 15. 시각 원칙
 

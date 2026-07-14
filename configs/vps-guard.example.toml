@@ -16,6 +16,9 @@ max_tracked_clients = 10000
 strict_rate_limit_rpm = 60
 upload_rate_limit_rpm = 30
 telemetry_socket = "/run/vps-guard/telemetry.sock"
+policy_path = "/var/lib/vps-guard/policy.json"
+policy_reload_interval_ms = 1000
+clearance_ttl_seconds = 600
 
 [origin]
 address = "127.0.0.1:18081"
@@ -35,3 +38,10 @@ detail_hours = 24
 aggregate_days = 30
 incident_days = 90
 raw_ip_days = 7
+
+[storage]
+database_path = "/var/lib/vps-guard/control.sqlite3"
+events_directory = "/var/lib/vps-guard/events"
+
+[collectors]
+timeout_ms = 500

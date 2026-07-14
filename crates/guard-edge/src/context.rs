@@ -18,6 +18,9 @@ pub(crate) struct RequestContext {
     pub(crate) forwarded_headers_trusted: bool,
     pub(crate) request_body_bytes_seen: u64,
     pub(crate) route_class: RouteClass,
+    pub(crate) normalized_route: String,
+    pub(crate) route_cost: u8,
+    pub(crate) policy_version: u64,
 }
 
 impl RequestContext {
@@ -33,6 +36,9 @@ impl RequestContext {
             forwarded_headers_trusted: false,
             request_body_bytes_seen: 0,
             route_class: RouteClass::General,
+            normalized_route: "/".to_owned(),
+            route_cost: 1,
+            policy_version: 0,
         }
     }
 }

@@ -4,7 +4,8 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use guard_core::config::{GuardConfig, OriginProtocol};
+use guard_core::config::{DetectionProfile, GuardConfig, OriginProtocol};
+use guard_profiles::ApplicationProfile;
 use ipnet::IpNet;
 use thiserror::Error;
 
@@ -44,6 +45,11 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) strict_rate_limit_rpm: Option<u32>,
     pub(crate) upload_rate_limit_rpm: Option<u32>,
     pub(crate) telemetry_socket: PathBuf,
+    pub(crate) policy_path: PathBuf,
+    pub(crate) policy_reload_interval: Duration,
+    pub(crate) challenge_secret_file: Option<PathBuf>,
+    pub(crate) clearance_ttl_seconds: u64,
+    pub(crate) application_profile: ApplicationProfile,
 }
 
 /// core 설정은 유효하지만 현재 edge runtime이 지원하지 못하는 조합입니다.
@@ -108,6 +114,14 @@ impl EdgeRuntimeConfig {
             strict_rate_limit_rpm: config.edge.strict_rate_limit_rpm,
             upload_rate_limit_rpm: config.edge.upload_rate_limit_rpm,
             telemetry_socket: config.edge.telemetry_socket.clone(),
+            policy_path: config.edge.policy_path.clone(),
+            policy_reload_interval: Duration::from_millis(config.edge.policy_reload_interval_ms),
+            challenge_secret_file: config.edge.challenge_secret_file.clone(),
+            clearance_ttl_seconds: config.edge.clearance_ttl_seconds,
+            application_profile: match config.detection.profile {
+                DetectionProfile::Gnuboard => ApplicationProfile::Gnuboard,
+                DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
+            },
         })
     }
 

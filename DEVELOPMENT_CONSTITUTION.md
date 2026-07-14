@@ -119,7 +119,9 @@
 - `주의`, `대기`, `실패`만 표시하지 않고 원인, 영향, 조치와 복구 조건을 설명합니다.
 - stale, delayed, unavailable과 error를 정상값과 명확히 구분합니다.
 - 파괴적 명령은 영향 범위, snapshot과 예상 복구를 보여주고 재확인합니다.
-- React는 초기 의존성으로 도입하지 않고 vanilla ES module, Tailwind CSS CLI, daisyUI와 SSE를 사용합니다.
+- 운영 콘솔은 CSR SPA로 제공하며 React·TypeScript, Tailwind CSS CLI와 선별한 shadcn/ui source component를 사용합니다.
+- Bun과 Vite는 개발·CI asset build에만 사용하고 운영 VPS에는 JavaScript runtime을 설치하지 않습니다.
+- SPA build 결과만 `guard-control` binary에 포함하며 원본 source asset을 직접 제공하지 않습니다.
 - 범용 terminal, file manager, packet capture와 process manager를 UI에 추가하지 않습니다.
 
 ## 13. Rust 코드 원칙

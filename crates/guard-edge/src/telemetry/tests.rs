@@ -12,11 +12,15 @@ fn fixture() -> RequestTelemetry {
         request_id: "guard-1".to_owned(),
         method: "GET".to_owned(),
         route_class: RouteClass::Strict,
+        normalized_route: "/bbs/board.php".to_owned(),
+        route_cost: 4,
         status: 200,
         latency_micros: 500,
         client_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         request_body_bytes: 0,
         decision: DecisionKind::Allow,
+        policy_version: 3,
+        occurred_at_unix_ms: 1_000,
     }
 }
 

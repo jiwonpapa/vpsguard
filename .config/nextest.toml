@@ -1,0 +1,12 @@
+[profile.default]
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 2 }
+leak-timeout = { period = "500ms", result = "fail" }
+
+[profile.ci]
+inherits = "default"
+retries = 0
+global-timeout = "15m"
+
+[profile.ci.junit]
+path = "target/nextest/ci/junit.xml"

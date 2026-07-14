@@ -38,6 +38,10 @@ pub struct RequestTelemetry {
     pub method: String,
     /// bounded route class입니다.
     pub route_class: RouteClass,
+    /// profile이 cardinality를 제한한 route key입니다.
+    pub normalized_route: String,
+    /// profile의 상대 route 비용입니다.
+    pub route_cost: u8,
     /// 최종 status입니다.
     pub status: u16,
     /// edge 전체 지연 microseconds입니다.
@@ -48,6 +52,10 @@ pub struct RequestTelemetry {
     pub request_body_bytes: u64,
     /// 요청 처리 판정입니다.
     pub decision: DecisionKind,
+    /// edge에 적용된 정책 버전입니다.
+    pub policy_version: u64,
+    /// 관측 발생 Unix epoch milliseconds입니다.
+    pub occurred_at_unix_ms: u64,
 }
 
 /// 연결 실패·backpressure가 요청 실패로 전파되지 않는 telemetry sink입니다.

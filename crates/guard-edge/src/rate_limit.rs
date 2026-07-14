@@ -19,6 +19,18 @@ pub enum RouteClass {
     Upload,
 }
 
+impl RouteClass {
+    /// 정책과 telemetry에 사용하는 안정적인 문자열입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Strict => "strict",
+            Self::Upload => "upload",
+        }
+    }
+}
+
 /// 한 요청에 대한 limiter 판정입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitDecision {

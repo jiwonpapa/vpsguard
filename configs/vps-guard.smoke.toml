@@ -16,6 +16,9 @@ rate_limit_rpm = 2
 strict_rate_limit_rpm = 1
 upload_rate_limit_rpm = 1
 telemetry_socket = "/tmp/vps-guard-smoke/telemetry.sock"
+policy_path = "/tmp/vps-guard-smoke/policy.json"
+policy_reload_interval_ms = 100
+clearance_ttl_seconds = 600
 
 [origin]
 address = "127.0.0.1:18081"
@@ -41,3 +44,10 @@ detail_hours = 24
 aggregate_days = 30
 incident_days = 90
 raw_ip_days = 7
+
+[storage]
+database_path = "/tmp/vps-guard-smoke/control.sqlite3"
+events_directory = "/tmp/vps-guard-smoke/events"
+
+[collectors]
+timeout_ms = 100

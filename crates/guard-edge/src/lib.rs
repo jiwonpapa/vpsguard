@@ -2,8 +2,10 @@
 //!
 //! 요청 처리 중 동기 IPC, 데이터베이스, 디스크 쓰기와 외부 API 호출을 금지합니다.
 
+mod challenge;
 mod context;
 pub mod policy;
+mod policy_runtime;
 mod proxy;
 pub mod rate_limit;
 mod response;

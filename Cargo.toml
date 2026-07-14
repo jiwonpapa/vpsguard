@@ -9,6 +9,7 @@ members = [
     "crates/guard-profiles",
     "crates/guard-provider",
     "crates/guard-system",
+    "crates/xtask",
 ]
 
 [workspace.package]
@@ -20,10 +21,13 @@ repository = "https://github.com/jiwonpapa/vpsguard"
 publish = false
 
 [workspace.dependencies]
+arc-swap = "1.7"
 async-trait = "0.1"
 axum = "0.8"
+base64 = "0.22"
 bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
+hmac = "0.12"
 ipnet = { version = "2.11", features = ["serde"] }
 pingora-core = { version = "=0.8.0", features = ["rustls"] }
 pingora-error = "=0.8.0"
@@ -37,8 +41,10 @@ sha2 = "0.10"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.9"
 tower = "0.5"
+uuid = { version = "1.18", features = ["v4", "serde"] }
 x509-parser = "0.16"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }

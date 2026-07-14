@@ -3,10 +3,12 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Instant, SystemTime};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use guard_core::Decision;
+use guard_profiles::classify;
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_error::{
     Error, ErrorSource,
@@ -14,12 +16,17 @@ use pingora_error::{
 };
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
+use time::OffsetDateTime;
 use tracing::{info, warn};
 
+use crate::challenge::ClearanceSigner;
 use crate::context::RequestContext;
 use crate::policy::{effective_client_ip, host_allowed, normalize_host};
+use crate::policy_runtime::PolicyRuntime;
 use crate::rate_limit::{BoundedRateLimiter, LimitDecision, RouteClass};
-use crate::response::{add_common_headers, respond_redirect, respond_text};
+use crate::response::{
+    add_common_headers, respond_redirect, respond_text, respond_text_with_headers,
+};
 use crate::runtime::EdgeRuntimeConfig;
 use crate::telemetry::{DecisionKind, RequestTelemetry, TelemetrySink};
 
@@ -34,18 +41,34 @@ pub(crate) struct GuardEdge {
     rate_limiter: Arc<BoundedRateLimiter>,
     origin_ready: AtomicBool,
     telemetry: TelemetrySink,
+    policy: Arc<PolicyRuntime>,
+    clearance: Option<ClearanceSigner>,
 }
 
 impl GuardEdge {
     pub(crate) fn new(config: EdgeRuntimeConfig) -> Self {
         let max_entries = config.max_tracked_clients;
         let telemetry = TelemetrySink::connect(&config.telemetry_socket);
+        let policy = Arc::new(PolicyRuntime::new(config.policy_path.clone()));
+        if let Err(error) = policy.reload_at(OffsetDateTime::now_utc()) {
+            warn!(error = %error, path = %policy.path().display(), "initial policy rejected");
+        }
+        policy.spawn(config.policy_reload_interval);
+        let clearance = config.challenge_secret_file.as_deref().and_then(|path| {
+            ClearanceSigner::from_file(path, config.clearance_ttl_seconds)
+                .map_err(
+                    |error| warn!(error = %error, path = %path.display(), "clearance disabled"),
+                )
+                .ok()
+        });
         Self {
             config,
             request_sequence: AtomicU64::new(1),
             rate_limiter: Arc::new(BoundedRateLimiter::new(max_entries)),
             origin_ready: AtomicBool::new(true),
             telemetry,
+            policy,
+            clearance,
         }
     }
 
@@ -59,7 +82,7 @@ impl GuardEdge {
         session: &mut Session,
         context: &mut RequestContext,
     ) -> pingora_core::Result<bool> {
-        let (method, path, target, host, forwarded_for, content_length) = {
+        let (method, path, target, host, forwarded_for, content_length, cookie) = {
             let request = session.req_header();
             (
                 request.method.as_str().to_owned(),
@@ -71,6 +94,7 @@ impl GuardEdge {
                 header_value(request, "host"),
                 header_value(request, "x-forwarded-for"),
                 header_value(request, "content-length").and_then(|value| value.parse::<u64>().ok()),
+                header_value(request, "cookie"),
             )
         };
         context.started_at = Instant::now();
@@ -90,6 +114,9 @@ impl GuardEdge {
             )
         });
         context.route_class = self.config.route_class(&path);
+        let route_profile = classify(self.config.application_profile, &target);
+        context.normalized_route = route_profile.normalized_route;
+        context.route_cost = route_profile.base_cost;
         context.request_body_bytes_seen = 0;
 
         if !host_allowed(host.as_deref(), &self.config.allowed_hosts) {
@@ -135,10 +162,68 @@ impl GuardEdge {
             self.emit_telemetry(context, 308, DecisionKind::Allow);
             return Ok(true);
         }
-        if let (Some(client_ip), Some(limit)) = (
+        let runtime_decision = self.policy.decision_at(
             context.client_ip,
-            self.config.rate_limit(context.route_class),
-        ) {
+            context.route_class.as_str(),
+            OffsetDateTime::now_utc(),
+        );
+        context.policy_version = runtime_decision.policy_version;
+        if let Some(client_ip) = context.client_ip {
+            match runtime_decision.action {
+                Some(Decision::Deny) => {
+                    respond_text(session, 403, b"request denied\n", &context.request_id, None)
+                        .await?;
+                    self.emit_telemetry(context, 403, DecisionKind::Deny);
+                    return Ok(true);
+                }
+                Some(Decision::Challenge) => {
+                    let now_unix = unix_seconds();
+                    let cleared = self.clearance.as_ref().is_some_and(|signer| {
+                        signer.verify_cookie(cookie.as_deref(), client_ip, now_unix)
+                    });
+                    if !cleared {
+                        let headers = self.clearance.as_ref().map_or_else(Vec::new, |signer| {
+                            vec![(
+                                "set-cookie",
+                                signer.issue_cookie(
+                                    client_ip,
+                                    now_unix,
+                                    current_proto(session, context.forwarded_headers_trusted)
+                                        == "https",
+                                ),
+                            )]
+                        });
+                        respond_text_with_headers(
+                            session,
+                            401,
+                            b"browser verification required; retry request\n",
+                            &context.request_id,
+                            &headers,
+                        )
+                        .await?;
+                        self.emit_telemetry(context, 401, DecisionKind::Challenge);
+                        return Ok(true);
+                    }
+                }
+                Some(Decision::Throttle) => {
+                    respond_text(
+                        session,
+                        429,
+                        b"temporarily throttled\n",
+                        &context.request_id,
+                        Some(60),
+                    )
+                    .await?;
+                    self.emit_telemetry(context, 429, DecisionKind::Throttle);
+                    return Ok(true);
+                }
+                Some(Decision::Allow | Decision::Observe) | None => {}
+            }
+        }
+        let rate_limit = runtime_decision
+            .requests_per_minute
+            .or_else(|| self.config.rate_limit(context.route_class));
+        if let (Some(client_ip), Some(limit)) = (context.client_ip, rate_limit) {
             match self
                 .rate_limiter
                 .check(client_ip, context.route_class, limit, SystemTime::now())
@@ -361,6 +446,8 @@ impl GuardEdge {
             request_id: context.request_id.clone(),
             method: context.method.clone(),
             route_class: context.route_class,
+            normalized_route: context.normalized_route.clone(),
+            route_cost: context.route_cost,
             status,
             latency_micros: context
                 .started_at
@@ -371,8 +458,26 @@ impl GuardEdge {
             client_ip: context.client_ip,
             request_body_bytes: context.request_body_bytes_seen,
             decision,
+            policy_version: context.policy_version,
+            occurred_at_unix_ms: unix_millis(),
         });
     }
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn header_value(request: &RequestHeader, name: &str) -> Option<String> {

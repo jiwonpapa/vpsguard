@@ -3,6 +3,7 @@
 **/*.rs.bk
 *.profraw
 lcov.info
+*.profdata
 
 # Cargo credentials are local secrets. Cargo.lock is intentionally tracked.
 .cargo/credentials
@@ -45,6 +46,8 @@ logs/
 *.sqlite3-shm
 *.sqlite3-wal
 /target-evidence/
+fuzz/artifacts/
+fuzz/corpus/
 
 # Temporary files and caches
 .cache/

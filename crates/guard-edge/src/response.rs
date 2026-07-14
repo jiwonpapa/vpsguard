@@ -38,6 +38,28 @@ pub(crate) async fn respond_text(
         .await
 }
 
+pub(crate) async fn respond_text_with_headers(
+    session: &mut Session,
+    status: u16,
+    body: &'static [u8],
+    request_id: &str,
+    headers: &[(&'static str, String)],
+) -> pingora_core::Result<()> {
+    let mut response = ResponseHeader::build(status, Some(5 + headers.len()))?;
+    response.insert_header("content-type", "text/plain; charset=utf-8")?;
+    response.insert_header("content-length", body.len().to_string())?;
+    for (name, value) in headers {
+        response.insert_header(*name, value)?;
+    }
+    add_common_headers(&mut response, request_id)?;
+    session
+        .write_response_header(Box::new(response), false)
+        .await?;
+    session
+        .write_response_body(Some(Bytes::from_static(body)), true)
+        .await
+}
+
 pub(crate) async fn respond_redirect(
     session: &mut Session,
     location: &str,

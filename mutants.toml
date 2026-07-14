@@ -1,0 +1,4 @@
+test_tool = "nextest"
+timeout_multiplier = 5.0
+minimum_test_timeout = 20
+exclude_globs = ["crates/guard-edge/src/startup.rs", "crates/*/src/main.rs"]
