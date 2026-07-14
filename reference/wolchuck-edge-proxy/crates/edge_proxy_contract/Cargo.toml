@@ -1,0 +1,14 @@
+[package]
+name = "edge_proxy_contract"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ipnet = "2"
+serde.workspace = true
+
+[dev-dependencies]
+serde_yaml.workspace = true
+
+[lints]
+workspace = true

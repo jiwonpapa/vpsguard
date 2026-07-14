@@ -1,0 +1,22 @@
+[Unit]
+Description=Wolchuck Edge Proxy (Pingora PoC)
+After=network.target wolchuckapp.service
+Wants=wolchuckapp.service
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
+WorkingDirectory=__APP_HOME__
+ExecStart=__APP_HOME__/bin/edge_proxy
+EnvironmentFile=-__APP_HOME__/.env
+Environment=APP_ENV=staging
+Environment=RUST_LOG=__RUST_LOG__
+Environment=RUST_BACKTRACE=1
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

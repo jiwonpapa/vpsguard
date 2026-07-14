@@ -1,0 +1,59 @@
+edge_proxy:
+  enabled: true
+  bind_address: "127.0.0.1"
+  port: 9081
+  upstream_host: "127.0.0.1"
+  upstream_port: 9080
+  upstream_tls: false
+  upstream_sni: "irongate"
+  allowed_hosts:
+    - "www.wolchuck.cc"
+    - "wolchuck.cc"
+  passthrough_hosts:
+    - "wolchuck.co.kr"
+    - "*.wolchuck.co.kr"
+  canonical_host: "wolchuck.cc"
+  admin_allowed_ips:
+    - "127.0.0.1"
+    - "::1"
+    - "192.168.0.0/24"
+  blocked_ips: []
+  blocked_cidrs: []
+  trusted_proxy_cidrs:
+    - "127.0.0.1"
+    - "::1"
+  admin_path_prefixes:
+    - "/metrics"
+  upload_path_prefixes:
+    - "/upload"
+  thumb_path_prefixes:
+    - "/thumb"
+    - "/thumbserver"
+  strict_rate_limit_path_prefixes:
+    - "/login"
+    - "/search"
+  gone_paths: []
+  request_id_header: "x-request-id"
+  max_body_bytes: 1048576
+  upload_max_body_bytes: 52428800
+  downstream_read_timeout_ms: 5000
+  upload_downstream_read_timeout_ms: 60000
+  downstream_write_timeout_ms: 30000
+  downstream_total_drain_timeout_ms: 5000
+  upstream_connect_timeout_ms: 3000
+  upstream_read_timeout_ms: 30000
+  upload_upstream_read_timeout_ms: 60000
+  upstream_write_timeout_ms: 30000
+  upstream_idle_timeout_ms: 30000
+  # 일반 공개 브라우징은 shared IP/NAT에서 false positive가 크므로 전역 IP rate limit을 두지 않는다.
+  rate_limit_requests_per_minute: ~
+  upload_rate_limit_requests_per_minute: 30
+  # 썸네일 전용 슬롯은 열어두되 운영 RPM은 별도 근거 전까지 unset 유지
+  thumb_rate_limit_requests_per_minute: ~
+  strict_rate_limit_requests_per_minute: 60
+  tls_listener:
+    enabled: true
+    bind_address: "127.0.0.1"
+    port: 9444
+    cert_file: "/home/wolchuck/rust-middleware/configs/certs/server.crt"
+    key_file: "/home/wolchuck/rust-middleware/configs/certs/server.key"

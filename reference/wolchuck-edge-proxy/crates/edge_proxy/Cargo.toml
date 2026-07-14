@@ -1,0 +1,20 @@
+[package]
+name = "edge_proxy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bytes = "1"
+common = { path = "../common" }
+env_logger = "0.11"
+log = "0.4"
+pingora-core = { version = "0.8.0", features = ["rustls"] }
+pingora-error = "0.8.0"
+pingora-http = "0.8.0"
+pingora-proxy = { version = "0.8.0", features = ["rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+
+[lints]
+workspace = true

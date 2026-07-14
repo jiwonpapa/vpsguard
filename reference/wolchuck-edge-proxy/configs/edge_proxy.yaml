@@ -1,0 +1,47 @@
+edge_proxy:
+  enabled: true
+  bind_address: "127.0.0.1"
+  port: 9081
+  upstream_host: "127.0.0.1"
+  upstream_port: 9080
+  upstream_tls: false
+  upstream_sni: "irongate"
+  allowed_hosts: []
+  passthrough_hosts: []
+  canonical_host: ""
+  admin_allowed_ips: []
+  blocked_ips: []
+  blocked_cidrs: []
+  trusted_proxy_cidrs: []
+  admin_path_prefixes:
+    - "/metrics"
+    - "/ops"
+  upload_path_prefixes:
+    - "/upload"
+  thumb_path_prefixes:
+    - "/thumb"
+    - "/thumbserver"
+  strict_rate_limit_path_prefixes: []
+  gone_paths: []
+  request_id_header: "x-request-id"
+  max_body_bytes:
+  upload_max_body_bytes:
+  downstream_read_timeout_ms:
+  upload_downstream_read_timeout_ms:
+  downstream_write_timeout_ms:
+  downstream_total_drain_timeout_ms:
+  upstream_connect_timeout_ms:
+  upstream_read_timeout_ms:
+  upload_upstream_read_timeout_ms:
+  upstream_write_timeout_ms:
+  upstream_idle_timeout_ms:
+  rate_limit_requests_per_minute:
+  upload_rate_limit_requests_per_minute:
+  thumb_rate_limit_requests_per_minute:
+  strict_rate_limit_requests_per_minute:
+  tls_listener:
+    enabled: false
+    bind_address: "0.0.0.0"
+    port: 443
+    cert_file: ""
+    key_file: ""
