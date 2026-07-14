@@ -4,3 +4,37 @@
 
 /// MVP agent가 control 프로세스에 포함되는 계약입니다.
 pub const EMBEDDED_IN_CONTROL: bool = true;
+
+pub mod os;
+
+use serde::{Deserialize, Serialize};
+
+/// collector의 최신성·가용 상태입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectorState {
+    /// 최신 값입니다.
+    Live,
+    /// 예상 수집 주기를 넘겼습니다.
+    Delayed,
+    /// 판단에 사용할 수 없습니다.
+    Stale,
+    /// 대상 서비스가 설정되지 않았습니다.
+    Unavailable,
+    /// 수집에 실패했습니다.
+    Error,
+}
+
+/// 개별 서비스 collector의 최소 health입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectorHealth {
+    /// collector 이름입니다.
+    pub name: String,
+    /// 현재 상태입니다.
+    pub state: CollectorState,
+    /// 마지막 정상 수집 시각입니다.
+    pub last_success_at: Option<String>,
+    /// 비밀값을 포함하지 않는 오류 코드입니다.
+    pub error_code: Option<String>,
+}
