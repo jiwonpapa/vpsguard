@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use guard_core::{ConfigError, GuardConfig};
+use pingora_core::listeners::tls::TlsSettings;
 use pingora_core::server::Server;
 use pingora_core::server::configuration::Opt;
 use pingora_proxy::http_proxy_service;
@@ -12,6 +13,7 @@ use tracing::info;
 
 use crate::proxy::GuardEdge;
 use crate::runtime::{EdgeRuntimeConfig, RuntimeConfigError};
+use crate::tls::{TlsPreflightError, preflight};
 
 /// Edge가 listener를 열기 전 발생할 수 있는 startup 실패입니다.
 #[derive(Debug, Error)]
@@ -34,6 +36,9 @@ pub enum EdgeStartupError {
     /// TLS listener를 추가하지 못했습니다.
     #[error("TLS listener 초기화 실패: {0}")]
     TlsListener(String),
+    /// 인증서, key, domain 또는 유효기간 사전 검증 실패입니다.
+    #[error(transparent)]
+    TlsPreflight(#[from] TlsPreflightError),
 }
 
 /// TOML 설정을 읽고 검증한 뒤 edge server를 실행합니다.
@@ -46,6 +51,9 @@ pub fn run_from_path(path: &Path) -> Result<(), EdgeStartupError> {
     let config = GuardConfig::from_toml(&source)?;
     let runtime = EdgeRuntimeConfig::try_from_guard(&config)?;
     install_crypto_provider()?;
+    if let Some(tls) = &runtime.tls {
+        preflight(tls)?;
+    }
     run_server(runtime)
 }
 
@@ -67,13 +75,13 @@ fn run_server(runtime: EdgeRuntimeConfig) -> Result<(), EdgeStartupError> {
     let mut service = http_proxy_service(&server.configuration, app);
     service.add_tcp(&runtime.listen_addr);
     if let Some(tls) = &runtime.tls {
-        service
-            .add_tls(
-                &tls.listen_addr,
-                tls.cert_file.to_string_lossy().as_ref(),
-                tls.key_file.to_string_lossy().as_ref(),
-            )
-            .map_err(|error| EdgeStartupError::TlsListener(format!("{error:?}")))?;
+        let mut settings = TlsSettings::intermediate(
+            tls.cert_file.to_string_lossy().as_ref(),
+            tls.key_file.to_string_lossy().as_ref(),
+        )
+        .map_err(|error| EdgeStartupError::TlsListener(format!("{error:?}")))?;
+        settings.enable_h2();
+        service.add_tls_with_settings(&tls.listen_addr, None, settings);
     }
     info!(
         http_listener = %runtime.listen_addr,

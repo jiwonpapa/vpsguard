@@ -10,6 +10,7 @@ mod response;
 mod runtime;
 mod startup;
 pub mod telemetry;
+pub mod tls;
 
 pub use startup::{EdgeStartupError, run_from_path};
 

@@ -17,6 +17,7 @@ pub(crate) struct RuntimeTlsConfig {
     pub(crate) listen_addr: String,
     pub(crate) cert_file: PathBuf,
     pub(crate) key_file: PathBuf,
+    pub(crate) domains: Vec<String>,
 }
 
 /// `guard-edge`가 요청마다 참조하는 불변 runtime 설정입니다.
@@ -77,6 +78,7 @@ impl EdgeRuntimeConfig {
                     listen_addr: listen_addr.to_string(),
                     cert_file: certificate.cert_file.clone(),
                     key_file: certificate.key_file.clone(),
+                    domains: certificate.domains.clone(),
                 })
             }
         };
