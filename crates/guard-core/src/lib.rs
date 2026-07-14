@@ -4,8 +4,16 @@
 //! 넣지 않습니다.
 
 pub mod config;
+pub mod detection;
+pub mod event;
+pub mod policy;
+pub mod state;
 
 pub use config::{ConfigError, GuardConfig};
+pub use detection::{Assessment, Decision, DetectionInput, Detector, ReasonCode};
+pub use event::{GuardEvent, Severity};
+pub use policy::{PolicyError, PolicySnapshot};
+pub use state::{GuardMode, GuardState, StateError, TransitionInput};
 
 /// 현재 workspace 계약 버전입니다.
 pub const CONTRACT_VERSION: u32 = 1;
