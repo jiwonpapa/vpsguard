@@ -1,6 +1,9 @@
 //! provider 단계·복구 회귀 테스트입니다.
 
-use super::{ProviderBackend, ProviderError, ProviderSnapshot, ProviderStage, ProviderTransaction};
+use super::{
+    ProviderBackend, ProviderError, ProviderSnapshot, ProviderStage, ProviderTransaction,
+    provider_error_code,
+};
 
 #[derive(Default)]
 struct FakeBackend {
@@ -8,6 +11,7 @@ struct FakeBackend {
     origin_verified: bool,
     origin_lock_calls: usize,
     restore_calls: usize,
+    restore_error: bool,
 }
 
 impl ProviderBackend for FakeBackend {
@@ -38,6 +42,9 @@ impl ProviderBackend for FakeBackend {
 
     fn restore(&mut self, _snapshot: &ProviderSnapshot) -> Result<(), ProviderError> {
         self.restore_calls += 1;
+        if self.restore_error {
+            return Err(ProviderError::Backend("RESTORE_FAILED".to_owned()));
+        }
         Ok(())
     }
 }
@@ -124,4 +131,119 @@ fn restores_snapshot() -> Result<(), ProviderError> {
     assert_eq!(transaction.stage, ProviderStage::Restored);
     assert_eq!(backend.restore_calls, 1);
     Ok(())
+}
+
+#[test]
+fn rejects_record_outside_allowlist() {
+    assert_eq!(
+        ProviderTransaction::new(
+            "action-2",
+            "other.example.com",
+            &["guard.example.com".to_owned()],
+        ),
+        Err(ProviderError::RecordNotAllowed(
+            "other.example.com".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn records_origin_readback_failure() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend {
+        proxy_verified: true,
+        origin_verified: false,
+        ..FakeBackend::default()
+    };
+    let mut transaction = transaction()?;
+    assert_eq!(
+        transaction.enable(&mut backend),
+        Err(ProviderError::OriginLockNotVerified)
+    );
+    assert_eq!(
+        transaction.last_error.as_deref(),
+        Some("ORIGIN_LOCK_NOT_VERIFIED")
+    );
+    Ok(())
+}
+
+#[test]
+fn restore_wrapper_is_idempotent() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend {
+        proxy_verified: true,
+        origin_verified: true,
+        ..FakeBackend::default()
+    };
+    let mut transaction = transaction()?;
+    transaction.enable(&mut backend)?;
+    transaction.restore(&mut backend)?;
+    transaction.restore(&mut backend)?;
+    assert_eq!(transaction.stage, ProviderStage::Restored);
+    assert_eq!(backend.restore_calls, 1);
+    Ok(())
+}
+
+#[test]
+fn restore_failures_keep_a_resumable_checkpoint() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend {
+        proxy_verified: true,
+        origin_verified: true,
+        restore_error: true,
+        ..FakeBackend::default()
+    };
+    let mut transaction = transaction()?;
+    transaction.enable(&mut backend)?;
+    assert_eq!(
+        transaction.restore_step(&mut backend)?,
+        ProviderStage::RestoreRequested
+    );
+    assert_eq!(
+        transaction.restore_step(&mut backend),
+        Err(ProviderError::Backend("RESTORE_FAILED".to_owned()))
+    );
+    assert_eq!(transaction.stage, ProviderStage::RestoreRequested);
+    assert_eq!(
+        transaction.last_error.as_deref(),
+        Some("PROVIDER_BACKEND_FAILED")
+    );
+    assert!(transaction.enable_step(&mut backend).is_err());
+    Ok(())
+}
+
+#[test]
+fn restore_rejects_missing_or_incomplete_snapshot() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend::default();
+    let mut incomplete = transaction()?;
+    assert!(incomplete.restore_step(&mut backend).is_err());
+
+    incomplete.stage = ProviderStage::Complete;
+    incomplete.snapshot = None;
+    assert_eq!(
+        incomplete.restore_step(&mut backend),
+        Err(ProviderError::MissingSnapshot)
+    );
+    Ok(())
+}
+
+#[test]
+fn provider_errors_have_stable_codes() {
+    assert_eq!(
+        provider_error_code(&ProviderError::RecordNotAllowed("record".to_owned())),
+        "RECORD_NOT_ALLOWED"
+    );
+    assert_eq!(
+        provider_error_code(&ProviderError::ProxyNotVerified),
+        "PROXY_NOT_VERIFIED"
+    );
+    assert_eq!(
+        provider_error_code(&ProviderError::OriginLockNotVerified),
+        "ORIGIN_LOCK_NOT_VERIFIED"
+    );
+    assert_eq!(
+        provider_error_code(&ProviderError::Backend("backend".to_owned())),
+        "PROVIDER_BACKEND_FAILED"
+    );
+    assert_eq!(
+        provider_error_code(&ProviderError::MissingSnapshot),
+        "MISSING_SNAPSHOT"
+    );
 }
