@@ -9,6 +9,7 @@ pub mod rate_limit;
 mod response;
 mod runtime;
 mod startup;
+pub mod telemetry;
 
 pub use startup::{EdgeStartupError, run_from_path};
 

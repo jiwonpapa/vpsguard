@@ -78,6 +78,9 @@ pub struct EdgeConfig {
     /// 업로드 경로 client별 분당 한도입니다.
     #[serde(default)]
     pub upload_rate_limit_rpm: Option<u32>,
+    /// non-blocking Unix datagram telemetry socket입니다.
+    #[serde(default = "default_telemetry_socket")]
+    pub telemetry_socket: PathBuf,
 }
 
 /// loopback origin 설정입니다.
@@ -380,6 +383,10 @@ fn invalid<T>(field: &'static str, reason: impl Into<String>) -> Result<T, Confi
 
 fn default_language() -> String {
     "ko".to_owned()
+}
+
+fn default_telemetry_socket() -> PathBuf {
+    PathBuf::from("/run/vps-guard/telemetry.sock")
 }
 
 #[cfg(test)]

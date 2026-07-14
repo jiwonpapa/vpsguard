@@ -21,6 +21,7 @@ use crate::policy::{effective_client_ip, host_allowed, normalize_host};
 use crate::rate_limit::{BoundedRateLimiter, LimitDecision, RouteClass};
 use crate::response::{add_common_headers, respond_redirect, respond_text};
 use crate::runtime::EdgeRuntimeConfig;
+use crate::telemetry::{DecisionKind, RequestTelemetry, TelemetrySink};
 
 const LIVE_PATH: &str = "/health/live";
 const READY_PATH: &str = "/health/ready";
@@ -32,16 +33,19 @@ pub(crate) struct GuardEdge {
     request_sequence: AtomicU64,
     rate_limiter: Arc<BoundedRateLimiter>,
     origin_ready: AtomicBool,
+    telemetry: TelemetrySink,
 }
 
 impl GuardEdge {
     pub(crate) fn new(config: EdgeRuntimeConfig) -> Self {
         let max_entries = config.max_tracked_clients;
+        let telemetry = TelemetrySink::connect(&config.telemetry_socket);
         Self {
             config,
             request_sequence: AtomicU64::new(1),
             rate_limiter: Arc::new(BoundedRateLimiter::new(max_entries)),
             origin_ready: AtomicBool::new(true),
+            telemetry,
         }
     }
 
@@ -96,10 +100,12 @@ impl GuardEdge {
                 "invalid host rejected"
             );
             respond_text(session, 400, b"invalid host\n", &context.request_id, None).await?;
+            self.emit_telemetry(context, 400, DecisionKind::Deny);
             return Ok(true);
         }
         if path == LIVE_PATH {
             respond_text(session, 200, b"live\n", &context.request_id, None).await?;
+            self.emit_telemetry(context, 200, DecisionKind::Allow);
             return Ok(true);
         }
         if path == READY_PATH {
@@ -110,6 +116,7 @@ impl GuardEdge {
                 (503, b"origin unavailable\n")
             };
             respond_text(session, status, body, &context.request_id, None).await?;
+            self.emit_telemetry(context, status, DecisionKind::Allow);
             return Ok(true);
         }
         if let (Some(canonical), Some(current)) =
@@ -125,6 +132,7 @@ impl GuardEdge {
                 "canonical host redirect"
             );
             respond_redirect(session, &location, &context.request_id).await?;
+            self.emit_telemetry(context, 308, DecisionKind::Allow);
             return Ok(true);
         }
         if let (Some(client_ip), Some(limit)) = (
@@ -151,6 +159,7 @@ impl GuardEdge {
                         Some(60),
                     )
                     .await?;
+                    self.emit_telemetry(context, 429, DecisionKind::Throttle);
                     return Ok(true);
                 }
                 LimitDecision::CapacityReached => {
@@ -168,6 +177,7 @@ impl GuardEdge {
                 None,
             )
             .await?;
+            self.emit_telemetry(context, 413, DecisionKind::Deny);
             return Ok(true);
         }
         Ok(false)
@@ -281,6 +291,11 @@ impl ProxyHttp for GuardEdge {
             latency_ms = context.started_at.elapsed().as_millis(),
             "request completed"
         );
+        self.emit_telemetry(
+            context,
+            upstream_response.status.as_u16(),
+            DecisionKind::Allow,
+        );
         Ok(())
     }
 
@@ -288,7 +303,7 @@ impl ProxyHttp for GuardEdge {
         &self,
         session: &mut Session,
         error: &pingora_core::Error,
-        _context: &mut Self::CTX,
+        context: &mut Self::CTX,
     ) -> FailToProxy
     where
         Self::CTX: Send + Sync,
@@ -310,6 +325,16 @@ impl ProxyHttp for GuardEdge {
         {
             warn!(error = %send_error, "failed to send proxy error response");
         }
+        if error_code > 0 {
+            let decision = if error_code == 429 {
+                DecisionKind::Throttle
+            } else if (400..500).contains(&error_code) {
+                DecisionKind::Deny
+            } else {
+                DecisionKind::Allow
+            };
+            self.emit_telemetry(context, error_code, decision);
+        }
         FailToProxy {
             error_code,
             can_reuse_downstream: false,
@@ -326,6 +351,27 @@ impl ProxyHttp for GuardEdge {
             self.config.origin_port,
             self.config.origin_tls
         )
+    }
+}
+
+impl GuardEdge {
+    fn emit_telemetry(&self, context: &RequestContext, status: u16, decision: DecisionKind) {
+        self.telemetry.emit(&RequestTelemetry {
+            schema_version: 1,
+            request_id: context.request_id.clone(),
+            method: context.method.clone(),
+            route_class: context.route_class,
+            status,
+            latency_micros: context
+                .started_at
+                .elapsed()
+                .as_micros()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            client_ip: context.client_ip,
+            request_body_bytes: context.request_body_bytes_seen,
+            decision,
+        });
     }
 }
 

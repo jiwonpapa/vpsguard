@@ -15,6 +15,7 @@ upload_upstream_read_timeout_ms = 60000
 max_tracked_clients = 10000
 strict_rate_limit_rpm = 60
 upload_rate_limit_rpm = 30
+telemetry_socket = "/run/vps-guard/telemetry.sock"
 
 [origin]
 address = "127.0.0.1:18081"

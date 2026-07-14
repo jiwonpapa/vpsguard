@@ -42,6 +42,7 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) rate_limit_rpm: Option<u32>,
     pub(crate) strict_rate_limit_rpm: Option<u32>,
     pub(crate) upload_rate_limit_rpm: Option<u32>,
+    pub(crate) telemetry_socket: PathBuf,
 }
 
 /// core 설정은 유효하지만 현재 edge runtime이 지원하지 못하는 조합입니다.
@@ -104,6 +105,7 @@ impl EdgeRuntimeConfig {
             rate_limit_rpm: config.edge.rate_limit_rpm,
             strict_rate_limit_rpm: config.edge.strict_rate_limit_rpm,
             upload_rate_limit_rpm: config.edge.upload_rate_limit_rpm,
+            telemetry_socket: config.edge.telemetry_socket.clone(),
         })
     }
 
