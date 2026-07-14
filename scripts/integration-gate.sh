@@ -79,7 +79,7 @@ action_status="$(curl --silent --output "${evidence_dir}/manual-hold.json" --wri
   -X POST -H 'X-VPSGuard-Token: smoke-token' -H 'Idempotency-Key: smoke-hold-1' \
   http://127.0.0.1:17727/api/v1/actions/manual-hold)"
 [[ "${action_status}" == "200" ]]
-rg -q 'MANUAL_HOLD' "${evidence_dir}/manual-hold.json"
+grep -Fq 'MANUAL_HOLD' "${evidence_dir}/manual-hold.json"
 
 curl --silent --show-error --dump-header "${evidence_dir}/session.headers" \
   --output "${evidence_dir}/session.json" -X POST \
@@ -100,6 +100,9 @@ resume_status="$(curl --silent --output "${evidence_dir}/resume-auto.json" --wri
   -H 'Idempotency-Key: smoke-resume-1' \
   http://127.0.0.1:17727/api/v1/actions/resume-auto)"
 [[ "${resume_status}" == "200" ]]
-rg -q 'WATCH' "${evidence_dir}/resume-auto.json"
+grep -Fq 'WATCH' "${evidence_dir}/resume-auto.json"
+
+# SEC-001, SEC-005: session cookie와 CSRF token은 검증 후 artifact에 남기지 않습니다.
+rm -f "${evidence_dir}/session.headers" "${evidence_dir}/session.json"
 
 echo "integration gate: PASS"

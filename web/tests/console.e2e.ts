@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+// UI-002, UI-004: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
+
 const status = {
   schema_version: 1,
   mode: "LOCAL_GUARD",

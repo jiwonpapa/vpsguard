@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-현재는 **개발 MVP 구현 완료·release 인증 전 단계**입니다. Pingora edge, 정책 hot reload, telemetry 기반 탐지, SQLite/SSE control plane, Bun/React 운영 SPA, Cloudflare·nftables transaction adapter와 rollback 운영 하네스가 실행됩니다. public 80/443 전환과 실제 Cloudflare 변경은 파일럿 gate 전까지 금지합니다.
+현재는 **pre-MVP 개발용 수직 슬라이스**입니다. Pingora edge, 정책 hot reload, telemetry, SQLite/SSE control plane, Bun/React 운영 SPA와 provider adapter의 기본 코드가 있으나, 실제 Cloudflare 전환·복구, public 80/443, fault·2GB VPS·rollback 증거는 아직 없습니다. 현재 검증 단계는 [`verification-status.tsv`](specs/product/verification-status.tsv)가 정본입니다.
 
 ## 제품 핵심
 

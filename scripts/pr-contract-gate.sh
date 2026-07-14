@@ -8,7 +8,7 @@ set -euo pipefail
 }
 
 body="$(jq -r '.pull_request.body // ""' "${GITHUB_EVENT_PATH}")"
-if ! rg -q '\b(EDGE|OBS|DET|ACT|TLS|UI|OPS|SEC|NFR)-[0-9]{3}\b' <<<"${body}"; then
+if ! grep -Eq '(EDGE|OBS|DET|ACT|TLS|UI|OPS|SEC|NFR)-[0-9]{3}' <<<"${body}"; then
   echo "pull request body must include at least one requirement ID" >&2
   exit 1
 fi

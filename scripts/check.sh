@@ -14,5 +14,6 @@ fi
 
 bash scripts/docs-gate.sh
 bash scripts/requirements-gate.sh
+bash scripts/tests/repository-contracts.sh
 
 (cd web && bun ci && bun run check)

@@ -26,6 +26,8 @@ last_reviewed: 2026-07-14
 
 ## 3. 요구사항 추적
 
+아래 경로는 최종 수용 기준을 위한 **목표 테스트 경로**이며 파일 존재 자체를 현재 통과 증거로 간주하지 않습니다. 현재 구현·자동 검증·실제 VPS 검증 단계의 기계 판독 정본은 [`verification-status.tsv`](verification-status.tsv)입니다. `scripts/requirements-gate.sh`는 모든 요구사항의 상태와 증거 파일 존재를 검증하고, `--release`에서는 `PLANNED`와 `CODE_ONLY`를 차단합니다.
+
 ### 3.1 Edge
 
 | 요구사항 | 예정 자동 증거 | 운영 증거 |

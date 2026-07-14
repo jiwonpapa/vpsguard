@@ -32,12 +32,15 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          tool: cargo-audit,cargo-deny,cargo-machete,actionlint
+          tool: cargo-audit,cargo-deny,cargo-machete
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - name: Repository contracts
         run: |
           bash scripts/docs-gate.sh
           bash scripts/requirements-gate.sh
           bash scripts/pr-contract-gate.sh
+          bash scripts/tests/repository-contracts.sh
           actionlint
           shellcheck scripts/*.sh packaging/certbot/*
       - name: Rust quality
@@ -72,7 +75,7 @@ jobs:
         with:
           name: nextest-junit
           path: target/nextest/ci/junit.xml
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   coverage:
     name: coverage
@@ -97,7 +100,7 @@ jobs:
         with:
           name: coverage
           path: target-evidence/coverage/
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   integration:
     name: integration
@@ -119,7 +122,7 @@ jobs:
         with:
           name: integration-evidence
           path: target-evidence/
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   web:
     name: web
@@ -150,7 +153,7 @@ jobs:
           path: |
             web/playwright-report/
             web/test-results/
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   load-regression:
     name: load-regression
@@ -171,7 +174,7 @@ jobs:
         with:
           name: load-evidence
           path: target-evidence/load/
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   merge-gate:
     name: merge-gate
@@ -181,9 +184,17 @@ jobs:
     steps:
       - name: Require every gate
         env:
-          RESULTS: ${{ join(needs.*.result, ',') }}
+          QUALITY: ${{ needs.quality.result }}
+          UNIT_CONTRACT: ${{ needs.unit-contract.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          WEB: ${{ needs.web.result }}
+          LOAD_REGRESSION: ${{ needs.load-regression.result }}
         run: |
-          case "${RESULTS}" in
-            *failure*|*cancelled*) exit 1 ;;
-          esac
-          echo "all required gates passed: ${RESULTS}"
+          for result in "${QUALITY}" "${UNIT_CONTRACT}" "${COVERAGE}" "${INTEGRATION}" "${WEB}" "${LOAD_REGRESSION}"; do
+            if [[ "${result}" != "success" ]]; then
+              echo "required gate did not succeed: ${result}" >&2
+              exit 1
+            fi
+          done
+          echo "all required gates passed"

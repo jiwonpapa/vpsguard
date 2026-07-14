@@ -1,5 +1,5 @@
 ---
-title: VPSGuard Development MVP Status
+title: VPSGuard pre-MVP Status
 status: active
 doc_type: implementation-status
 source_of_truth: true
@@ -7,13 +7,13 @@ spec_version: 1
 last_reviewed: 2026-07-14
 ---
 
-# 개발 MVP 구현 현황
+# pre-MVP 구현 현황
 
 ## 판정
 
-로컬에서 재현 가능한 **개발 MVP 코드와 운영 하네스**는 완료했습니다. Pingora가 검증된 정책 snapshot을 hot reload하고, control이 telemetry·collector를 상관해 상태와 정책을 원자 저장합니다. SQLite/SSE API와 독립 SPA가 traffic·client·route·사건·자원을 표시하며 session/CSRF/idempotency를 강제합니다. 실제 고객 서버의 public 80/443과 Cloudflare test zone release 인증은 완료하지 않았습니다.
+현재 상태는 **pre-MVP 개발용 수직 슬라이스**입니다. 기본 Rust 단위 테스트와 loopback smoke는 재현되지만, 요구사항별 자동 증거·실제 VPS 장애 주입·Cloudflare test zone·public 80/443·rollback 인증이 남아 있습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-## 구현 완료
+## 코드 및 자동 검증 현황
 
 | 영역 | 구현 | 주요 증거 |
 |---|---|---|
@@ -31,7 +31,7 @@ last_reviewed: 2026-07-14
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | CSR SPA, SSE 사건, bytes·connection, client 검색·필터·정렬·페이지, provider 진행률, 운영 명령 확인, light/dark, stale/error | Bun·Playwright·control smoke |
 | `UI-012` 일부 | 비인증 client IP network 마스킹, session 인증 후 원본 IP 표시, 민감 export 미제공 | API authorization regression |
 | `OPS-002`~`OPS-008` 하네스 | typed plan, ingress rollback, bypass, update rollback, ownership uninstall, arch matrix·SBOM·command audit | `scripts/ops-harness.sh`, release workflow |
-| 회귀 차단 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 필수 merge gate로 연결 | CI `merge-gate` |
+| 회귀 차단 코드 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 merge gate로 연결 | GitHub branch protection 적용 전에는 강제되지 않음 |
 | `SEC-001`, `SEC-005` | root-only token, memory session·CSRF, CSP, query·header·body 미저장 | API auth·web tests |
 | `NFR-003`, `NFR-004`, `NFR-006` 일부 | edge/control 분리, 원자 state, versioned strict schema | integration·atomic store tests |
 
