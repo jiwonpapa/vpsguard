@@ -3,8 +3,10 @@
 use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::os::unix::net::UnixDatagram;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -63,11 +65,19 @@ pub struct RequestTelemetry {
 }
 
 /// 연결 실패·backpressure가 요청 실패로 전파되지 않는 telemetry sink입니다.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TelemetrySink {
-    socket: Option<UnixDatagram>,
+    inner: Arc<TelemetryInner>,
+}
+
+#[derive(Debug)]
+struct TelemetryInner {
+    path: PathBuf,
+    socket: Mutex<Option<UnixDatagram>>,
     dropped: AtomicU64,
     emitted: AtomicU64,
+    reconnected: AtomicU64,
+    reconnect_interval: Duration,
 }
 
 impl TelemetrySink {
@@ -76,43 +86,58 @@ impl TelemetrySink {
     /// socket 부재나 권한 오류는 disabled sink로 전환합니다.
     #[must_use]
     pub fn connect(path: &Path) -> Self {
-        let socket = UnixDatagram::unbound().ok().and_then(|socket| {
-            if socket.set_nonblocking(true).is_err() || socket.connect(path).is_err() {
-                None
-            } else {
-                Some(socket)
-            }
-        });
-        Self {
-            socket,
+        Self::connect_with_interval(path, Duration::from_secs(1))
+    }
+
+    fn connect_with_interval(path: &Path, reconnect_interval: Duration) -> Self {
+        let inner = Arc::new(TelemetryInner {
+            path: path.to_path_buf(),
+            socket: Mutex::new(connect_socket(path)),
             dropped: AtomicU64::new(0),
             emitted: AtomicU64::new(0),
-        }
+            reconnected: AtomicU64::new(0),
+            reconnect_interval,
+        });
+        spawn_reconnector(&inner);
+        Self { inner }
     }
 
     /// 요청을 blocking 없이 전송하며 실패는 drop counter로만 기록합니다.
     pub fn emit(&self, telemetry: &RequestTelemetry) {
         let Ok(payload) = serde_json::to_vec(telemetry) else {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
             return;
         };
         if payload.len() > MAX_DATAGRAM_BYTES {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        let Some(socket) = &self.socket else {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
+        let Ok(mut socket_guard) = self.inner.socket.try_lock() else {
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        let Some(socket) = socket_guard.as_ref() else {
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
             return;
         };
         match socket.send(&payload) {
             Ok(_) => {
-                self.emitted.fetch_add(1, Ordering::Relaxed);
+                self.inner.emitted.fetch_add(1, Ordering::Relaxed);
             }
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::NotFound) => {
-                self.dropped.fetch_add(1, Ordering::Relaxed);
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                self.inner.dropped.fetch_add(1, Ordering::Relaxed);
             }
-            Err(_) => {
-                self.dropped.fetch_add(1, Ordering::Relaxed);
+            Err(error) => {
+                self.inner.dropped.fetch_add(1, Ordering::Relaxed);
+                if matches!(
+                    error.kind(),
+                    ErrorKind::NotFound
+                        | ErrorKind::ConnectionRefused
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::BrokenPipe
+                ) {
+                    *socket_guard = None;
+                }
             }
         }
     }
@@ -120,23 +145,70 @@ impl TelemetrySink {
     /// 손실 datagram 수입니다.
     #[must_use]
     pub fn dropped(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
+        self.inner.dropped.load(Ordering::Relaxed)
     }
 
     /// 성공 전송 datagram 수입니다.
     #[must_use]
     pub fn emitted(&self) -> u64 {
-        self.emitted.load(Ordering::Relaxed)
+        self.inner.emitted.load(Ordering::Relaxed)
+    }
+
+    /// receiver 재생성 뒤 연결을 복구한 횟수입니다.
+    #[must_use]
+    pub fn reconnected(&self) -> u64 {
+        self.inner.reconnected.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
     fn from_socket(socket: UnixDatagram) -> Self {
         let _nonblocking_result = socket.set_nonblocking(true);
         Self {
-            socket: Some(socket),
-            dropped: AtomicU64::new(0),
-            emitted: AtomicU64::new(0),
+            inner: Arc::new(TelemetryInner {
+                path: PathBuf::new(),
+                socket: Mutex::new(Some(socket)),
+                dropped: AtomicU64::new(0),
+                emitted: AtomicU64::new(0),
+                reconnected: AtomicU64::new(0),
+                reconnect_interval: Duration::from_secs(1),
+            }),
         }
+    }
+}
+
+fn connect_socket(path: &Path) -> Option<UnixDatagram> {
+    UnixDatagram::unbound().ok().and_then(|socket| {
+        if socket.set_nonblocking(true).is_err() || socket.connect(path).is_err() {
+            None
+        } else {
+            Some(socket)
+        }
+    })
+}
+
+fn spawn_reconnector(inner: &Arc<TelemetryInner>) {
+    let weak = Arc::downgrade(inner);
+    let spawn_result = std::thread::Builder::new()
+        .name("vps-guard-telemetry-reconnect".to_owned())
+        .spawn(move || {
+            loop {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                std::thread::sleep(inner.reconnect_interval);
+                let Ok(mut socket_guard) = inner.socket.try_lock() else {
+                    continue;
+                };
+                if socket_guard.is_none()
+                    && let Some(socket) = connect_socket(&inner.path)
+                {
+                    *socket_guard = Some(socket);
+                    inner.reconnected.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        });
+    if let Err(error) = spawn_result {
+        tracing::warn!(error = %error, "telemetry reconnect thread unavailable");
     }
 }
 

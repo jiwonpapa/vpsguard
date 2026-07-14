@@ -2,6 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::os::unix::net::UnixDatagram;
+use std::time::{Duration, Instant};
 
 use super::{DecisionKind, RequestTelemetry, TelemetrySink};
 use crate::rate_limit::RouteClass;
@@ -46,4 +47,39 @@ fn disconnected_sink_only_increments_drop_counter() {
     let sink = TelemetrySink::connect(std::path::Path::new("/run/vps-guard/nonexistent-test.sock"));
     sink.emit(&fixture());
     assert_eq!(sink.dropped(), 1);
+}
+
+#[test]
+fn reconnects_after_receiver_socket_is_recreated() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("telemetry.sock");
+    let first_receiver = UnixDatagram::bind(&path)?;
+    let sink = TelemetrySink::connect_with_interval(&path, Duration::from_millis(10));
+    sink.emit(&fixture());
+    let mut buffer = [0_u8; 4_096];
+    first_receiver.set_read_timeout(Some(Duration::from_secs(1)))?;
+    let _first_length = first_receiver.recv(&mut buffer)?;
+
+    drop(first_receiver);
+    std::fs::remove_file(&path)?;
+    sink.emit(&fixture());
+    let second_receiver = UnixDatagram::bind(&path)?;
+    second_receiver.set_nonblocking(true)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let recovered = loop {
+        sink.emit(&fixture());
+        match second_receiver.recv(&mut buffer) {
+            Ok(length) => break length > 0,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(recovered);
+    assert!(sink.reconnected() >= 1);
+    Ok(())
 }

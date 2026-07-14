@@ -129,7 +129,11 @@ impl GuardState {
             GuardMode::LocalGuard if self.breach_windows >= 5 && input.distributed_pressure => {
                 GuardMode::EmergencyProxy
             }
-            GuardMode::EmergencyProxy if !risky && input.provider_verified => GuardMode::Recovering,
+            GuardMode::EmergencyProxy
+                if !risky && self.stable_windows >= 5 && input.provider_verified =>
+            {
+                GuardMode::Recovering
+            }
             GuardMode::LocalGuard if self.stable_windows >= 3 => GuardMode::Recovering,
             GuardMode::Watch if self.stable_windows >= 2 => GuardMode::Normal,
             GuardMode::Recovering if self.stable_windows >= 5 => GuardMode::Normal,

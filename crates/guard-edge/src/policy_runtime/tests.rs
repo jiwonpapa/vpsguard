@@ -73,3 +73,23 @@ fn applies_client_and_route_rules_without_file_access() -> Result<(), Box<dyn st
     assert_eq!(decision.policy_version, 4);
     Ok(())
 }
+
+#[test]
+fn expired_snapshot_fails_open_for_all_dynamic_rules() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    let path = directory.path().join("policy.json");
+    let runtime = PolicyRuntime::new(path.clone());
+    let now = OffsetDateTime::now_utc();
+    fs::write(&path, serde_json::to_vec(&policy(5, now)?)?)?;
+    assert_eq!(runtime.reload_at(now).ok(), Some(true));
+
+    let decision = runtime.decision_at(
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        "strict",
+        now + Duration::hours(2),
+    );
+    assert_eq!(decision.action, None);
+    assert_eq!(decision.requests_per_minute, None);
+    assert_eq!(decision.policy_version, 5);
+    Ok(())
+}

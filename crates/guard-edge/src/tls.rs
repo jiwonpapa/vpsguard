@@ -113,7 +113,8 @@ fn domain_matches(certificate_name: &str, domain: &str) -> bool {
     if let Some(suffix) = certificate_name.strip_prefix("*.") {
         return domain
             .strip_suffix(suffix)
-            .is_some_and(|prefix| prefix.ends_with('.') && prefix.len() > 1);
+            .and_then(|prefix| prefix.strip_suffix('.'))
+            .is_some_and(|label| !label.is_empty() && !label.contains('.'));
     }
     certificate_name == domain
 }

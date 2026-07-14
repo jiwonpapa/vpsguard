@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use guard_agent::os;
 use guard_agent::services::{ServiceTargets, collect_services};
@@ -27,6 +27,8 @@ use crate::auth::SessionStore;
 use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{SqliteStore, StorageError};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
+
+const POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// control startup·serve 실패입니다.
 #[derive(Debug, Error)]
@@ -196,16 +198,32 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
     let max_tracked_clients = config.edge.max_tracked_clients;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut last_policy_refresh = None;
         loop {
             interval.tick().await;
+            let policy_refresh_due =
+                enforce && policy_renewal_due(last_policy_refresh, Instant::now());
             let resources_available = app.os_snapshot.read().await.is_some();
             let input = lock_traffic(&app).take_detection_input(resources_available);
+            let occurred_at = current_timestamp();
+            let current = app.state.read().await.clone();
             let Some(input) = input else {
+                if policy_refresh_due
+                    && let Some(refreshed) = write_policy_for_mode(
+                        &policy_store,
+                        current,
+                        max_body_bytes,
+                        max_tracked_clients,
+                    )
+                    .await
+                    && persist_state(&app, &refreshed).await.is_ok()
+                {
+                    *app.state.write().await = refreshed;
+                    last_policy_refresh = Some(Instant::now());
+                }
                 continue;
             };
             let assessment = Detector::assess(&input);
-            let occurred_at = current_timestamp();
-            let current = app.state.read().await.clone();
             let provider_verified = app.provider.try_lock().ok().is_some_and(|provider| {
                 provider
                     .as_ref()
@@ -257,53 +275,71 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                     }
                 }
             }
-            if next.current_mode == current.current_mode {
+            let state_changed = next.current_mode != current.current_mode;
+            if !state_changed && !policy_refresh_due {
                 continue;
             }
-            if matches!(
-                next.current_mode,
-                GuardMode::Watch
-                    | GuardMode::LocalGuard
-                    | GuardMode::EmergencyProxy
-                    | GuardMode::Recovering
-                    | GuardMode::Normal
-            ) && enforce
-            {
-                let policy_version = current.policy_version.saturating_add(1);
-                match build_policy(
-                    next.current_mode,
-                    policy_version,
-                    max_body_bytes,
-                    max_tracked_clients,
-                ) {
-                    Ok(policy) => {
-                        let policy_store = policy_store.clone();
-                        let write_result =
-                            tokio::task::spawn_blocking(move || policy_store.write(&policy)).await;
-                        if !matches!(write_result, Ok(Ok(()))) {
-                            warn!("policy snapshot write failed; state transition deferred");
-                            continue;
-                        }
-                        next.policy_version = policy_version;
-                    }
-                    Err(error) => {
-                        warn!(error = %error, "policy snapshot generation failed");
-                        continue;
-                    }
-                }
+            let mut policy_refreshed = false;
+            if enforce {
+                let Some(refreshed) =
+                    write_policy_for_mode(&policy_store, next, max_body_bytes, max_tracked_clients)
+                        .await
+                else {
+                    continue;
+                };
+                next = refreshed;
+                policy_refreshed = true;
             }
             update_incident(&mut next);
             if persist_state(&app, &next).await.is_err() {
                 continue;
             }
             *app.state.write().await = next.clone();
-            let event = transition_event(&current, &next, &assessment, occurred_at);
-            if let Err(error) = app.storage.record_event(&event) {
-                warn!(error = %error, "transition event persistence failed");
+            if policy_refreshed {
+                last_policy_refresh = Some(Instant::now());
             }
-            let _send_result = app.events.send(event);
+            if state_changed {
+                let event = transition_event(&current, &next, &assessment, occurred_at);
+                if let Err(error) = app.storage.record_event(&event) {
+                    warn!(error = %error, "transition event persistence failed");
+                }
+                let _send_result = app.events.send(event);
+            }
         }
     });
+}
+
+async fn write_policy_for_mode(
+    policy_store: &AtomicJsonStore<PolicySnapshot>,
+    mut state: GuardState,
+    max_body_bytes: u64,
+    max_tracked_clients: usize,
+) -> Option<GuardState> {
+    let policy_version = state.policy_version.saturating_add(1);
+    let policy = match build_policy(
+        state.current_mode,
+        policy_version,
+        max_body_bytes,
+        max_tracked_clients,
+    ) {
+        Ok(policy) => policy,
+        Err(error) => {
+            warn!(error = %error, "policy snapshot generation failed");
+            return None;
+        }
+    };
+    let policy_store = policy_store.clone();
+    let write_result = tokio::task::spawn_blocking(move || policy_store.write(&policy)).await;
+    if !matches!(write_result, Ok(Ok(()))) {
+        warn!("policy snapshot write failed; state update deferred");
+        return None;
+    }
+    state.policy_version = policy_version;
+    Some(state)
+}
+
+fn policy_renewal_due(last_refresh: Option<Instant>, now: Instant) -> bool {
+    last_refresh.is_none_or(|last| now.saturating_duration_since(last) >= POLICY_REFRESH_INTERVAL)
 }
 
 async fn run_provider_transaction(
@@ -416,6 +452,10 @@ fn build_policy(
     }
     .seal()
 }
+
+#[cfg(test)]
+#[path = "runtime/tests.rs"]
+mod tests;
 
 fn update_incident(state: &mut GuardState) {
     if matches!(

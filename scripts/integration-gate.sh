@@ -42,19 +42,28 @@ VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.smoke.toml" \
   target/debug/vps-guard-edge >"${evidence_dir}/edge.log" 2>&1 &
 edge_pid=$!
 curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+  --dump-header "${evidence_dir}/edge-live.headers" \
   -H 'Host: example.test' http://127.0.0.1:18080/health/live >"${evidence_dir}/edge-live.txt"
+grep -Eiq '^x-vpsguard-telemetry-(emitted|dropped|reconnected): [0-9]+' "${evidence_dir}/edge-live.headers"
+
+initial_ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:18080/health/ready)"
+[[ "${initial_ready_status}" == "503" ]]
 
 proxy_body="$(curl --silent --show-error -H 'Host: example.test' http://127.0.0.1:18080/hello)"
 [[ "${proxy_body}" == *'"path": "/hello"'* ]]
 [[ "${proxy_body}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
 [[ "${proxy_body}" != *'secret='* ]]
+ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:18080/health/ready)"
+[[ "${ready_status}" == "200" ]]
 
 invalid_host_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test' http://127.0.0.1:18080/)"
 [[ "${invalid_host_status}" == "400" ]]
 
-curl --silent --output /dev/null -H 'Host: example.test' http://127.0.0.1:18080/hello
-rate_limited_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:18080/hello)"
-[[ "${rate_limited_status}" == "429" ]]
+# EDGE-008, OPS-001: first-install observe 모드는 설정된 동적 rate limit도 실행하지 않습니다.
+for _request in 1 2 3 4; do
+  observe_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:18080/hello)"
+  [[ "${observe_status}" == "200" ]]
+done
 
 curl --silent --show-error http://127.0.0.1:17727/api/v1/status >"${evidence_dir}/status.json"
 curl --silent --show-error http://127.0.0.1:17727/api/v1/traffic/summary >"${evidence_dir}/traffic.json"

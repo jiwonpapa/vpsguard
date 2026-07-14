@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use guard_core::config::{DetectionProfile, GuardConfig, OriginProtocol};
+use guard_core::config::{DetectionMode, DetectionProfile, GuardConfig, OriginProtocol};
 use guard_profiles::ApplicationProfile;
 use ipnet::IpNet;
 use thiserror::Error;
@@ -50,6 +50,7 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) challenge_secret_file: Option<PathBuf>,
     pub(crate) clearance_ttl_seconds: u64,
     pub(crate) application_profile: ApplicationProfile,
+    pub(crate) detection_mode: DetectionMode,
 }
 
 /// core 설정은 유효하지만 현재 edge runtime이 지원하지 못하는 조합입니다.
@@ -122,6 +123,7 @@ impl EdgeRuntimeConfig {
                 DetectionProfile::Gnuboard => ApplicationProfile::Gnuboard,
                 DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
             },
+            detection_mode: config.detection.mode,
         })
     }
 
@@ -144,11 +146,19 @@ impl EdgeRuntimeConfig {
     }
 
     pub(crate) fn rate_limit(&self, route_class: RouteClass) -> Option<u32> {
+        if !self.enforces_dynamic_protection() {
+            return None;
+        }
         match route_class {
             RouteClass::General => self.rate_limit_rpm,
             RouteClass::Strict => self.strict_rate_limit_rpm.or(self.rate_limit_rpm),
             RouteClass::Upload => self.upload_rate_limit_rpm.or(self.rate_limit_rpm),
         }
+    }
+
+    /// observe-only 설치에서 동적 throttle·challenge·deny를 실행하지 않습니다.
+    pub(crate) fn enforces_dynamic_protection(&self) -> bool {
+        self.detection_mode == DetectionMode::Enforce
     }
 
     pub(crate) fn trusts_peer(&self, peer: IpAddr) -> bool {
@@ -157,3 +167,7 @@ impl EdgeRuntimeConfig {
             .any(|network| network.contains(&peer))
     }
 }
+
+#[cfg(test)]
+#[path = "runtime/tests.rs"]
+mod tests;

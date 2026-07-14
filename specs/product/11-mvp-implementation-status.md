@@ -18,9 +18,9 @@ last_reviewed: 2026-07-14
 | 영역 | 구현 | 주요 증거 |
 |---|---|---|
 | `EDGE-003`, `EDGE-004`, `EDGE-006`, `EDGE-007` | streaming loopback proxy, trusted forwarded chain, 경로별 body·timeout, control 비의존 | `scripts/integration-gate.sh`, edge policy tests |
-| `EDGE-010`~`EDGE-012` | live/ready 분리, query·body 로그 제외, bounded limiter | edge unit·integration tests |
-| `EDGE-008`, `EDGE-009` | policy hash·TTL·version 검증, last-known-good 원자 hot reload | `policy_runtime` tests |
-| `OBS-001`, `OBS-005`, `OBS-006`, `OBS-008` | status·latency·bytes·upstream connection·client·route aggregate, SQLite WAL·retention, non-blocking datagram | telemetry·storage·loopback integration tests |
+| `EDGE-010`~`EDGE-012` | 첫 origin 성공 전 ready 차단, live/ready 분리, query·body 로그 제외, bounded limiter | edge unit·integration tests |
+| `EDGE-008`, `EDGE-009` | policy hash·request-time TTL·version 검증, last-known-good 원자 hot reload와 5분 lease 갱신 | `policy_runtime`·control runtime tests |
+| `OBS-001`, `OBS-005`, `OBS-006`, `OBS-008` | status·latency·bytes·upstream connection·client·route aggregate, SQLite WAL·retention, non-blocking datagram 재연결·손실 계측 | telemetry·storage·loopback integration tests |
 | `OBS-002`, `OBS-003` | Linux `/proc`, Nginx/PHP HTTP, MySQL TCP, Redis PING와 collector health | agent tests, control resource API |
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
 | `DET-002` | GnuBoard·WordPress 초기 route 비용 profile | profile tests |

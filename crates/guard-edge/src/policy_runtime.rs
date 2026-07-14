@@ -96,12 +96,15 @@ impl PolicyRuntime {
         now: OffsetDateTime,
     ) -> RuntimeDecision {
         let Some(policy) = self.current.load_full() else {
-            return RuntimeDecision {
-                action: None,
-                requests_per_minute: None,
-                policy_version: 0,
-            };
+            return inactive_decision(0);
         };
+        let snapshot_expires = OffsetDateTime::parse(
+            &policy.expires_at,
+            &time::format_description::well_known::Rfc3339,
+        );
+        if snapshot_expires.is_err() || snapshot_expires.is_ok_and(|expires| expires <= now) {
+            return inactive_decision(policy.policy_version);
+        }
         let action = client_ip.and_then(|ip| {
             policy.client_rules.iter().find_map(|rule| {
                 if rule.client_ip != ip {
@@ -154,6 +157,14 @@ impl PolicyRuntime {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+fn inactive_decision(policy_version: u64) -> RuntimeDecision {
+    RuntimeDecision {
+        action: None,
+        requests_per_minute: None,
+        policy_version,
     }
 }
 

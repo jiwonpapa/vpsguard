@@ -65,7 +65,7 @@ impl GuardEdge {
             config,
             request_sequence: AtomicU64::new(1),
             rate_limiter: Arc::new(BoundedRateLimiter::new(max_entries)),
-            origin_ready: AtomicBool::new(true),
+            origin_ready: AtomicBool::new(false),
             telemetry,
             policy,
             clearance,
@@ -135,7 +135,28 @@ impl GuardEdge {
             return Ok(true);
         }
         if path == LIVE_PATH {
-            respond_text(session, 200, b"live\n", &context.request_id, None).await?;
+            let telemetry_headers = vec![
+                (
+                    "x-vpsguard-telemetry-emitted",
+                    self.telemetry.emitted().to_string(),
+                ),
+                (
+                    "x-vpsguard-telemetry-dropped",
+                    self.telemetry.dropped().to_string(),
+                ),
+                (
+                    "x-vpsguard-telemetry-reconnected",
+                    self.telemetry.reconnected().to_string(),
+                ),
+            ];
+            respond_text_with_headers(
+                session,
+                200,
+                b"live\n",
+                &context.request_id,
+                &telemetry_headers,
+            )
+            .await?;
             self.emit_telemetry(context, 200, DecisionKind::Allow);
             return Ok(true);
         }
@@ -148,6 +169,19 @@ impl GuardEdge {
             };
             respond_text(session, status, body, &context.request_id, None).await?;
             self.emit_telemetry(context, status, DecisionKind::Allow);
+            return Ok(true);
+        }
+        if let Some(current_host) = host.as_deref()
+            && let Some(location) = https_redirect_location(
+                self.config.tls.is_some(),
+                current_proto(session, context.forwarded_headers_trusted) == "https",
+                self.config.canonical_host.as_deref(),
+                current_host,
+                &target,
+            )
+        {
+            respond_redirect(session, &location, &context.request_id).await?;
+            self.emit_telemetry(context, 308, DecisionKind::Allow);
             return Ok(true);
         }
         if let (Some(canonical), Some(current)) =
@@ -172,7 +206,8 @@ impl GuardEdge {
             OffsetDateTime::now_utc(),
         );
         context.policy_version = runtime_decision.policy_version;
-        if let Some(client_ip) = context.client_ip {
+        let dynamic_protection_enabled = self.config.enforces_dynamic_protection();
+        if dynamic_protection_enabled && let Some(client_ip) = context.client_ip {
             match runtime_decision.action {
                 Some(Decision::Deny) => {
                     respond_text(session, 403, b"request denied\n", &context.request_id, None)
@@ -224,8 +259,9 @@ impl GuardEdge {
                 Some(Decision::Allow | Decision::Observe) | None => {}
             }
         }
-        let rate_limit = runtime_decision
-            .requests_per_minute
+        let rate_limit = dynamic_protection_enabled
+            .then_some(runtime_decision.requests_per_minute)
+            .flatten()
             .or_else(|| self.config.rate_limit(context.route_class));
         if let (Some(client_ip), Some(limit)) = (context.client_ip, rate_limit) {
             match self
@@ -558,3 +594,22 @@ fn current_proto(session: &Session, forwarded_headers_trusted: bool) -> String {
         "http".to_owned()
     }
 }
+
+fn https_redirect_location(
+    tls_enabled: bool,
+    request_is_https: bool,
+    canonical_host: Option<&str>,
+    current_host: &str,
+    target: &str,
+) -> Option<String> {
+    let path = target.split('?').next().unwrap_or(target);
+    if !tls_enabled || request_is_https || path.starts_with("/.well-known/acme-challenge/") {
+        return None;
+    }
+    let host = normalize_host(canonical_host.unwrap_or(current_host));
+    Some(format!("https://{host}{target}"))
+}
+
+#[cfg(test)]
+#[path = "proxy/tests.rs"]
+mod tests;

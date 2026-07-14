@@ -59,3 +59,10 @@ fn rejects_mismatched_private_key() -> Result<(), Box<dyn std::error::Error>> {
     ));
     Ok(())
 }
+
+#[test]
+fn wildcard_certificate_only_matches_one_label() {
+    assert!(super::domain_matches("*.example.com", "www.example.com"));
+    assert!(!super::domain_matches("*.example.com", "a.b.example.com"));
+    assert!(!super::domain_matches("*.example.com", "example.com"));
+}

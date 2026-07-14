@@ -46,3 +46,18 @@ fn manual_hold_blocks_automatic_transition() {
         .transition(&input(Decision::Deny, "2026-07-14T00:00:02Z"));
     assert_eq!(state.current_mode, GuardMode::ManualHold);
 }
+
+#[test]
+fn emergency_requires_five_stable_windows_before_recovery() {
+    let mut state = GuardState::normal("2026-07-14T00:00:00Z");
+    state.current_mode = GuardMode::EmergencyProxy;
+    for second in 1..5 {
+        state = state.transition(&input(
+            Decision::Allow,
+            &format!("2026-07-14T00:01:0{second}Z"),
+        ));
+        assert_eq!(state.current_mode, GuardMode::EmergencyProxy);
+    }
+    state = state.transition(&input(Decision::Allow, "2026-07-14T00:01:05Z"));
+    assert_eq!(state.current_mode, GuardMode::Recovering);
+}

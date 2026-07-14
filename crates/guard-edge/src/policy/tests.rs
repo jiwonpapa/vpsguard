@@ -19,6 +19,7 @@ fn normalizes_host_case_port_and_trailing_dot() {
 #[test]
 fn wildcard_requires_a_real_subdomain() {
     assert!(host_matches_rule("api.example.com", "*.example.com"));
+    assert!(!host_matches_rule("a.b.example.com", "*.example.com"));
     assert!(!host_matches_rule("example.com", "*.example.com"));
     assert!(!host_matches_rule("evil-example.com", "*.example.com"));
 }
