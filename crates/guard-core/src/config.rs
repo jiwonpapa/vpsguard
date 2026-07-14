@@ -69,6 +69,15 @@ pub struct EdgeConfig {
     pub upload_upstream_read_timeout_ms: u64,
     /// limiter가 추적할 최대 client 수입니다.
     pub max_tracked_clients: usize,
+    /// 일반 경로 client별 분당 한도입니다. `None`이면 적용하지 않습니다.
+    #[serde(default)]
+    pub rate_limit_rpm: Option<u32>,
+    /// 고비용 경로 client별 분당 한도입니다.
+    #[serde(default)]
+    pub strict_rate_limit_rpm: Option<u32>,
+    /// 업로드 경로 client별 분당 한도입니다.
+    #[serde(default)]
+    pub upload_rate_limit_rpm: Option<u32>,
 }
 
 /// loopback origin 설정입니다.
@@ -279,6 +288,17 @@ impl GuardConfig {
         }
         if self.edge.max_tracked_clients == 0 {
             return invalid("edge.max_tracked_clients", "0보다 커야 합니다");
+        }
+        if [
+            self.edge.rate_limit_rpm,
+            self.edge.strict_rate_limit_rpm,
+            self.edge.upload_rate_limit_rpm,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|limit| limit == 0)
+        {
+            return invalid("edge.rate_limit_rpm", "설정된 한도는 0보다 커야 합니다");
         }
         if self.origin.address == self.edge.http_bind
             || self.edge.https_bind == Some(self.origin.address)
