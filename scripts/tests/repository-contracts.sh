@@ -33,4 +33,16 @@ grep -Fq 'SHA256SUMS' scripts/deploy-g7devops.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
 grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
 
+# OPS-007, NFR-005: CI evidence must be generated at the exact paths uploaded by
+# the workflow, and repository linters must remain available on a clean runner.
+grep -Fq 'echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"' .github/workflows/ci.yml
+grep -Fq 'apt-get install --yes shellcheck' .github/workflows/ci.yml
+grep -Fq '[profile.ci.junit]' .config/nextest.toml
+grep -Fq 'path = "junit.xml"' .config/nextest.toml
+if grep -Fq 'path = "target/nextest/ci/junit.xml"' .config/nextest.toml; then
+  echo "nextest JUnit path must be relative to the profile output directory" >&2
+  exit 1
+fi
+grep -Fq 'outputFolder: "playwright-report"' web/playwright.config.ts
+
 echo "repository contract tests: PASS"

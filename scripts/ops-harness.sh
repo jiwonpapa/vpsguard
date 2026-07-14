@@ -21,7 +21,25 @@ grep -Fq '/etc/letsencrypt' target-evidence/update-plan.txt
 grep -Fq 'remove owned path: /usr/local/bin/vps-guard' target-evidence/uninstall-plan.txt
 grep -Fq 'remove owned nft table: inet vps_guard' target-evidence/uninstall-plan.txt
 if command -v systemd-analyze >/dev/null 2>&1; then
-  systemd-analyze verify packaging/systemd/*.service
+  systemd_log="$(mktemp)"
+  filtered_log="$(mktemp)"
+  if ! systemd-analyze verify packaging/systemd/*.service >"${systemd_log}" 2>&1; then
+    # A clean CI runner intentionally has no deployed VPSGuard executables. Ignore
+    # only those two exact diagnostics; every unit syntax or sandbox error remains
+    # fatal. The ExecStart contracts below prevent a typo from being hidden.
+    grep -Fv \
+      -e 'Command /usr/local/bin/vps-guard-control is not executable: No such file or directory' \
+      -e 'Command /usr/local/bin/vps-guard-edge is not executable: No such file or directory' \
+      "${systemd_log}" >"${filtered_log}" || true
+    if [[ -s "${filtered_log}" ]]; then
+      cat "${filtered_log}" >&2
+      rm -f "${systemd_log}" "${filtered_log}"
+      exit 1
+    fi
+  fi
+  rm -f "${systemd_log}" "${filtered_log}"
 fi
+grep -Fq 'ExecStart=/usr/local/bin/vps-guard-control' packaging/systemd/vps-guard-control.service
+grep -Fq 'ExecStart=/usr/local/bin/vps-guard-edge' packaging/systemd/vps-guard-edge.service
 
 echo "ops harness: PASS"

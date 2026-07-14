@@ -9,4 +9,4 @@ retries = 0
 global-timeout = "15m"
 
 [profile.ci.junit]
-path = "target/nextest/ci/junit.xml"
+path = "junit.xml"
