@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 guard-core = { path = "../guard-core", version = "0.1.0" }
+serde.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
