@@ -1,0 +1,367 @@
+//! Versioned TOML 설정 계약과 의미 검증을 제공합니다.
+
+use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
+
+use ipnet::IpNet;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// 현재 지원하는 설정 schema 버전입니다.
+pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+
+/// VPSGuard 전체 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardConfig {
+    /// 설정 schema 버전입니다.
+    pub schema_version: u32,
+    /// Pingora edge 설정입니다.
+    pub edge: EdgeConfig,
+    /// Nginx origin 설정입니다.
+    pub origin: OriginConfig,
+    /// TLS 인증서 설정입니다.
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// 관리 UI 설정입니다.
+    pub ui: UiConfig,
+    /// 탐지 profile과 초기 모드입니다.
+    pub detection: DetectionConfig,
+    /// Cloudflare provider 설정입니다.
+    #[serde(default)]
+    pub cloudflare: CloudflareConfig,
+    /// 데이터 보존 설정입니다.
+    pub retention: RetentionConfig,
+}
+
+/// Pingora listener와 정적 안전 한도입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeConfig {
+    /// HTTP listener 주소입니다.
+    pub http_bind: SocketAddr,
+    /// HTTPS listener 주소입니다. `None`이면 TLS listener를 열지 않습니다.
+    #[serde(default)]
+    pub https_bind: Option<SocketAddr>,
+    /// 요청 Host allowlist입니다.
+    pub allowed_hosts: Vec<String>,
+    /// 다른 허용 Host를 이 Host로 redirect합니다.
+    #[serde(default)]
+    pub canonical_host: Option<String>,
+    /// forwarded header를 신뢰할 direct peer CIDR입니다.
+    #[serde(default)]
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+    /// 일반 요청 body 최대 크기입니다.
+    pub max_body_bytes: u64,
+    /// 업로드 요청 body 최대 크기입니다.
+    pub upload_max_body_bytes: u64,
+    /// 업로드 경로 prefix입니다.
+    #[serde(default)]
+    pub upload_path_prefixes: Vec<String>,
+    /// 고비용 경로 prefix입니다.
+    #[serde(default)]
+    pub strict_path_prefixes: Vec<String>,
+    /// 일반 upstream 연결 제한 시간입니다.
+    pub upstream_connect_timeout_ms: u64,
+    /// 일반 upstream 읽기 제한 시간입니다.
+    pub upstream_read_timeout_ms: u64,
+    /// 업로드 upstream 읽기 제한 시간입니다.
+    pub upload_upstream_read_timeout_ms: u64,
+    /// limiter가 추적할 최대 client 수입니다.
+    pub max_tracked_clients: usize,
+}
+
+/// loopback origin 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OriginConfig {
+    /// Nginx origin 주소입니다.
+    pub address: SocketAddr,
+    /// origin 프로토콜입니다.
+    #[serde(default)]
+    pub protocol: OriginProtocol,
+    /// TLS origin에서 사용할 SNI입니다.
+    #[serde(default)]
+    pub sni: Option<String>,
+}
+
+/// 지원하는 origin 프로토콜입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginProtocol {
+    /// 평문 loopback HTTP입니다.
+    #[default]
+    Http,
+    /// TLS origin입니다.
+    Https,
+}
+
+/// TLS listener와 인증서 목록입니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TlsConfig {
+    /// SNI 인증서 목록입니다.
+    #[serde(default)]
+    pub certificates: Vec<CertificateConfig>,
+}
+
+/// 한 인증서가 제공할 domain과 PEM 경로입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CertificateConfig {
+    /// 이 인증서를 선택할 domain입니다.
+    pub domains: Vec<String>,
+    /// PEM certificate chain 경로입니다.
+    pub cert_file: PathBuf,
+    /// PEM private key 경로입니다.
+    pub key_file: PathBuf,
+}
+
+/// loopback 관리 UI 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfig {
+    /// UI listener 주소입니다.
+    pub bind: SocketAddr,
+    /// 기본 언어입니다.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+/// 탐지 profile과 첫 설치 모드입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionConfig {
+    /// 애플리케이션 route profile입니다.
+    pub profile: DetectionProfile,
+    /// 첫 설치 동작 모드입니다.
+    #[serde(default)]
+    pub mode: DetectionMode,
+}
+
+/// 초기 애플리케이션 profile입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectionProfile {
+    /// GnuBoard profile입니다.
+    Gnuboard,
+    /// WordPress profile입니다.
+    Wordpress,
+}
+
+/// 첫 설치의 자동 조치 범위입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectionMode {
+    /// 관찰과 리포트만 수행합니다.
+    #[default]
+    Observe,
+    /// 명시적으로 허용된 자동 보호를 수행합니다.
+    Enforce,
+}
+
+/// Cloudflare provider 설정입니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudflareConfig {
+    /// provider adapter 활성 여부입니다.
+    #[serde(default)]
+    pub enabled: bool,
+    /// 변경 가능한 zone ID입니다.
+    #[serde(default)]
+    pub zone_id: String,
+    /// 변경 가능한 DNS record allowlist입니다.
+    #[serde(default)]
+    pub record_names: Vec<String>,
+    /// root-only token 파일 경로입니다.
+    #[serde(default)]
+    pub token_file: PathBuf,
+}
+
+/// 데이터 계층별 보존기간입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetentionConfig {
+    /// 실시간 ring buffer 보존 초입니다.
+    pub live_seconds: u64,
+    /// 상세 aggregate 보존 시간입니다.
+    pub detail_hours: u64,
+    /// 장기 aggregate 보존 일입니다.
+    pub aggregate_days: u64,
+    /// 사건 보존 일입니다.
+    pub incident_days: u64,
+    /// 원본 IP 보존 일입니다.
+    pub raw_ip_days: u64,
+}
+
+/// 설정 parse 또는 의미 검증 실패입니다.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    /// TOML 문법 또는 type 오류입니다.
+    #[error("설정 TOML을 해석하지 못했습니다: {0}")]
+    Parse(#[from] toml::de::Error),
+    /// 지원하지 않는 schema 버전입니다.
+    #[error("지원하지 않는 설정 schema 버전입니다: expected={expected}, actual={actual}")]
+    UnsupportedSchema {
+        /// 지원하는 버전입니다.
+        expected: u32,
+        /// 입력된 버전입니다.
+        actual: u32,
+    },
+    /// 필드 간 의미 제약 위반입니다.
+    #[error("잘못된 설정입니다: field={field}, reason={reason}")]
+    Invalid {
+        /// 문제가 있는 필드 경로입니다.
+        field: &'static str,
+        /// 실패 이유입니다.
+        reason: String,
+    },
+}
+
+impl GuardConfig {
+    /// TOML 문자열을 strict parsing한 뒤 의미 검증합니다.
+    ///
+    /// # Errors
+    ///
+    /// 알 수 없는 필드, type 오류, 미래 schema 또는 안전 한도 위반을 반환합니다.
+    pub fn from_toml(input: &str) -> Result<Self, ConfigError> {
+        let config = toml::from_str::<Self>(input)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// 설정의 범위와 상호 제약을 검증합니다.
+    ///
+    /// # Errors
+    ///
+    /// schema, listener, Host, TLS, body, timeout, provider 또는 보존 설정이
+    /// 안전 계약을 위반하면 실패합니다.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.schema_version != CONFIG_SCHEMA_VERSION {
+            return Err(ConfigError::UnsupportedSchema {
+                expected: CONFIG_SCHEMA_VERSION,
+                actual: self.schema_version,
+            });
+        }
+        if self.edge.allowed_hosts.is_empty() {
+            return invalid("edge.allowed_hosts", "최소 한 개의 Host가 필요합니다");
+        }
+        for host in &self.edge.allowed_hosts {
+            validate_host_rule(host, "edge.allowed_hosts")?;
+        }
+        if let Some(host) = &self.edge.canonical_host {
+            validate_host_rule(host, "edge.canonical_host")?;
+        }
+        for path in self
+            .edge
+            .upload_path_prefixes
+            .iter()
+            .chain(&self.edge.strict_path_prefixes)
+        {
+            if !path.starts_with('/') || path.trim() != path {
+                return invalid("edge.path_prefixes", format!("잘못된 경로: {path}"));
+            }
+        }
+        if self.edge.max_body_bytes == 0 {
+            return invalid("edge.max_body_bytes", "0보다 커야 합니다");
+        }
+        if self.edge.upload_max_body_bytes < self.edge.max_body_bytes {
+            return invalid(
+                "edge.upload_max_body_bytes",
+                "일반 body 한도보다 작을 수 없습니다",
+            );
+        }
+        if self.edge.upstream_connect_timeout_ms == 0
+            || self.edge.upstream_read_timeout_ms == 0
+            || self.edge.upload_upstream_read_timeout_ms == 0
+        {
+            return invalid("edge.upstream_timeout", "모든 timeout은 0보다 커야 합니다");
+        }
+        if self.edge.max_tracked_clients == 0 {
+            return invalid("edge.max_tracked_clients", "0보다 커야 합니다");
+        }
+        if self.origin.address == self.edge.http_bind
+            || self.edge.https_bind == Some(self.origin.address)
+        {
+            return invalid(
+                "origin.address",
+                "listener와 같은 주소를 사용할 수 없습니다",
+            );
+        }
+        if !self.ui.bind.ip().is_loopback() {
+            return invalid("ui.bind", "loopback 주소만 허용합니다");
+        }
+        if self.edge.https_bind.is_some() && self.tls.certificates.is_empty() {
+            return invalid("tls.certificates", "HTTPS listener에는 인증서가 필요합니다");
+        }
+        for certificate in &self.tls.certificates {
+            if certificate.domains.is_empty()
+                || certificate.cert_file.as_os_str().is_empty()
+                || certificate.key_file.as_os_str().is_empty()
+            {
+                return invalid("tls.certificates", "domain과 PEM 경로가 필요합니다");
+            }
+            for domain in &certificate.domains {
+                validate_host_rule(domain, "tls.certificates.domains")?;
+            }
+        }
+        if self.cloudflare.enabled
+            && (self.cloudflare.zone_id.trim().is_empty()
+                || self.cloudflare.record_names.is_empty()
+                || self.cloudflare.token_file.as_os_str().is_empty())
+        {
+            return invalid(
+                "cloudflare",
+                "활성화 시 zone, record allowlist와 token 파일이 필요합니다",
+            );
+        }
+        if self.retention.live_seconds == 0
+            || self.retention.detail_hours == 0
+            || self.retention.aggregate_days == 0
+            || self.retention.incident_days == 0
+        {
+            return invalid("retention", "보존기간은 0보다 커야 합니다");
+        }
+        if self.retention.raw_ip_days > self.retention.incident_days {
+            return invalid("retention.raw_ip_days", "사건 보존기간보다 길 수 없습니다");
+        }
+        Ok(())
+    }
+
+    /// direct peer가 forwarded header를 제공할 수 있는지 확인합니다.
+    #[must_use]
+    pub fn trusts_forwarded_peer(&self, peer: IpAddr) -> bool {
+        self.edge
+            .trusted_proxy_cidrs
+            .iter()
+            .any(|network| network.contains(&peer))
+    }
+}
+
+fn validate_host_rule(raw: &str, field: &'static str) -> Result<(), ConfigError> {
+    let host = raw.trim();
+    if host.is_empty() || host != raw || host.contains('/') || host.contains(':') {
+        return invalid(field, format!("잘못된 Host 규칙: {raw}"));
+    }
+    if let Some(suffix) = host.strip_prefix("*.")
+        && (suffix.is_empty() || !suffix.contains('.'))
+    {
+        return invalid(field, format!("잘못된 wildcard Host 규칙: {raw}"));
+    }
+    Ok(())
+}
+
+fn invalid<T>(field: &'static str, reason: impl Into<String>) -> Result<T, ConfigError> {
+    Err(ConfigError::Invalid {
+        field,
+        reason: reason.into(),
+    })
+}
+
+fn default_language() -> String {
+    "ko".to_owned()
+}
+
+#[cfg(test)]
+#[path = "config/tests.rs"]
+mod tests;

@@ -1,0 +1,34 @@
+schema_version = 1
+
+[edge]
+http_bind = "127.0.0.1:18080"
+allowed_hosts = ["example.com", "www.example.com"]
+canonical_host = "example.com"
+trusted_proxy_cidrs = []
+max_body_bytes = 1048576
+upload_max_body_bytes = 52428800
+upload_path_prefixes = ["/upload"]
+strict_path_prefixes = ["/login", "/search"]
+upstream_connect_timeout_ms = 3000
+upstream_read_timeout_ms = 30000
+upload_upstream_read_timeout_ms = 60000
+max_tracked_clients = 10000
+
+[origin]
+address = "127.0.0.1:18081"
+protocol = "http"
+
+[ui]
+bind = "127.0.0.1:7727"
+language = "ko"
+
+[detection]
+profile = "gnuboard"
+mode = "observe"
+
+[retention]
+live_seconds = 900
+detail_hours = 24
+aggregate_days = 30
+incident_days = 90
+raw_ip_days = 7
