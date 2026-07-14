@@ -1,8 +1,8 @@
 # VPS Guard 아이디어 북
 
-> 상태: 초기 구현 SDD
+> 상태: 개발 MVP 구현 완료, release gate 진행 전
 > 작성 기준일: 2026-07-14
-> 구현 위치: `g7-installer`와 분리할 별도 프로젝트
+> 구현 위치: 독립 저장소 `jiwonpapa/vpsguard`
 
 이 폴더는 단순 아이디어 메모가 아니라 새 프로젝트를 시작하기 위한 초기 스펙 주도 개발 문서 세트입니다. 별도 초안 SDD를 다시 만들지 않고 이 문서군을 새 저장소로 옮겨 구현을 시작합니다.
 
@@ -56,6 +56,7 @@ VPS Guard는 세 번째 선택지를 제공합니다.
 | [구현 백로그](08-implementation-backlog.md) | 소스 추출부터 파일럿까지 커밋 단위 실행 순서 |
 | [모니터링 웹 UI](09-monitoring-web-ui.md) | 실시간 트래픽·외부 IP·자원·사건 운영 콘솔 계약 |
 | [초기 구현 결정](10-bootstrap-decisions.md) | 제품명, 실행 파일, agent 구조, 파일럿과 보류 결정 |
+| [개발 MVP 구현 현황](11-mvp-implementation-status.md) | 구현된 요구사항, 검증 증거와 release gate 잔여 항목 |
 
 ## 제품 경계
 
