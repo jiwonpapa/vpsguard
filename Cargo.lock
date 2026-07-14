@@ -935,7 +935,12 @@ dependencies = [
 name = "guard-cli"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "guard-core",
+ "guard-system",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

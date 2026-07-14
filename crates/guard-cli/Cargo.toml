@@ -10,7 +10,12 @@ name = "vps-guard"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 guard-core = { path = "../guard-core", version = "0.1.0" }
+guard-system = { path = "../guard-system", version = "0.1.0" }
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
 
 [lints]
 workspace = true

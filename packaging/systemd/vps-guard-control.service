@@ -1,0 +1,29 @@
+[Unit]
+Description=VPSGuard control plane and loopback operations console
+After=network.target
+
+[Service]
+Type=simple
+User=vps-guard
+Group=vps-guard
+ExecStart=/usr/local/bin/vps-guard-control
+Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
+Environment=VPS_GUARD_STATE=/var/lib/vps-guard/state.json
+EnvironmentFile=-/etc/vps-guard/secrets/control.env
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=vps-guard
+RuntimeDirectoryMode=0750
+StateDirectory=vps-guard
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/vps-guard /var/lib/vps-guard
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

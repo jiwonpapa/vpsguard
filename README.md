@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-현재는 **초기 구현 SDD 단계**입니다. 운영 가능한 binary는 아직 없으며 실제 서버에 설치하면 안 됩니다.
+현재는 **개발 MVP 단계**입니다. Pingora loopback proxy, 요청 안전 정책, non-blocking telemetry, 상태·탐지 계약, loopback 운영 UI와 shadow 배포 하네스가 실행됩니다. public 80/443 전환, 실제 Cloudflare 변경과 운영 배포는 파일럿 gate 전까지 금지합니다.
 
 ## 제품 핵심
 
@@ -38,6 +38,31 @@
 ## 프로젝트 경계
 
 VPSGuard는 G7 Installer와 독립된 유지보수·방어 제품입니다. 설치기는 VPSGuard의 런타임 정책, 사건 상태와 업데이트를 소유하지 않습니다.
+
+## 로컬 검증
+
+```bash
+bash scripts/check.sh
+bash scripts/integration-gate.sh
+bash scripts/ops-harness.sh
+```
+
+운영 CLI는 설정 검증과 무변경 shadow plan을 제공합니다.
+
+```bash
+cargo run -p guard-cli -- check-config --config configs/vps-guard.example.toml
+cargo run -p guard-cli -- plan --config configs/vps-guard.example.toml
+```
+
+`g7devops` 배포 하네스는 기본이 plan-only입니다. `--apply`도 shadow port와 기존 원격 config를 요구하며 Nginx public 80/443, SSH, 인증서와 사이트 데이터를 변경하지 않습니다.
+
+## 아직 release gate가 닫힌 기능
+
+- 다중 인증서 SNI와 인증서 갱신 검증
+- policy snapshot의 edge hot reload와 challenge·TTL 차단
+- SQLite 장기 집계, 사건 timeline과 SSE
+- 실제 Cloudflare API·원본 방화벽 adapter와 복구 검증
+- public ingress cutover, bypass, 2GB VPS 성능·장애 파일럿
 
 ## 라이선스
 
