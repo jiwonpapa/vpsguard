@@ -1,19 +1,29 @@
 //! control 설정, telemetry receiver와 loopback API startup을 조율합니다.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use guard_agent::os;
-use guard_core::{ConfigError, GuardConfig, GuardState};
+use guard_agent::services::{ServiceTargets, collect_services};
+use guard_core::config::DetectionMode;
+use guard_core::policy::{RouteRule, StaticLimits};
+use guard_core::{
+    Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
+    PolicySnapshot, Severity, TransitionInput,
+};
 use guard_system::{AtomicJsonStore, StoreError};
 use thiserror::Error;
 use tokio::net::{TcpListener, UnixDatagram};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::api::{AppState, router};
+use crate::auth::SessionStore;
+use crate::storage::{SqliteStore, StorageError};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
 /// control startup·serve 실패입니다.
@@ -28,6 +38,9 @@ pub enum ControlError {
     /// 저장 상태 읽기 실패입니다.
     #[error(transparent)]
     StateStore(#[from] StoreError),
+    /// SQLite 저장소 초기화 실패입니다.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
     /// HTTP server 실패입니다.
     #[error("control HTTP server 실패: {0}")]
     Serve(String),
@@ -53,16 +66,34 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     initial_state
         .validate()
         .map_err(|error| ControlError::Serve(error.to_string()))?;
+    let storage = Arc::new(SqliteStore::open(&config.storage.database_path)?);
+    let (events, _) = broadcast::channel(512);
     let app = Arc::new(AppState {
         state: RwLock::new(initial_state),
         state_store: store,
         traffic: Mutex::new(TrafficAggregator::new(config.edge.max_tracked_clients)),
         os_snapshot: RwLock::new(None),
+        service_health: RwLock::new(Vec::new()),
         action_token: std::env::var("VPS_GUARD_ACTION_TOKEN").unwrap_or_default(),
         completed_actions: Mutex::new(VecDeque::with_capacity(1_024)),
+        storage: Arc::clone(&storage),
+        events,
+        sessions: SessionStore::new(),
     });
+    if app.action_token.is_empty() {
+        warn!("VPS_GUARD_ACTION_TOKEN is empty; mutation and session endpoints are disabled");
+    }
     spawn_os_collector(Arc::clone(&app));
-    spawn_telemetry_receiver(Arc::clone(&app), config.edge.telemetry_socket.clone())?;
+    spawn_service_collectors(Arc::clone(&app), &config);
+    let (storage_tx, storage_rx) = mpsc::channel(4_096);
+    spawn_storage_writer(Arc::clone(&storage), storage_rx);
+    spawn_telemetry_receiver(
+        Arc::clone(&app),
+        config.edge.telemetry_socket.clone(),
+        storage_tx,
+    )?;
+    spawn_detection_loop(Arc::clone(&app), &config);
+    spawn_retention(Arc::clone(&storage), &config);
     let listener = TcpListener::bind(config.ui.bind).await?;
     info!(listener = %config.ui.bind, "control API started");
     axum::serve(listener, router(app))
@@ -86,7 +117,28 @@ fn spawn_os_collector(app: Arc<AppState>) {
     });
 }
 
-fn spawn_telemetry_receiver(app: Arc<AppState>, path: PathBuf) -> Result<(), ControlError> {
+fn spawn_service_collectors(app: Arc<AppState>, config: &GuardConfig) {
+    let targets = ServiceTargets {
+        nginx_status_url: config.collectors.nginx_status_url.clone(),
+        php_fpm_status_url: config.collectors.php_fpm_status_url.clone(),
+        mysql_address: config.collectors.mysql_address,
+        redis_address: config.collectors.redis_address,
+    };
+    let timeout = Duration::from_millis(config.collectors.timeout_ms);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            *app.service_health.write().await = collect_services(&targets, timeout).await;
+        }
+    });
+}
+
+fn spawn_telemetry_receiver(
+    app: Arc<AppState>,
+    path: PathBuf,
+    storage_tx: mpsc::Sender<TelemetryEnvelope>,
+) -> Result<(), ControlError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -100,7 +152,12 @@ fn spawn_telemetry_receiver(app: Arc<AppState>, path: PathBuf) -> Result<(), Con
             match socket.recv(&mut buffer).await {
                 Ok(length) => {
                     match serde_json::from_slice::<TelemetryEnvelope>(&buffer[..length]) {
-                        Ok(telemetry) => lock_traffic(&app).ingest(&telemetry),
+                        Ok(telemetry) => {
+                            lock_traffic(&app).ingest(&telemetry);
+                            if storage_tx.try_send(telemetry).is_err() {
+                                warn!("traffic persistence queue full; sample dropped");
+                            }
+                        }
                         Err(error) => warn!(error = %error, "invalid telemetry datagram dropped"),
                     }
                 }
@@ -109,6 +166,270 @@ fn spawn_telemetry_receiver(app: Arc<AppState>, path: PathBuf) -> Result<(), Con
         }
     });
     Ok(())
+}
+
+fn spawn_storage_writer(
+    storage: Arc<SqliteStore>,
+    mut receiver: mpsc::Receiver<TelemetryEnvelope>,
+) {
+    tokio::spawn(async move {
+        while let Some(telemetry) = receiver.recv().await {
+            if let Err(error) = storage.record_traffic(&telemetry) {
+                warn!(error = %error, "traffic sample persistence failed");
+            }
+        }
+    });
+}
+
+fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
+    let enforce = config.detection.mode == DetectionMode::Enforce;
+    let policy_store = AtomicJsonStore::<PolicySnapshot>::new(config.edge.policy_path.clone());
+    let max_body_bytes = config.edge.max_body_bytes;
+    let max_tracked_clients = config.edge.max_tracked_clients;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let resources_available = app.os_snapshot.read().await.is_some();
+            let input = lock_traffic(&app).take_detection_input(resources_available);
+            let Some(input) = input else {
+                continue;
+            };
+            let assessment = Detector::assess(&input);
+            let occurred_at = current_timestamp();
+            let current = app.state.read().await.clone();
+            let mut next = current.clone().transition(&TransitionInput {
+                assessment: assessment.clone(),
+                distributed_pressure: assessment.bot_likelihood >= 80,
+                provider_verified: false,
+                occurred_at: occurred_at.clone(),
+            });
+            if !enforce
+                && matches!(
+                    next.current_mode,
+                    GuardMode::LocalGuard | GuardMode::EmergencyProxy
+                )
+            {
+                next.current_mode = GuardMode::Watch;
+            }
+            if next.current_mode == current.current_mode {
+                continue;
+            }
+            if matches!(
+                next.current_mode,
+                GuardMode::Watch
+                    | GuardMode::LocalGuard
+                    | GuardMode::EmergencyProxy
+                    | GuardMode::Recovering
+                    | GuardMode::Normal
+            ) && enforce
+            {
+                let policy_version = current.policy_version.saturating_add(1);
+                match build_policy(
+                    next.current_mode,
+                    policy_version,
+                    max_body_bytes,
+                    max_tracked_clients,
+                ) {
+                    Ok(policy) => {
+                        let policy_store = policy_store.clone();
+                        let write_result =
+                            tokio::task::spawn_blocking(move || policy_store.write(&policy)).await;
+                        if !matches!(write_result, Ok(Ok(()))) {
+                            warn!("policy snapshot write failed; state transition deferred");
+                            continue;
+                        }
+                        next.policy_version = policy_version;
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "policy snapshot generation failed");
+                        continue;
+                    }
+                }
+            }
+            update_incident(&mut next);
+            if persist_state(&app, &next).await.is_err() {
+                continue;
+            }
+            *app.state.write().await = next.clone();
+            let event = transition_event(&current, &next, &assessment, occurred_at);
+            if let Err(error) = app.storage.record_event(&event) {
+                warn!(error = %error, "transition event persistence failed");
+            }
+            let _send_result = app.events.send(event);
+        }
+    });
+}
+
+async fn persist_state(app: &AppState, state: &GuardState) -> Result<(), ()> {
+    let store = app.state_store.clone();
+    let value = state.clone();
+    match tokio::task::spawn_blocking(move || store.write(&value)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            warn!(error = %error, "state persistence failed");
+            Err(())
+        }
+        Err(error) => {
+            warn!(error = %error, "state persistence task failed");
+            Err(())
+        }
+    }
+}
+
+fn build_policy(
+    mode: GuardMode,
+    policy_version: u64,
+    max_body_bytes: u64,
+    max_tracked_clients: usize,
+) -> Result<PolicySnapshot, guard_core::PolicyError> {
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+
+    let now = OffsetDateTime::now_utc();
+    let route_rules = match mode {
+        GuardMode::Normal => Vec::new(),
+        GuardMode::Watch | GuardMode::Recovering => vec![RouteRule {
+            route_class: "strict".to_owned(),
+            requests_per_minute: 120,
+        }],
+        GuardMode::LocalGuard => vec![
+            RouteRule {
+                route_class: "strict".to_owned(),
+                requests_per_minute: 30,
+            },
+            RouteRule {
+                route_class: "upload".to_owned(),
+                requests_per_minute: 15,
+            },
+        ],
+        GuardMode::EmergencyProxy => vec![
+            RouteRule {
+                route_class: "strict".to_owned(),
+                requests_per_minute: 10,
+            },
+            RouteRule {
+                route_class: "upload".to_owned(),
+                requests_per_minute: 5,
+            },
+        ],
+        GuardMode::ManualHold => Vec::new(),
+    };
+    PolicySnapshot {
+        schema_version: 1,
+        policy_version,
+        generated_at: now.format(&Rfc3339).unwrap_or_default(),
+        expires_at: (now + time::Duration::minutes(10))
+            .format(&Rfc3339)
+            .unwrap_or_default(),
+        mode,
+        route_rules,
+        client_rules: Vec::new(),
+        static_limits: StaticLimits {
+            max_body_bytes,
+            max_tracked_clients,
+        },
+        content_sha256: String::new(),
+    }
+    .seal()
+}
+
+fn update_incident(state: &mut GuardState) {
+    if matches!(
+        state.current_mode,
+        GuardMode::LocalGuard | GuardMode::EmergencyProxy
+    ) && state.active_incident_id.is_none()
+    {
+        state.active_incident_id = Some(format!("incident-{}", Uuid::new_v4().simple()));
+    } else if state.current_mode == GuardMode::Normal {
+        state.active_incident_id = None;
+    }
+}
+
+fn transition_event(
+    previous: &GuardState,
+    next: &GuardState,
+    assessment: &Assessment,
+    occurred_at: String,
+) -> GuardEvent {
+    GuardEvent {
+        schema_version: 1,
+        event_id: format!("event-{}", Uuid::new_v4().simple()),
+        occurred_at,
+        severity: if next.current_mode == GuardMode::EmergencyProxy {
+            Severity::Critical
+        } else if next.current_mode == GuardMode::Normal {
+            Severity::Info
+        } else {
+            Severity::Warning
+        },
+        kind: "guard.mode_transition".to_owned(),
+        summary: format!(
+            "방어 모드가 {:?}에서 {:?}(으)로 전환됐습니다.",
+            previous.current_mode, next.current_mode
+        ),
+        reason_codes: assessment.reason_codes.clone(),
+        evidence: BTreeMap::from([
+            (
+                "bot_likelihood".to_owned(),
+                assessment.bot_likelihood.to_string(),
+            ),
+            (
+                "resource_cost".to_owned(),
+                assessment.resource_cost.to_string(),
+            ),
+            ("confidence".to_owned(), assessment.confidence.to_string()),
+        ]),
+        action: BTreeMap::from([("mode".to_owned(), format!("{:?}", next.current_mode))]),
+        result: BTreeMap::from([("policy_version".to_owned(), next.policy_version.to_string())]),
+        recovery: BTreeMap::from([(
+            "condition".to_owned(),
+            "연속 안정 window 확인 후 단계적으로 해제".to_owned(),
+        )]),
+    }
+}
+
+fn spawn_retention(storage: Arc<SqliteStore>, config: &GuardConfig) {
+    let detail_ms = config
+        .retention
+        .detail_hours
+        .saturating_mul(60)
+        .saturating_mul(60_000);
+    let raw_ip_ms = config
+        .retention
+        .raw_ip_days
+        .saturating_mul(24)
+        .saturating_mul(60)
+        .saturating_mul(60_000);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+        loop {
+            interval.tick().await;
+            let now = unix_millis();
+            if let Err(error) =
+                storage.retain_since(now.saturating_sub(detail_ms), now.saturating_sub(raw_ip_ms))
+            {
+                warn!(error = %error, "retention maintenance failed");
+            }
+        }
+    });
+}
+
+fn current_timestamp() -> String {
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn lock_traffic(app: &AppState) -> std::sync::MutexGuard<'_, TrafficAggregator> {

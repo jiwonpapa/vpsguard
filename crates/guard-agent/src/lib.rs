@@ -6,6 +6,7 @@
 pub const EMBEDDED_IN_CONTROL: bool = true;
 
 pub mod os;
+pub mod services;
 
 use serde::{Deserialize, Serialize};
 

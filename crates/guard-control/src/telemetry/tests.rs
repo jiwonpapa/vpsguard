@@ -10,11 +10,15 @@ fn telemetry(ip: u8, status: u16, latency: u64) -> TelemetryEnvelope {
         request_id: format!("request-{ip}"),
         method: "GET".to_owned(),
         route_class: "general".to_owned(),
+        normalized_route: "/bbs/board.php".to_owned(),
+        route_cost: 4,
         status,
         latency_micros: latency,
         client_ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, ip))),
         request_body_bytes: 0,
         decision: "allow".to_owned(),
+        policy_version: 0,
+        occurred_at_unix_ms: 1_000,
     }
 }
 
@@ -39,4 +43,18 @@ fn bounds_client_cardinality() {
     let summary = aggregate.summary();
     assert_eq!(summary.unique_clients, 1);
     assert_eq!(summary.dropped_clients, 1);
+}
+
+#[test]
+fn creates_and_resets_detection_window() {
+    let mut aggregate = TrafficAggregator::new(10);
+    let mut sample = telemetry(1, 503, 6_000_000);
+    sample.route_cost = 15;
+    sample.decision = "throttle".to_owned();
+    aggregate.ingest(&sample);
+    let input = aggregate.take_detection_input(true);
+    assert!(input.is_some_and(|value| {
+        value.automation == 100 && value.route_cost == 90 && value.upstream_pressure == 100
+    }));
+    assert!(aggregate.take_detection_input(true).is_none());
 }

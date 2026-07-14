@@ -7,27 +7,34 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guard_core::{GuardMode, GuardState};
 use guard_system::AtomicJsonStore;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 use tower::ServiceExt;
 
 use super::{AppState, router};
+use crate::auth::SessionStore;
+use crate::storage::SqliteStore;
 use crate::telemetry::TrafficAggregator;
 
-fn app(path: &std::path::Path) -> Arc<AppState> {
-    Arc::new(AppState {
+fn app(path: &std::path::Path) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
+    let (events, _) = broadcast::channel(32);
+    Ok(Arc::new(AppState {
         state: RwLock::new(GuardState::normal("2026-07-14T00:00:00Z")),
         state_store: AtomicJsonStore::new(path),
         traffic: Mutex::new(TrafficAggregator::new(10)),
         os_snapshot: RwLock::new(None),
+        service_health: RwLock::new(Vec::new()),
         action_token: "test-token".to_owned(),
         completed_actions: Mutex::new(VecDeque::new()),
-    })
+        storage: Arc::new(SqliteStore::in_memory()?),
+        events,
+        sessions: SessionStore::new(),
+    }))
 }
 
 #[tokio::test]
 async fn mutation_requires_action_token() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let response = router(app(&directory.path().join("state.json")))
+    let response = router(app(&directory.path().join("state.json"))?)
         .oneshot(
             Request::post("/api/v1/actions/manual-hold")
                 .header("idempotency-key", "operation-1")
@@ -41,7 +48,7 @@ async fn mutation_requires_action_token() -> Result<(), Box<dyn std::error::Erro
 #[tokio::test]
 async fn duplicate_action_is_not_applied_twice() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let state = app(&directory.path().join("state.json"));
+    let state = app(&directory.path().join("state.json"))?;
     let request = || {
         Request::post("/api/v1/actions/manual-hold")
             .header("idempotency-key", "operation-1")
