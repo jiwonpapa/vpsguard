@@ -114,7 +114,9 @@
 ## 12. 웹 UI 원칙
 
 - 독립 웹 UI는 부가 기능이 아니라 제품 운영 본체입니다.
-- UI는 loopback에 bind하고 SSH tunnel을 기본 접속 방식으로 사용합니다.
+- Control UI는 loopback에 bind하고 public 접속은 edge의 별도 HTTPS 관리 Host로만 제공합니다.
+- Control 포트를 public에 열거나 관리 Host 요청을 애플리케이션 origin으로 fallback하지 않습니다.
+- SSH는 초기 단회 로그인 코드 발급과 복구 경로로 유지하며 일상 UI 접속에 tunnel을 요구하지 않습니다.
 - 실시간 트래픽, 외부 IP, route, server resource, provider, TLS와 사건 상태를 표시합니다.
 - `주의`, `대기`, `실패`만 표시하지 않고 원인, 영향, 조치와 복구 조건을 설명합니다.
 - stale, delayed, unavailable과 error를 정상값과 명확히 구분합니다.

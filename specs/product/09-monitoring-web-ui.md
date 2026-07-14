@@ -313,11 +313,12 @@ stale 값을 최신 정상값처럼 보여주는 것을 금지합니다. 서버 
 
 ## 13. 접근과 보안
 
-- 기본 URL은 `http://127.0.0.1:7727`입니다.
-- SSH tunnel을 기본 접속 방식으로 사용합니다.
-- public bind는 공개 기능으로 제공하지 않습니다.
-- one-time bootstrap token은 짧게 만료되고 재사용할 수 없습니다.
-- session cookie는 HttpOnly, SameSite=Strict를 사용합니다.
+- Control 기본 URL은 `http://127.0.0.1:7727`이며 listener는 loopback을 유지합니다.
+- 일상 접속은 edge 443의 별도 HTTPS 관리 Host를 사용하고 Control port public bind는 제공하지 않습니다.
+- SSH는 local admin socket의 one-time 로그인 코드 발급과 복구에만 사용합니다.
+- one-time 로그인 코드는 짧게 만료되고 재사용할 수 없으며 session 발급 외 용도로 거부합니다.
+- HTTPS session cookie는 Secure, HttpOnly, SameSite=Strict를 사용합니다.
+- 관리 Host와 state-changing Origin은 설정값과 정확히 일치해야 합니다.
 - 모든 변경 명령에 CSRF와 idempotency 검사를 수행합니다.
 - 읽기, 차단, provider 변경과 복구 권한을 분리합니다.
 - root 비밀번호와 SSH private key를 웹에서 받지 않습니다.

@@ -5,8 +5,10 @@ use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -20,7 +22,7 @@ use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::auth::SessionStore;
+use crate::auth::{BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::provider::ProviderController;
 use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore};
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
@@ -30,18 +32,18 @@ const APP_CSS: &str = include_str!("../../../web/dist/assets/app.css");
 const APP_JS: &str = include_str!("../../../web/dist/assets/app.js");
 
 /// control API 공유 상태입니다.
-#[derive(Debug)]
 pub(crate) struct AppState {
     pub(crate) state: RwLock<GuardState>,
     pub(crate) state_store: AtomicJsonStore<GuardState>,
     pub(crate) traffic: Mutex<TrafficAggregator>,
     pub(crate) os_snapshot: RwLock<Option<OsSnapshot>>,
     pub(crate) service_health: RwLock<Vec<CollectorHealth>>,
-    pub(crate) action_token: String,
+    pub(crate) bootstrap: BootstrapStore,
     pub(crate) completed_actions: Mutex<VecDeque<(String, String, GuardMode)>>,
     pub(crate) storage: Arc<SqliteStore>,
     pub(crate) events: broadcast::Sender<GuardEvent>,
     pub(crate) sessions: SessionStore,
+    pub(crate) access: UiAccessPolicy,
     pub(crate) provider: Arc<Mutex<Option<ProviderController>>>,
     pub(crate) provider_action_active: Arc<AtomicBool>,
 }
@@ -112,12 +114,14 @@ struct SessionResponse {
     expires_in_seconds: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoginRequest {
+    login_code: String,
+}
+
 pub(crate) fn router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/", get(index))
-        .route("/assets/app.css", get(styles))
-        .route("/assets/app.js", get(script))
-        .route("/health/live", get(live))
+    let protected = Router::new()
         .route("/api/v1/status", get(status))
         .route("/api/v1/traffic/summary", get(traffic_summary))
         .route("/api/v1/traffic/series", get(traffic_series))
@@ -126,13 +130,90 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/incidents", get(incidents))
         .route("/api/v1/events", get(event_stream))
         .route("/api/v1/resources", get(resources))
-        .route("/api/v1/session", post(create_session))
         .route("/api/v1/actions/manual-hold", post(manual_hold))
         .route("/api/v1/actions/resume-auto", post(resume_auto))
         .route("/api/v1/actions/emergency-proxy", post(emergency_proxy))
         .route("/api/v1/actions/provider-restore", post(provider_restore))
+        .route_layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            require_session,
+        ));
+    Router::new()
+        .route("/", get(index))
+        .route("/assets/app.css", get(styles))
+        .route("/assets/app.js", get(script))
+        .route("/health/live", get(live))
+        .route("/api/v1/session", get(current_session).post(create_session))
+        .merge(protected)
         .fallback(index)
+        .layer(DefaultBodyLimit::max(16 * 1_024))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            enforce_management_host,
+        ))
         .with_state(state)
+}
+
+async fn enforce_management_host(
+    State(app): State<Arc<AppState>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_owned();
+    if path != "/health/live" {
+        let host = request
+            .headers()
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok());
+        if !app.access.accepts_host(host) {
+            if path.starts_with("/api/") {
+                return api_error(
+                    StatusCode::BAD_REQUEST,
+                    "MANAGEMENT_HOST_INVALID",
+                    "관리 Host가 설정값과 일치하지 않습니다.",
+                    "요청을 처리하거나 다른 origin으로 전달하지 않았습니다.",
+                    "설정된 HTTPS 관리 주소로 다시 접속하십시오.",
+                );
+            }
+            return (StatusCode::BAD_REQUEST, "invalid management host\n").into_response();
+        }
+    }
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    if path.starts_with("/api/") {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+async fn require_session(
+    State(app): State<Arc<AppState>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if !app.sessions.authenticate(request.headers()) {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "SESSION_AUTH_REQUIRED",
+            "유효한 운영 session이 필요합니다.",
+            "관리 데이터와 운영 명령을 제공하지 않았습니다.",
+            "local 단회 로그인 코드로 session을 발급하십시오.",
+        );
+    }
+    next.run(request).await
 }
 
 async fn index() -> impl IntoResponse {
@@ -144,7 +225,7 @@ async fn index() -> impl IntoResponse {
             (header::X_FRAME_OPTIONS, "DENY"),
             (
                 header::CONTENT_SECURITY_POLICY,
-                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
             ),
         ],
         INDEX_HTML,
@@ -242,24 +323,8 @@ async fn traffic_series(
     storage_list(app.storage.series(since))
 }
 
-async fn clients(
-    State(app): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<ListQuery>,
-) -> Response {
-    let reveal_ip =
-        authorized_token(&headers, &app.action_token) || app.sessions.authenticate(&headers);
-    let result = app
-        .storage
-        .clients(bounded_limit(query.limit))
-        .map(|mut rows| {
-            if !reveal_ip {
-                for row in &mut rows {
-                    row.client_ip = mask_client_ip(&row.client_ip);
-                }
-            }
-            rows
-        });
+async fn clients(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
+    let result = app.storage.clients(bounded_limit(query.limit));
     storage_list::<ClientRow>(result)
 }
 
@@ -290,22 +355,57 @@ async fn event_stream(
     )
 }
 
-async fn create_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if !authorized_token(&headers, &app.action_token) {
+async fn current_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let Some((csrf_token, expires_in_seconds)) = app.sessions.resume(&headers) else {
         return api_error(
             StatusCode::UNAUTHORIZED,
             "SESSION_AUTH_REQUIRED",
-            "bootstrap token이 없거나 일치하지 않습니다.",
+            "유효한 운영 session이 없습니다.",
+            "CSRF token을 복원하지 않았습니다.",
+            "local 단회 로그인 코드로 session을 발급하십시오.",
+        );
+    };
+    Json(SessionResponse {
+        csrf_token,
+        expires_in_seconds,
+    })
+    .into_response()
+}
+
+async fn create_session(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<LoginRequest>,
+) -> Response {
+    if !app.access.accepts_origin(&headers) {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "MANAGEMENT_ORIGIN_INVALID",
+            "요청 Origin이 관리 주소와 일치하지 않습니다.",
             "운영 session을 생성하지 않았습니다.",
-            "VPS_GUARD_ACTION_TOKEN과 X-VPSGuard-Token을 확인하십시오.",
+            "설정된 HTTPS 관리 주소에서 다시 시도하십시오.",
         );
     }
-    let issued = app.sessions.issue(false);
+    let valid_shape = request.login_code.len() == 64
+        && request
+            .login_code
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit());
+    if !valid_shape || !app.bootstrap.consume(&request.login_code) {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "LOGIN_CODE_REJECTED",
+            "로그인 code가 유효하지 않습니다.",
+            "운영 session을 생성하지 않았습니다.",
+            "root에서 새 단회 code를 발급한 뒤 만료 전에 다시 시도하십시오.",
+        );
+    }
+    let issued = app.sessions.issue(app.access.secure_cookie());
     (
         [(header::SET_COOKIE, issued.set_cookie)],
         Json(SessionResponse {
             csrf_token: issued.csrf_token,
-            expires_in_seconds: 30 * 60,
+            expires_in_seconds: app.sessions.ttl_seconds(),
         }),
     )
         .into_response()
@@ -332,14 +432,8 @@ async fn apply_provider_action(
     headers: &HeaderMap,
     restore: bool,
 ) -> Response {
-    if !authorized(headers, app) {
-        return api_error(
-            StatusCode::UNAUTHORIZED,
-            "ACTION_AUTH_REQUIRED",
-            "운영 session 또는 token이 필요합니다.",
-            "Provider 상태를 변경하지 않았습니다.",
-            "운영 session을 발급하거나 action token을 확인하십시오.",
-        );
+    if let Some(error) = mutation_authorization_error(headers, app) {
+        return error;
     }
     let Some(operation_id) = headers
         .get("idempotency-key")
@@ -489,14 +583,8 @@ async fn apply_provider_action(
 }
 
 async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> Response {
-    if !authorized(headers, app) {
-        return api_error(
-            StatusCode::UNAUTHORIZED,
-            "ACTION_AUTH_REQUIRED",
-            "운영 명령 token이 없거나 일치하지 않습니다.",
-            "방어 상태를 변경하지 않았습니다.",
-            "VPS_GUARD_ACTION_TOKEN과 X-VPSGuard-Token을 확인하십시오.",
-        );
+    if let Some(error) = mutation_authorization_error(headers, app) {
+        return error;
     }
     let Some(operation_id) = headers
         .get("idempotency-key")
@@ -569,16 +657,26 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
     .into_response()
 }
 
-fn authorized(headers: &HeaderMap, app: &AppState) -> bool {
-    authorized_token(headers, &app.action_token) || app.sessions.authorize(headers)
-}
-
-fn authorized_token(headers: &HeaderMap, token: &str) -> bool {
-    !token.is_empty()
-        && headers
-            .get("x-vpsguard-token")
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|candidate| candidate == token)
+fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Option<Response> {
+    if !app.access.accepts_origin(headers) {
+        return Some(api_error(
+            StatusCode::FORBIDDEN,
+            "MANAGEMENT_ORIGIN_INVALID",
+            "요청 Origin이 관리 주소와 일치하지 않습니다.",
+            "운영 상태를 변경하지 않았습니다.",
+            "설정된 HTTPS 관리 주소에서 다시 시도하십시오.",
+        ));
+    }
+    if !app.sessions.authorize(headers) {
+        return Some(api_error(
+            StatusCode::FORBIDDEN,
+            "CSRF_AUTH_REQUIRED",
+            "session에 연결된 CSRF token이 필요합니다.",
+            "운영 상태를 변경하지 않았습니다.",
+            "session을 복원한 뒤 명령을 다시 확인하십시오.",
+        ));
+    }
+    None
 }
 
 fn api_error(
@@ -690,25 +788,6 @@ fn unix_millis() -> u64 {
 
 fn bounded_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(100).clamp(1, 1_000)
-}
-
-fn mask_client_ip(value: &str) -> String {
-    use std::net::IpAddr;
-
-    match value.parse::<IpAddr>() {
-        Ok(IpAddr::V4(address)) => {
-            let [a, b, c, _] = address.octets();
-            format!("{a}.{b}.{c}.0/24")
-        }
-        Ok(IpAddr::V6(address)) => {
-            let segments = address.segments();
-            format!(
-                "{:x}:{:x}:{:x}:{:x}::/64",
-                segments[0], segments[1], segments[2], segments[3]
-            )
-        }
-        Err(_) => "redacted".to_owned(),
-    }
 }
 
 fn storage_list<T: Serialize>(result: Result<Vec<T>, crate::storage::StorageError>) -> Response {

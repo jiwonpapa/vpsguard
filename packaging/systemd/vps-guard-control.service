@@ -9,7 +9,6 @@ Group=vps-guard
 ExecStart=/usr/local/bin/vps-guard-control
 Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
 Environment=VPS_GUARD_STATE=/var/lib/vps-guard/state.json
-EnvironmentFile=-/etc/vps-guard/secrets/control.env
 AmbientCapabilities=CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_ADMIN
 Restart=on-failure

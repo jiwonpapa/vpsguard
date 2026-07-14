@@ -3,6 +3,7 @@
 //! 이 크레이트에는 네트워크, 파일 시스템, 데이터베이스 또는 외부 명령 부작용을
 //! 넣지 않습니다.
 
+pub mod admin;
 pub mod config;
 pub mod detection;
 pub mod event;
@@ -17,3 +18,6 @@ pub use state::{GuardMode, GuardState, StateError, TransitionInput};
 
 /// 현재 workspace 계약 버전입니다.
 pub const CONTRACT_VERSION: u32 = 1;
+pub use admin::{
+    ADMIN_PROTOCOL_VERSION, AdminCommand, AdminErrorCode, AdminRequest, AdminResponse,
+};

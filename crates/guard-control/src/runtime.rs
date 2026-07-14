@@ -22,8 +22,9 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::admin_socket::spawn_admin_socket;
 use crate::api::{AppState, router};
-use crate::auth::SessionStore;
+use crate::auth::{BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{SqliteStore, StorageError};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
@@ -51,6 +52,9 @@ pub enum ControlError {
     /// HTTP server 실패입니다.
     #[error("control HTTP server 실패: {0}")]
     Serve(String),
+    /// local 관리자 socket 준비 실패입니다.
+    #[error("local 관리자 socket 실패: {0}")]
+    AdminSocket(String),
 }
 
 /// 설정을 읽고 loopback control API와 telemetry receiver를 실행합니다.
@@ -82,17 +86,17 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         traffic: Mutex::new(TrafficAggregator::new(config.edge.max_tracked_clients)),
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
-        action_token: std::env::var("VPS_GUARD_ACTION_TOKEN").unwrap_or_default(),
+        bootstrap: BootstrapStore::new(),
         completed_actions: Mutex::new(VecDeque::with_capacity(1_024)),
         storage: Arc::clone(&storage),
         events,
         sessions: SessionStore::new(),
+        access: UiAccessPolicy::from_config(&config.ui),
         provider,
         provider_action_active: Arc::new(AtomicBool::new(false)),
     });
-    if app.action_token.is_empty() {
-        warn!("VPS_GUARD_ACTION_TOKEN is empty; mutation and session endpoints are disabled");
-    }
+    spawn_admin_socket(Arc::clone(&app), config.ui.admin_socket.clone())
+        .map_err(|error| ControlError::AdminSocket(error.to_string()))?;
     spawn_os_collector(Arc::clone(&app));
     spawn_service_collectors(Arc::clone(&app), &config);
     let (storage_tx, storage_rx) = mpsc::channel(4_096);

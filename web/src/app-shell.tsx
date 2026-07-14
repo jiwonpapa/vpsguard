@@ -95,7 +95,7 @@ export function AppShell() {
           <Network className="size-5 text-orange-400" aria-hidden="true" />
           <h2 className="mt-5 text-sm font-semibold">운영 경계</h2>
           <ul className="mt-4 divide-y divide-zinc-800 text-xs leading-5 text-zinc-500">
-            <li className="py-3">UI와 Control API는 loopback 전용입니다.</li>
+            <li className="py-3">Control은 loopback에 유지되고 UI는 별도 HTTPS 관리 Host로만 전달됩니다.</li>
             <li className="py-3">Edge는 Control 장애 중에도 마지막 정상 정책으로 동작합니다.</li>
             <li className="py-3">Provider 전환은 검증 가능한 transaction으로만 수행합니다.</li>
             <li className="py-3">쓰기 명령은 session, CSRF, idempotency key가 필요합니다.</li>

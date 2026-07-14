@@ -11,6 +11,7 @@
 ```text
 평상시: DNS only -> VPSGuard -> Nginx -> Application
 비상시: Cloudflare proxied -> VPSGuard -> Nginx -> Application
+관리면: guard.example.com:443 -> VPSGuard -> loopback Control
 ```
 
 - 평상시에는 해외 프록시를 상시 통과하지 않습니다.
@@ -52,11 +53,12 @@ cargo xtask coverage
 cargo xtask web
 ```
 
-운영 CLI는 설정 검증과 무변경 shadow plan을 제공합니다.
+운영 CLI는 설정 검증, 무변경 shadow plan과 local peer credential 기반 단회 로그인 code 발급을 제공합니다.
 
 ```bash
 cargo run -p guard-cli -- check-config --config configs/vps-guard.example.toml
 cargo run -p guard-cli -- plan --config configs/vps-guard.example.toml
+sudo vps-guard issue-login-code
 ```
 
 `g7devops` 배포 하네스는 기본이 plan-only입니다. `--apply`는 checksum이 맞는 Linux x86_64 bundle과 별도 shadow config를 요구하며, 기존 원격 config는 byte 단위로 같지 않으면 거부합니다. Nginx public 80/443, SSH, 인증서와 사이트 데이터는 변경하지 않습니다.

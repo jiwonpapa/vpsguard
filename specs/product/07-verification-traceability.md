@@ -60,12 +60,13 @@ last_reviewed: 2026-07-14
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
 | `DET-001`, `DET-005` | `crates/guard-core/tests/scoring.rs` | score explanation snapshot |
-| `DET-002` | `crates/guard-profiles/tests/routes.rs` | GnuBoard·WordPress route inventory |
+| `DET-002` | `crates/guard-profiles/src/tests.rs` | 범용 PHP·GnuBoard 5·7·WordPress route inventory |
 | `DET-003`, `DET-004` | `crates/guard-core/tests/crawler_identity.rs` | verified·spoofed crawler replay |
 | `DET-006`, `DET-007` | `crates/guard-core/tests/baseline_windows.rs` | spike와 지속 부하 비교 |
 | `DET-008` | `crates/guard-core/tests/rule_expiry.rs` | TTL expiry event |
 | `DET-009` | `crates/guard-core/tests/shared_ip.rs` | NAT browser scenario |
 | `DET-010` | `tests/fault/collector_missing.rs` | degraded-confidence incident |
+| `DET-011` | `crates/guard-edge/src/runtime/tests.rs` | app profile·site override·incident policy 합성 replay |
 
 ### 3.4 Action
 
@@ -99,12 +100,13 @@ last_reviewed: 2026-07-14
 
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
-| `UI-001`, `SEC-001`, `SEC-002`, `SEC-003` | `tests/security/ui_access.rs` | public port scan·SSH tunnel smoke |
+| `UI-001`, `SEC-007` | config·edge runtime·control API tests와 `scripts/integration-gate.sh` | 별도 HTTPS 관리 Host routing·Control public port scan |
 | `UI-002`, `UI-003`, `UI-004`, `UI-005`, `UI-006`, `UI-007`, `UI-008`, `UI-009` | `web/tests/fixtures.spec.ts` | 상태별 Playwright video·screenshot |
 | `UI-010`, `UI-011` | `web/tests/visual.spec.ts` | theme·viewport screenshot diff |
 | `UI-012` | `web/tests/permissions.spec.ts` | role별 IP·export·action matrix |
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |
+| `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
 | `NFR-001`, `NFR-002` | Criterion + k6 regression | 2GB VPS perf artifact |
 | `NFR-003` | process kill fault test | zero-error request counter |

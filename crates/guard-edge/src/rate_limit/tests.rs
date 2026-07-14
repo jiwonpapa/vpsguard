@@ -23,6 +23,10 @@ fn enforces_limit_per_client_and_route_class() {
         limiter.check(client, RouteClass::Upload, 1, UNIX_EPOCH),
         LimitDecision::Allow
     );
+    assert_eq!(
+        limiter.check(client, RouteClass::ManagementAuth, 1, UNIX_EPOCH),
+        LimitDecision::Allow
+    );
 }
 
 #[test]

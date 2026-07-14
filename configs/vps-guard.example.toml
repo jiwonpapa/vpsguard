@@ -26,10 +26,14 @@ protocol = "http"
 
 [ui]
 bind = "127.0.0.1:7727"
+# HTTPS listener와 관리 Host를 포함한 인증서를 설정한 뒤 활성화합니다.
+# public_host = "guard.example.com"
+admin_socket = "/run/vps-guard/admin.sock"
+login_rate_limit_rpm = 10
 language = "ko"
 
 [detection]
-profile = "gnuboard"
+profile = "gnuboard7"
 mode = "observe"
 
 [cloudflare]

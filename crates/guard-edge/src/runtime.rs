@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use guard_core::config::{DetectionMode, DetectionProfile, GuardConfig, OriginProtocol};
-use guard_profiles::ApplicationProfile;
+use guard_profiles::{ApplicationProfile, RouteKind, classify};
 use ipnet::IpNet;
 use thiserror::Error;
 
@@ -21,11 +21,54 @@ pub(crate) struct RuntimeTlsConfig {
     pub(crate) domains: Vec<String>,
 }
 
+/// 관리 Host가 선택됐을 때만 사용하는 loopback Control upstream입니다.
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeManagementConfig {
+    pub(crate) host: String,
+    pub(crate) origin_host: String,
+    pub(crate) origin_port: u16,
+    pub(crate) login_rate_limit_rpm: u32,
+}
+
+/// request가 절대로 섞이면 안 되는 upstream 경계입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpstreamKind {
+    /// 사용자 애플리케이션 origin입니다.
+    Application,
+    /// VPSGuard loopback Control입니다.
+    Management,
+}
+
+/// 최종 route class가 선택된 typed 계층입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RouteClassSource {
+    /// 일반 core 안전 한도만 적용됐습니다.
+    CoreDefault,
+    /// 애플리케이션 profile이 class를 강화했습니다.
+    ApplicationProfile,
+    /// 명시적 site strict prefix가 우선했습니다.
+    SiteStrictOverride,
+    /// 명시적 site upload prefix가 우선했습니다.
+    SiteUploadOverride,
+    /// 관리 session endpoint 전용 class입니다.
+    ManagementAuth,
+}
+
+/// 정적·app·site 계층을 합성한 request profile입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EffectiveRouteProfile {
+    pub(crate) route_class: RouteClass,
+    pub(crate) normalized_route: String,
+    pub(crate) base_cost: u8,
+    pub(crate) source: RouteClassSource,
+}
+
 /// `guard-edge`가 요청마다 참조하는 불변 runtime 설정입니다.
 #[derive(Debug, Clone)]
 pub(crate) struct EdgeRuntimeConfig {
     pub(crate) listen_addr: String,
     pub(crate) tls: Option<RuntimeTlsConfig>,
+    pub(crate) management: Option<RuntimeManagementConfig>,
     pub(crate) origin_host: String,
     pub(crate) origin_port: u16,
     pub(crate) origin_tls: bool,
@@ -89,14 +132,29 @@ impl EdgeRuntimeConfig {
                 })
             }
         };
+        let management = config
+            .ui
+            .public_host
+            .as_ref()
+            .map(|host| RuntimeManagementConfig {
+                host: host.to_ascii_lowercase(),
+                origin_host: config.ui.bind.ip().to_string(),
+                origin_port: config.ui.bind.port(),
+                login_rate_limit_rpm: config.ui.login_rate_limit_rpm,
+            });
+        let mut allowed_hosts = config.edge.allowed_hosts.clone();
+        if let Some(management) = &management {
+            allowed_hosts.push(management.host.clone());
+        }
         Ok(Self {
             listen_addr: config.edge.http_bind.to_string(),
             tls,
+            management,
             origin_host: config.origin.address.ip().to_string(),
             origin_port: config.origin.address.port(),
             origin_tls,
             origin_sni,
-            allowed_hosts: config.edge.allowed_hosts.clone(),
+            allowed_hosts,
             canonical_host: config.edge.canonical_host.clone(),
             trusted_proxy_cidrs: config.edge.trusted_proxy_cidrs.clone(),
             max_body_bytes: config.edge.max_body_bytes,
@@ -120,21 +178,93 @@ impl EdgeRuntimeConfig {
             challenge_secret_file: config.edge.challenge_secret_file.clone(),
             clearance_ttl_seconds: config.edge.clearance_ttl_seconds,
             application_profile: match config.detection.profile {
-                DetectionProfile::Gnuboard => ApplicationProfile::Gnuboard,
+                DetectionProfile::Php => ApplicationProfile::Php,
+                DetectionProfile::Gnuboard5 => ApplicationProfile::Gnuboard5,
+                DetectionProfile::Gnuboard7 => ApplicationProfile::Gnuboard7,
                 DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
             },
             detection_mode: config.detection.mode,
         })
     }
 
-    pub(crate) fn route_class(&self, path: &str) -> RouteClass {
-        if path_matches_any(path, &self.upload_path_prefixes) {
-            RouteClass::Upload
-        } else if path_matches_any(path, &self.strict_path_prefixes) {
-            RouteClass::Strict
+    /// Host를 정규화해 별도 관리 upstream인지 결정합니다.
+    pub(crate) fn upstream_kind(&self, host: Option<&str>) -> UpstreamKind {
+        let is_management = self.management.as_ref().is_some_and(|management| {
+            host.is_some_and(|value| {
+                crate::policy::normalize_host(value).eq_ignore_ascii_case(&management.host)
+            })
+        });
+        if is_management {
+            UpstreamKind::Management
         } else {
-            RouteClass::General
+            UpstreamKind::Application
         }
+    }
+
+    /// core 안전 한도, app profile과 site override를 한 번에 합성합니다.
+    pub(crate) fn effective_route_profile(
+        &self,
+        upstream: UpstreamKind,
+        path: &str,
+        target: &str,
+    ) -> EffectiveRouteProfile {
+        if upstream == UpstreamKind::Management {
+            let management_auth = path == "/api/v1/session";
+            return EffectiveRouteProfile {
+                route_class: if management_auth {
+                    RouteClass::ManagementAuth
+                } else {
+                    RouteClass::General
+                },
+                normalized_route: path.to_owned(),
+                base_cost: if management_auth { 12 } else { 2 },
+                source: if management_auth {
+                    RouteClassSource::ManagementAuth
+                } else {
+                    RouteClassSource::CoreDefault
+                },
+            };
+        }
+        let application = classify(self.application_profile, target);
+        let (route_class, source) = if path_matches_any(path, &self.upload_path_prefixes) {
+            (RouteClass::Upload, RouteClassSource::SiteUploadOverride)
+        } else if path_matches_any(path, &self.strict_path_prefixes) {
+            (RouteClass::Strict, RouteClassSource::SiteStrictOverride)
+        } else {
+            match application.kind {
+                RouteKind::Upload => (RouteClass::Upload, RouteClassSource::ApplicationProfile),
+                RouteKind::Admin
+                | RouteKind::Authentication
+                | RouteKind::Search
+                | RouteKind::Write
+                | RouteKind::RemoteProcedure => {
+                    (RouteClass::Strict, RouteClassSource::ApplicationProfile)
+                }
+                RouteKind::Static
+                | RouteKind::Public
+                | RouteKind::Board
+                | RouteKind::Media
+                | RouteKind::Dynamic
+                | RouteKind::Api => (RouteClass::General, RouteClassSource::CoreDefault),
+            }
+        };
+        EffectiveRouteProfile {
+            route_class,
+            normalized_route: application.normalized_route,
+            base_cost: application.base_cost,
+            source,
+        }
+    }
+
+    /// 관리 로그인에는 동적 incident 정책과 분리된 고정 한도를 적용합니다.
+    pub(crate) fn management_login_rate_limit(&self, method: &str, path: &str) -> Option<u32> {
+        (method == "POST" && path == "/api/v1/session")
+            .then(|| {
+                self.management
+                    .as_ref()
+                    .map(|value| value.login_rate_limit_rpm)
+            })
+            .flatten()
     }
 
     pub(crate) fn body_limit(&self, route_class: RouteClass) -> u64 {
@@ -153,6 +283,7 @@ impl EdgeRuntimeConfig {
             RouteClass::General => self.rate_limit_rpm,
             RouteClass::Strict => self.strict_rate_limit_rpm.or(self.rate_limit_rpm),
             RouteClass::Upload => self.upload_rate_limit_rpm.or(self.rate_limit_rpm),
+            RouteClass::ManagementAuth => None,
         }
     }
 

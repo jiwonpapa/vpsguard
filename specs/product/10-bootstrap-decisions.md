@@ -20,6 +20,7 @@ last_reviewed: 2026-07-14
 | 저장소 | `jiwonpapa/vpsguard`, public |
 | 초기 upstream | Nginx only |
 | UI bind | `127.0.0.1:7727` |
+| UI 접속 | edge 443의 별도 HTTPS 관리 Host, SSH는 단회 code 발급·복구 전용 |
 | 원본 IP 기본 보존 | 7일 |
 | 기준 Pingora 소스 | `jiwonpapa/rust-middleware` commit `29448031235634d3444103a22a2db7b2ccd0ab39` |
 | 제거 commit | `87c0f0e61d5eb5a030fe4a70cdc40d3063cff135` |

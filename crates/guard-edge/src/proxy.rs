@@ -8,7 +8,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use bytes::Bytes;
 use guard_core::Decision;
-use guard_profiles::classify;
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_error::{
     Error, ErrorSource,
@@ -27,7 +26,7 @@ use crate::rate_limit::{BoundedRateLimiter, LimitDecision, RouteClass};
 use crate::response::{
     add_common_headers, respond_redirect, respond_text, respond_text_with_headers,
 };
-use crate::runtime::EdgeRuntimeConfig;
+use crate::runtime::{EdgeRuntimeConfig, UpstreamKind};
 use crate::telemetry::{DecisionKind, RequestTelemetry, TelemetrySink};
 
 const LIVE_PATH: &str = "/health/live";
@@ -91,7 +90,7 @@ impl GuardEdge {
                     || request.uri.path().to_owned(),
                     |value| value.as_str().to_owned(),
                 ),
-                header_value(request, "host"),
+                request_host(request),
                 header_value(request, "x-forwarded-for"),
                 header_value(request, "content-length").and_then(|value| value.parse::<u64>().ok()),
                 header_value(request, "cookie"),
@@ -113,8 +112,11 @@ impl GuardEdge {
                 &self.config.trusted_proxy_cidrs,
             )
         });
-        context.route_class = self.config.route_class(&path);
-        let route_profile = classify(self.config.application_profile, &target);
+        context.upstream_kind = self.config.upstream_kind(host.as_deref());
+        let route_profile =
+            self.config
+                .effective_route_profile(context.upstream_kind, &path, &target);
+        context.route_class = route_profile.route_class;
         context.normalized_route = route_profile.normalized_route;
         context.route_cost = route_profile.base_cost;
         context.request_body_bytes_seen = 0;
@@ -175,7 +177,9 @@ impl GuardEdge {
             && let Some(location) = https_redirect_location(
                 self.config.tls.is_some(),
                 current_proto(session, context.forwarded_headers_trusted) == "https",
-                self.config.canonical_host.as_deref(),
+                (context.upstream_kind == UpstreamKind::Application)
+                    .then_some(self.config.canonical_host.as_deref())
+                    .flatten(),
                 current_host,
                 &target,
             )
@@ -186,6 +190,7 @@ impl GuardEdge {
         }
         if let (Some(canonical), Some(current)) =
             (self.config.canonical_host.as_deref(), host.as_deref())
+            && context.upstream_kind == UpstreamKind::Application
             && normalize_host(current) != normalize_host(canonical)
         {
             let scheme = current_proto(session, context.forwarded_headers_trusted);
@@ -206,7 +211,8 @@ impl GuardEdge {
             OffsetDateTime::now_utc(),
         );
         context.policy_version = runtime_decision.policy_version;
-        let dynamic_protection_enabled = self.config.enforces_dynamic_protection();
+        let dynamic_protection_enabled = self.config.enforces_dynamic_protection()
+            && context.upstream_kind == UpstreamKind::Application;
         if dynamic_protection_enabled && let Some(client_ip) = context.client_ip {
             match runtime_decision.action {
                 Some(Decision::Deny) => {
@@ -259,10 +265,15 @@ impl GuardEdge {
                 Some(Decision::Allow | Decision::Observe) | None => {}
             }
         }
-        let rate_limit = dynamic_protection_enabled
-            .then_some(runtime_decision.requests_per_minute)
-            .flatten()
-            .or_else(|| self.config.rate_limit(context.route_class));
+        let rate_limit = if context.upstream_kind == UpstreamKind::Management {
+            self.config
+                .management_login_rate_limit(&context.method, &path)
+        } else {
+            dynamic_protection_enabled
+                .then_some(runtime_decision.requests_per_minute)
+                .flatten()
+                .or_else(|| self.config.rate_limit(context.route_class))
+        };
         if let (Some(client_ip), Some(limit)) = (context.client_ip, rate_limit) {
             match self
                 .rate_limiter
@@ -355,11 +366,18 @@ impl ProxyHttp for GuardEdge {
         _session: &mut Session,
         context: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        let mut peer = HttpPeer::new(
-            (&*self.config.origin_host, self.config.origin_port),
-            self.config.origin_tls,
-            self.config.origin_sni.clone(),
-        );
+        let mut peer = match (context.upstream_kind, self.config.management.as_ref()) {
+            (UpstreamKind::Management, Some(management)) => HttpPeer::new(
+                (&*management.origin_host, management.origin_port),
+                false,
+                String::new(),
+            ),
+            _ => HttpPeer::new(
+                (&*self.config.origin_host, self.config.origin_port),
+                self.config.origin_tls,
+                self.config.origin_sni.clone(),
+            ),
+        };
         peer.options.connection_timeout = Some(self.config.upstream_connect_timeout);
         peer.options.read_timeout = Some(if context.route_class == RouteClass::Upload {
             self.config.upload_upstream_read_timeout
@@ -405,7 +423,9 @@ impl ProxyHttp for GuardEdge {
         upstream_response: &mut ResponseHeader,
         context: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        self.origin_ready.store(true, Ordering::Release);
+        if context.upstream_kind == UpstreamKind::Application {
+            self.origin_ready.store(true, Ordering::Release);
+        }
         context.response_status = upstream_response.status.as_u16();
         add_common_headers(upstream_response, &context.request_id)?;
         info!(
@@ -466,7 +486,9 @@ impl ProxyHttp for GuardEdge {
     where
         Self::CTX: Send + Sync,
     {
-        self.origin_ready.store(false, Ordering::Release);
+        if context.upstream_kind == UpstreamKind::Application {
+            self.origin_ready.store(false, Ordering::Release);
+        }
         let error_code = match error.etype() {
             HTTPStatus(code) => *code,
             _ => match error.esource() {
@@ -500,14 +522,25 @@ impl ProxyHttp for GuardEdge {
     }
 
     fn request_summary(&self, _session: &Session, context: &Self::CTX) -> String {
+        let (upstream_host, upstream_port, upstream_tls) =
+            match (context.upstream_kind, self.config.management.as_ref()) {
+                (UpstreamKind::Management, Some(management)) => {
+                    (&management.origin_host, management.origin_port, false)
+                }
+                _ => (
+                    &self.config.origin_host,
+                    self.config.origin_port,
+                    self.config.origin_tls,
+                ),
+            };
         format!(
             "id={} {} {} -> {}:{} tls={}",
             context.request_id,
             context.method,
             context.path,
-            self.config.origin_host,
-            self.config.origin_port,
-            self.config.origin_tls
+            upstream_host,
+            upstream_port,
+            upstream_tls
         )
     }
 }
@@ -518,6 +551,9 @@ impl GuardEdge {
             return;
         }
         context.telemetry_emitted = true;
+        if context.upstream_kind == UpstreamKind::Management {
+            return;
+        }
         self.telemetry.emit(&RequestTelemetry {
             schema_version: 1,
             request_id: context.request_id.clone(),
@@ -567,6 +603,17 @@ fn header_value(request: &RequestHeader, name: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn request_host(request: &RequestHeader) -> Option<String> {
+    select_request_host(
+        header_value(request, "host"),
+        request.uri.authority().map(|authority| authority.as_str()),
+    )
+}
+
+fn select_request_host(header: Option<String>, authority: Option<&str>) -> Option<String> {
+    header.or_else(|| authority.map(ToOwned::to_owned))
 }
 
 fn direct_client_ip(session: &Session) -> Option<IpAddr> {

@@ -1,4 +1,4 @@
-//! GnuBoard와 WordPress의 경로 정규화와 자원 비용 profile을 소유합니다.
+//! PHP, GnuBoard 5·7과 WordPress의 경로 정규화·자원 비용 profile을 소유합니다.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,8 +6,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApplicationProfile {
-    /// GnuBoard 5/7 계열입니다.
-    Gnuboard,
+    /// 범용 PHP entrypoint profile입니다.
+    Php,
+    /// GnuBoard 5 legacy PHP route profile입니다.
+    #[serde(rename = "gnuboard5", alias = "gnuboard")]
+    Gnuboard5,
+    /// GnuBoard 7 Laravel API·SPA route profile입니다.
+    Gnuboard7,
     /// WordPress 계열입니다.
     Wordpress,
 }
@@ -30,10 +35,16 @@ pub enum RouteKind {
     Write,
     /// 업로드·다운로드·이미지 처리입니다.
     Media,
+    /// request body를 받는 업로드 경로입니다.
+    Upload,
+    /// app별 의미를 알 수 없는 PHP entrypoint입니다.
+    Dynamic,
     /// 관리자 기능입니다.
     Admin,
     /// API 또는 feed입니다.
     Api,
+    /// XML-RPC처럼 인증·증폭 공격에 자주 쓰이는 원격 호출 entrypoint입니다.
+    RemoteProcedure,
 }
 
 /// 정규화 route와 초기 비용입니다.
@@ -54,7 +65,9 @@ pub fn classify(profile: ApplicationProfile, raw_target: &str) -> RouteProfile {
     let path = raw_target.split('?').next().unwrap_or("/");
     let normalized = normalize_segments(path);
     let kind = match profile {
-        ApplicationProfile::Gnuboard => classify_gnuboard(path),
+        ApplicationProfile::Php => classify_php(path),
+        ApplicationProfile::Gnuboard5 => classify_gnuboard5(path),
+        ApplicationProfile::Gnuboard7 => classify_gnuboard7(path),
         ApplicationProfile::Wordpress => classify_wordpress(path),
     };
     RouteProfile {
@@ -64,23 +77,96 @@ pub fn classify(profile: ApplicationProfile, raw_target: &str) -> RouteProfile {
     }
 }
 
-fn classify_gnuboard(path: &str) -> RouteKind {
+fn classify_php(path: &str) -> RouteKind {
     if is_static(path) {
         RouteKind::Static
-    } else if path.starts_with("/adm/") {
+    } else if contains_any(path, &["/admin", "admin.php"]) {
         RouteKind::Admin
+    } else if contains_any(path, &["login", "register", "password", "auth"]) {
+        RouteKind::Authentication
+    } else if path.contains("search") {
+        RouteKind::Search
+    } else if contains_any(path, &["write", "comment", "create", "update"]) {
+        RouteKind::Write
+    } else if contains_any(path, &["upload", "attachment", "avatar"]) {
+        RouteKind::Upload
+    } else if contains_any(path, &["download", "/file", "/media"]) {
+        RouteKind::Media
+    } else if path.ends_with("/xmlrpc.php") || path == "/xmlrpc.php" {
+        RouteKind::RemoteProcedure
+    } else if path.starts_with("/api/") {
+        RouteKind::Api
+    } else if path.to_ascii_lowercase().ends_with(".php") {
+        RouteKind::Dynamic
+    } else {
+        RouteKind::Public
+    }
+}
+
+fn classify_gnuboard5(path: &str) -> RouteKind {
+    if is_static(path) {
+        RouteKind::Static
+    } else if path == "/adm" || path.starts_with("/adm/") {
+        RouteKind::Admin
+    } else if path.starts_with("/api/") {
+        RouteKind::Api
     } else if path.contains("search.php") {
         RouteKind::Search
-    } else if path.contains("login.php") || path.contains("register") || path.contains("password") {
+    } else if contains_any(
+        path,
+        &["login.php", "register", "password", "member_confirm"],
+    ) {
         RouteKind::Authentication
-    } else if path.contains("write") || path.contains("comment") {
+    } else if contains_any(path, &["write", "comment", "delete", "move_update"]) {
         RouteKind::Write
-    } else if path.contains("download.php") || path.contains("file") || path.contains("upload") {
+    } else if contains_any(path, &["upload", "ajax.file", "file_form"]) {
+        RouteKind::Upload
+    } else if contains_any(path, &["download.php", "/data/file/"]) {
+        RouteKind::Media
+    } else if path.starts_with("/bbs/") {
+        RouteKind::Board
+    } else if path.to_ascii_lowercase().ends_with(".php") {
+        RouteKind::Dynamic
+    } else {
+        RouteKind::Public
+    }
+}
+
+fn classify_gnuboard7(path: &str) -> RouteKind {
+    if is_static(path) {
+        RouteKind::Static
+    } else if path == "/admin"
+        || path.starts_with("/admin/")
+        || path == "/api/admin"
+        || path.starts_with("/api/admin/")
+        || path == "/api/auth/admin"
+        || path.starts_with("/api/auth/admin/")
+    {
+        RouteKind::Admin
+    } else if path == "/login"
+        || path == "/register"
+        || path.starts_with("/forgot-password")
+        || path.starts_with("/reset-password")
+        || path.starts_with("/api/auth/")
+        || path.starts_with("/api/user/auth/")
+        || path.starts_with("/api/me/verify-password")
+        || path.starts_with("/api/me/password")
+        || path.starts_with("/api/identity/")
+        || path == "/api/broadcasting/auth"
+    {
+        RouteKind::Authentication
+    } else if path == "/search" || path.starts_with("/api/search") {
+        RouteKind::Search
+    } else if contains_any(path, &["/avatar", "/upload", "/attachments"]) {
+        RouteKind::Upload
+    } else if contains_any(path, &["/posts", "/comments", "/write"]) {
+        RouteKind::Write
+    } else if path.starts_with("/api/attachment/") {
         RouteKind::Media
     } else if path.starts_with("/api/") {
         RouteKind::Api
-    } else if path.starts_with("/bbs/") {
-        RouteKind::Board
+    } else if path.to_ascii_lowercase().ends_with(".php") {
+        RouteKind::Dynamic
     } else {
         RouteKind::Public
     }
@@ -89,16 +175,18 @@ fn classify_gnuboard(path: &str) -> RouteKind {
 fn classify_wordpress(path: &str) -> RouteKind {
     if is_static(path) || path.starts_with("/wp-content/") || path.starts_with("/wp-includes/") {
         RouteKind::Static
-    } else if path.starts_with("/wp-admin/") {
+    } else if path == "/wp-admin" || path.starts_with("/wp-admin/") {
         RouteKind::Admin
     } else if path == "/wp-login.php" || path.contains("lostpassword") {
         RouteKind::Authentication
-    } else if path == "/xmlrpc.php" || path.starts_with("/wp-json/") || path.ends_with("/feed/") {
+    } else if path == "/xmlrpc.php" {
+        RouteKind::RemoteProcedure
+    } else if path.starts_with("/wp-json/") || path.ends_with("/feed/") {
         RouteKind::Api
     } else if path.contains("/search/") {
         RouteKind::Search
     } else if path.contains("upload") {
-        RouteKind::Media
+        RouteKind::Upload
     } else {
         RouteKind::Public
     }
@@ -113,9 +201,16 @@ fn base_cost(kind: RouteKind) -> u8 {
         RouteKind::Authentication => 12,
         RouteKind::Write => 12,
         RouteKind::Media => 15,
+        RouteKind::Upload => 15,
+        RouteKind::Dynamic => 6,
         RouteKind::Admin => 12,
         RouteKind::Api => 8,
+        RouteKind::RemoteProcedure => 15,
     }
+}
+
+fn contains_any(path: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| path.contains(needle))
 }
 
 fn is_static(path: &str) -> bool {

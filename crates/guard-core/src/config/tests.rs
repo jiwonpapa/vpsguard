@@ -4,7 +4,7 @@
 
 use std::net::IpAddr;
 
-use super::{ConfigError, GuardConfig};
+use super::{ConfigError, DetectionProfile, GuardConfig};
 
 const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -51,6 +51,14 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.edge.http_bind.to_string(), "127.0.0.1:18080");
     assert!(config.tls.certificates.is_empty());
     assert!(!config.cloudflare.enabled);
+    assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
+}
+
+#[test]
+fn parses_explicit_gnuboard7_profile() {
+    let input = VALID_CONFIG.replace("profile = \"gnuboard\"", "profile = \"gnuboard7\"");
+    let config = GuardConfig::from_toml(&input).expect("GnuBoard 7 profile should parse");
+    assert_eq!(config.detection.profile, DetectionProfile::Gnuboard7);
 }
 
 #[test]
@@ -105,6 +113,87 @@ fn rejects_https_without_certificate() {
         GuardConfig::from_toml(&input),
         Err(ConfigError::Invalid {
             field: "tls.certificates",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn public_management_host_requires_https() {
+    let input = VALID_CONFIG.replace(
+        "bind = \"127.0.0.1:7727\"",
+        "bind = \"127.0.0.1:7727\"\npublic_host = \"guard.g7devops.com\"",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "ui.public_host",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn public_management_host_must_be_covered_by_certificate() {
+    let input = VALID_CONFIG
+        .replace(
+            "http_bind = \"127.0.0.1:18080\"",
+            "http_bind = \"127.0.0.1:18080\"\nhttps_bind = \"127.0.0.1:18443\"",
+        )
+        .replace(
+            "bind = \"127.0.0.1:7727\"",
+            "bind = \"127.0.0.1:7727\"\npublic_host = \"guard.other.test\"",
+        )
+        .replace(
+            "[ui]",
+            "[tls]\n[[tls.certificates]]\ndomains = [\"*.g7devops.com\"]\ncert_file = \"/tmp/cert.pem\"\nkey_file = \"/tmp/key.pem\"\n\n[ui]",
+        );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "ui.public_host",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn accepts_separate_management_host_covered_by_wildcard_certificate() {
+    let input = VALID_CONFIG
+        .replace(
+            "http_bind = \"127.0.0.1:18080\"",
+            "http_bind = \"127.0.0.1:18080\"\nhttps_bind = \"127.0.0.1:18443\"",
+        )
+        .replace(
+            "bind = \"127.0.0.1:7727\"",
+            "bind = \"127.0.0.1:7727\"\npublic_host = \"guard.g7devops.com\"",
+        )
+        .replace(
+            "[ui]",
+            "[tls]\n[[tls.certificates]]\ndomains = [\"*.g7devops.com\"]\ncert_file = \"/tmp/cert.pem\"\nkey_file = \"/tmp/key.pem\"\n\n[ui]",
+        );
+    assert!(GuardConfig::from_toml(&input).is_ok());
+}
+
+#[test]
+fn wildcard_certificate_does_not_cover_multiple_labels() {
+    let input = VALID_CONFIG
+        .replace(
+            "http_bind = \"127.0.0.1:18080\"",
+            "http_bind = \"127.0.0.1:18080\"\nhttps_bind = \"127.0.0.1:18443\"",
+        )
+        .replace(
+            "bind = \"127.0.0.1:7727\"",
+            "bind = \"127.0.0.1:7727\"\npublic_host = \"deep.guard.g7devops.com\"",
+        )
+        .replace(
+            "[ui]",
+            "[tls]\n[[tls.certificates]]\ndomains = [\"*.g7devops.com\"]\ncert_file = \"/tmp/cert.pem\"\nkey_file = \"/tmp/key.pem\"\n\n[ui]",
+        );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "ui.public_host",
             ..
         })
     ));

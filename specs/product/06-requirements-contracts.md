@@ -66,7 +66,7 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 | ID | 필수 요구사항 | 수용 기준 |
 |---|---|---|
 | `DET-001` | trust, bot likelihood, resource cost를 별도 계산 | 각 점수와 근거가 API에 노출 |
-| `DET-002` | GnuBoard·WordPress route profile 지원 | profile fixture의 route 분류 통과 |
+| `DET-002` | 범용 PHP·GnuBoard 5·GnuBoard 7·WordPress route profile을 분리 지원 | 각 profile의 실제 route inventory fixture가 서로 오분류되지 않음 |
 | `DET-003` | User-Agent 단독으로 검색봇을 검증하지 않음 | 위조 Googlebot fixture가 verified 처리되지 않음 |
 | `DET-004` | 검증된 검색봇도 고비용 경로 한도 적용 | 과도한 verified bot 요청이 throttle 됨 |
 | `DET-005` | 초기 판단은 규칙 기반이며 설명 가능해야 함 | 모든 판정에 reason code 존재 |
@@ -75,6 +75,7 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 | `DET-008` | 자동 차단은 TTL과 재평가를 가져야 함 | TTL 만료 후 정책 자동 제거 |
 | `DET-009` | NAT/shared IP를 고려해 IP 외 세션·행동 사용 | 한 정상 세션 때문에 전체 IP 영구 차단 없음 |
 | `DET-010` | 판정 입력 결손을 명시 | agent 장애 중 자원 기반 확정 판정 금지 |
+| `DET-011` | 정적 안전 한도, app profile, site override와 incident policy를 결정적 순서로 합성 | app의 auth·admin·search는 strict, media는 upload로 보호되고 명시적 site override가 우선 |
 
 ### 2.4 Action
 
@@ -107,7 +108,7 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 
 | ID | 필수 요구사항 | 수용 기준 |
 |---|---|---|
-| `UI-001` | 독립 웹 UI를 loopback에서 제공 | SSH tunnel로만 기본 접속 가능 |
+| `UI-001` | Control은 loopback에 유지하고 edge의 별도 관리 Host로 HTTPS UI 제공 | 관리 Host는 Control로만 전달되고 Control 포트는 public에 노출되지 않음 |
 | `UI-002` | 현재 상태와 판정 근거 3개를 첫 화면에 표시 | NORMAL~RECOVERING 모든 fixture 렌더링 |
 | `UI-003` | 실시간 RPS, bandwidth, latency, status와 연결 수 표시 | SSE 갱신과 서버 집계 일치 |
 | `UI-004` | 외부 IP 목록과 상세 drill-down 제공 | 검색·정렬·필터·페이지 이동 동작 |
@@ -146,6 +147,8 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 | `SEC-003` | Unix socket peer credential과 파일 권한 검증 | 비인가 local user 명령 거부 |
 | `SEC-004` | provider resource allowlist 적용 | 다른 zone·instance 변경 거부 |
 | `SEC-005` | event와 report의 query·header 비밀 마스킹 | fixture secret scan 통과 |
+| `SEC-006` | 짧은 단회 로그인 코드는 session 발급에만 사용 | 만료·client별 시도 한도·재사용·운영 명령 직접 사용이 거부되고 오입력만으로 정상 code가 폐기되지 않음 |
+| `SEC-007` | 관리 Host·Origin을 고정하고 읽기·SSE·변경 API를 session으로 보호 | 잘못된 Host·Origin, 익명 읽기와 CSRF 없는 변경이 거부되고 HTTPS cookie에 Secure·HttpOnly·SameSite=Strict 적용 |
 | `NFR-001` | edge 추가 지연 예산을 벤치마크로 관리 | 승인 기준 초과 시 릴리스 차단 |
 | `NFR-002` | 2GB VPS에서 bounded memory 보장 | 고 cardinality soak에서 상한 증명 |
 | `NFR-003` | control restart가 public 요청을 중단하지 않음 | fault injection 통과 |
@@ -211,15 +214,20 @@ address = "127.0.0.1:8080"
 protocol = "http"
 
 [tls]
+[[tls.certificates]]
+domains = ["example.com", "guard.example.com"]
 cert_file = "/etc/letsencrypt/live/example.com/fullchain.pem"
 key_file = "/etc/letsencrypt/live/example.com/privkey.pem"
 
 [ui]
 bind = "127.0.0.1:7727"
+public_host = "guard.example.com"
+admin_socket = "/run/vps-guard/admin.sock"
+login_rate_limit_rpm = 10
 language = "ko"
 
 [detection]
-profile = "gnuboard"
+profile = "gnuboard7"
 mode = "observe"
 
 [cloudflare]
@@ -241,6 +249,9 @@ raw_ip_days = 7
 - unknown key는 warning이 아니라 오류로 처리합니다.
 - port, path, CIDR, duration과 threshold 범위를 검증합니다.
 - token 본문을 TOML에 직접 넣는 것을 금지합니다.
+- `ui.public_host`는 exact hostname이며 app canonical Host와 분리하고 TLS certificate domain에 포함해야 합니다.
+- `ui.bind`는 loopback, `ui.admin_socket`은 절대 경로, 로그인 시도 한도는 `1..=60`이어야 합니다.
+- `detection.profile = "gnuboard"`는 기존 설정 호환을 위해 GnuBoard 5 alias로만 읽고 새 설정은 `php`, `gnuboard5`, `gnuboard7`, `wordpress`를 명시합니다.
 - 설정 적용 전 후보 parse, semantic validation, edge dry-load를 통과해야 합니다.
 
 ## 5. 상태 계약

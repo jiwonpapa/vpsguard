@@ -153,6 +153,15 @@ pub struct CertificateConfig {
 pub struct UiConfig {
     /// UI listener 주소입니다.
     pub bind: SocketAddr,
+    /// Edge가 이 listener로만 전달할 별도 HTTPS 관리 Host입니다.
+    #[serde(default)]
+    pub public_host: Option<String>,
+    /// local 관리자 명령을 받는 peer-credential Unix socket입니다.
+    #[serde(default = "default_admin_socket")]
+    pub admin_socket: PathBuf,
+    /// client별 단회 로그인 시도의 분당 상한입니다.
+    #[serde(default = "default_login_rate_limit_rpm")]
+    pub login_rate_limit_rpm: u32,
     /// 기본 언어입니다.
     #[serde(default = "default_language")]
     pub language: String,
@@ -173,8 +182,13 @@ pub struct DetectionConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DetectionProfile {
-    /// GnuBoard profile입니다.
-    Gnuboard,
+    /// 범용 PHP profile입니다.
+    Php,
+    /// GnuBoard 5 profile이며 기존 `gnuboard` 설정의 호환 대상입니다.
+    #[serde(rename = "gnuboard5", alias = "gnuboard")]
+    Gnuboard5,
+    /// GnuBoard 7 profile입니다.
+    Gnuboard7,
     /// WordPress profile입니다.
     Wordpress,
 }
@@ -393,6 +407,15 @@ impl GuardConfig {
         if !self.ui.bind.ip().is_loopback() {
             return invalid("ui.bind", "loopback 주소만 허용합니다");
         }
+        if self.ui.bind == self.edge.http_bind || self.edge.https_bind == Some(self.ui.bind) {
+            return invalid("ui.bind", "edge listener와 같은 주소를 사용할 수 없습니다");
+        }
+        if !self.ui.admin_socket.is_absolute() {
+            return invalid("ui.admin_socket", "절대 경로가 필요합니다");
+        }
+        if self.ui.login_rate_limit_rpm == 0 || self.ui.login_rate_limit_rpm > 60 {
+            return invalid("ui.login_rate_limit_rpm", "1..=60 범위여야 합니다");
+        }
         if self.edge.https_bind.is_some() && self.tls.certificates.is_empty() {
             return invalid("tls.certificates", "HTTPS listener에는 인증서가 필요합니다");
         }
@@ -405,6 +428,38 @@ impl GuardConfig {
             }
             for domain in &certificate.domains {
                 validate_host_rule(domain, "tls.certificates.domains")?;
+            }
+        }
+        if let Some(public_host) = self.ui.public_host.as_deref() {
+            validate_host_rule(public_host, "ui.public_host")?;
+            if public_host.starts_with("*.") {
+                return invalid("ui.public_host", "정확한 관리 hostname이 필요합니다");
+            }
+            if self.edge.https_bind.is_none() {
+                return invalid("ui.public_host", "HTTPS listener가 필요합니다");
+            }
+            if self
+                .edge
+                .canonical_host
+                .as_deref()
+                .is_some_and(|host| host.eq_ignore_ascii_case(public_host))
+            {
+                return invalid(
+                    "ui.public_host",
+                    "애플리케이션 canonical Host와 분리해야 합니다",
+                );
+            }
+            let covered = self.tls.certificates.iter().any(|certificate| {
+                certificate
+                    .domains
+                    .iter()
+                    .any(|rule| host_rule_matches(rule, public_host))
+            });
+            if !covered {
+                return invalid(
+                    "ui.public_host",
+                    "관리 Host를 포함하는 TLS 인증서가 필요합니다",
+                );
             }
         }
         if self.cloudflare.enabled
@@ -507,6 +562,19 @@ fn validate_host_rule(raw: &str, field: &'static str) -> Result<(), ConfigError>
     Ok(())
 }
 
+fn host_rule_matches(rule: &str, host: &str) -> bool {
+    if let Some(suffix) = rule.strip_prefix("*.") {
+        let rule_suffix = suffix.to_ascii_lowercase();
+        let candidate = host.to_ascii_lowercase();
+        candidate
+            .strip_suffix(&rule_suffix)
+            .and_then(|prefix| prefix.strip_suffix('.'))
+            .is_some_and(|label| !label.is_empty() && !label.contains('.'))
+    } else {
+        rule.eq_ignore_ascii_case(host)
+    }
+}
+
 fn invalid<T>(field: &'static str, reason: impl Into<String>) -> Result<T, ConfigError> {
     Err(ConfigError::Invalid {
         field,
@@ -516,6 +584,14 @@ fn invalid<T>(field: &'static str, reason: impl Into<String>) -> Result<T, Confi
 
 fn default_language() -> String {
     "ko".to_owned()
+}
+
+fn default_admin_socket() -> PathBuf {
+    PathBuf::from("/run/vps-guard/admin.sock")
+}
+
+const fn default_login_rate_limit_rpm() -> u32 {
+    10
 }
 
 fn default_telemetry_socket() -> PathBuf {

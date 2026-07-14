@@ -19,6 +19,14 @@ const status = {
 async function mockApi(page: Page) {
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/session" && route.request().method() === "GET") {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "SESSION_AUTH_REQUIRED" } }),
+      });
+      return;
+    }
     const data: Record<string, unknown> = {
       "/api/v1/status": status,
       "/api/v1/traffic/summary": {

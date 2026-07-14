@@ -46,14 +46,25 @@ export async function createSession(token: string): Promise<void> {
   const response = await fetch("/api/v1/session", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "X-VPSGuard-Token": token },
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_code: token }),
   });
   const body = await parseResponse<{ csrf_token: string }>(response);
   csrfToken = body.csrf_token;
 }
 
-export function hasSession(): boolean {
-  return csrfToken.length > 0;
+export async function restoreSession(): Promise<boolean> {
+  const response = await fetch("/api/v1/session", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  if (response.status === 401) {
+    csrfToken = "";
+    return false;
+  }
+  const body = await parseResponse<{ csrf_token: string }>(response);
+  csrfToken = body.csrf_token;
+  return true;
 }
 
 export async function performAction(path: string): Promise<ActionResponse> {
@@ -68,7 +79,14 @@ export async function performAction(path: string): Promise<ActionResponse> {
       "Idempotency-Key": crypto.randomUUID(),
     },
   });
-  return parseResponse<ActionResponse>(response);
+  try {
+    return await parseResponse<ActionResponse>(response);
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.code === "CSRF_AUTH_REQUIRED")) {
+      csrfToken = "";
+    }
+    throw error;
+  }
 }
 
 export const api = {

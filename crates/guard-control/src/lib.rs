@@ -1,5 +1,6 @@
 //! 정책 생성, 상태 저장, API, SSE와 수집 orchestration을 소유합니다.
 
+mod admin_socket;
 mod api;
 mod auth;
 mod provider;

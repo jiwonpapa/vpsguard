@@ -1,8 +1,8 @@
-import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound, X } from "lucide-react";
 
-import { ApiError, createSession, performAction } from "./lib/api";
+import { ApiError, createSession, performAction, restoreSession } from "./lib/api";
 import { Button } from "./components/ui/button";
 
 interface AuthContextValue {
@@ -21,13 +21,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    void restoreSession().then((restored) => {
+      if (restored) void queryClient.invalidateQueries();
+    });
+  }, [queryClient]);
+
   const execute = async (path: string) => {
     try {
       const result = await performAction(path);
       setMessage(`상태 변경 완료: ${result.mode}`);
       await queryClient.invalidateQueries();
     } catch (error) {
-      if (error instanceof ApiError && error.code === "SESSION_REQUIRED") {
+      if (
+        error instanceof ApiError &&
+        (error.code === "SESSION_REQUIRED" || error.status === 401 || error.code === "CSRF_AUTH_REQUIRED")
+      ) {
         setPendingPath(path);
         setOpen(true);
         return;
@@ -107,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 <KeyRound className="mb-4 size-5 text-orange-400" aria-hidden="true" />
                 <h2 id="session-title" className="text-lg font-semibold">운영 session 시작</h2>
                 <p className="mt-2 text-sm leading-6 text-zinc-500">
-                  서버의 bootstrap token은 session 발급에만 사용하며 브라우저 저장소에 남기지 않습니다.
+                  서버에서 <code className="text-zinc-300">vps-guard issue-login-code</code>로 발급한 단회 코드는 session 발급에만 사용하며 브라우저 저장소에 남기지 않습니다.
                 </p>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="닫기">
@@ -116,20 +125,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             </div>
             <form className="mt-6" onSubmit={submit}>
               <label htmlFor="bootstrap-token" className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                VPS_GUARD_ACTION_TOKEN
+                단회 로그인 코드
               </label>
               <input
                 id="bootstrap-token"
                 type="password"
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
-                autoComplete="off"
+                autoComplete="one-time-code"
                 className="mt-2 h-10 w-full border border-zinc-700 bg-zinc-900 px-3 font-mono text-sm outline-none focus:border-orange-500"
                 required
                 autoFocus
               />
               <Button className="mt-4 w-full" disabled={busy} type="submit">
-                {busy ? "검증 중" : "Session 발급"}
+                {busy ? "검증 중" : "Session 시작"}
               </Button>
             </form>
           </section>

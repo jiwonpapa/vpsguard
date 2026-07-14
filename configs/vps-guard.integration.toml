@@ -2,6 +2,7 @@ schema_version = 1
 
 [edge]
 http_bind = "127.0.0.1:18080"
+https_bind = "127.0.0.1:18443"
 allowed_hosts = ["example.test"]
 trusted_proxy_cidrs = ["127.0.0.1/32"]
 max_body_bytes = 1024
@@ -25,10 +26,14 @@ address = "127.0.0.1:18081"
 protocol = "http"
 
 [tls]
-certificates = []
+[[tls.certificates]]
+domains = ["example.test", "guard.example.test"]
+cert_file = "/tmp/vps-guard-smoke/tls-cert.pem"
+key_file = "/tmp/vps-guard-smoke/tls-key.pem"
 
 [ui]
 bind = "127.0.0.1:17727"
+public_host = "guard.example.test"
 admin_socket = "/tmp/vps-guard-smoke/admin.sock"
 login_rate_limit_rpm = 10
 language = "ko"

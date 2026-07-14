@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use std::time::Instant;
 
 use crate::rate_limit::RouteClass;
+use crate::runtime::UpstreamKind;
 
 /// Pingora request lifecycle에서 공유하는 최소 context입니다.
 #[derive(Debug)]
@@ -25,6 +26,7 @@ pub(crate) struct RequestContext {
     pub(crate) normalized_route: String,
     pub(crate) route_cost: u8,
     pub(crate) policy_version: u64,
+    pub(crate) upstream_kind: UpstreamKind,
 }
 
 impl RequestContext {
@@ -47,6 +49,7 @@ impl RequestContext {
             normalized_route: "/".to_owned(),
             route_cost: 1,
             policy_version: 0,
+            upstream_kind: UpstreamKind::Application,
         }
     }
 }

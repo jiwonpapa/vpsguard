@@ -62,6 +62,16 @@ vps-guard/
 
 OS 명령과 provider API를 `guard-core`에 넣지 않습니다. `guard-edge`는 웹 UI와 SQLite에 의존하지 않습니다.
 
+### 현재 구현 배치: 관리면·GnuBoard 보안 수직 슬라이스
+
+- 요구사항: `DET-002`, `DET-011`, `UI-001`, `SEC-003`, `SEC-006`, `SEC-007`
+- GnuBoard 5와 7을 별도 route inventory로 분리하고 기존 `gnuboard` 값은 G5 호환 alias로만 유지
+- app profile 결과를 strict·upload 보호 계층에 연결하고 site prefix override가 우선하도록 합성
+- 별도 관리 Host만 edge에서 loopback Control로 전달하며 앱 origin fallback을 금지
+- peer credential을 확인한 local admin socket에서 짧은 단회 로그인 코드를 발급
+- 로그인 코드는 session 발급에만 사용하고 읽기·SSE·변경은 session, 변경은 Origin·CSRF·idempotency로 보호
+- passkey 등록과 역할 분리는 이 인증 경계가 검증된 뒤 별도 요구사항으로 추가
+
 ## 3. 배치 0: 저장소와 헌법
 
 ### 구현
@@ -178,7 +188,8 @@ test(edge): enforce telemetry backpressure and privacy contracts
 - status, traffic, clients, routes, incidents API
 - SSE event stream과 event gap 복구
 - retention과 IP 보존기간
-- one-time bootstrap token, session과 CSRF
+- peer credential 기반 one-time login code, session, Origin과 CSRF
+- 별도 HTTPS 관리 Host와 loopback Control 분리
 
 ### 커밋
 
@@ -252,7 +263,8 @@ feat(core): correlate request cost with server pressure
 
 - trust, bot likelihood와 resource cost
 - reason code와 설명 생성
-- GnuBoard route profile
+- GnuBoard 5·7 route profile과 기존 G5 alias 호환
+- 정적 안전 한도·app profile·site override·incident policy 합성
 - WordPress route profile은 GnuBoard 검증 후 추가
 - baseline window와 fixed safety threshold
 - verified crawler adapter와 spoof 방지

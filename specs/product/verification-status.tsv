@@ -32,6 +32,7 @@ DET-007|AUTO_PASS|crates/guard-core/src/state.rs|crates/guard-core/src/state/tes
 DET-008|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/policy_runtime/tests.rs|-
 DET-009|PLANNED|-|-|-
 DET-010|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
+DET-011|AUTO_PASS|crates/guard-edge/src/runtime.rs|crates/guard-edge/src/runtime/tests.rs|-
 ACT-001|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 ACT-002|CODE_ONLY|crates/guard-edge/src/response.rs|-|-
 ACT-003|AUTO_PASS|crates/guard-edge/src/challenge.rs|crates/guard-edge/src/challenge.rs|-
@@ -49,7 +50,7 @@ TLS-002|CODE_ONLY|packaging/certbot/vps-guard-deploy-hook|-|-
 TLS-003|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 TLS-004|PLANNED|-|-|-
 TLS-005|CODE_ONLY|scripts/update-release.sh|-|-
-UI-001|CODE_ONLY|crates/guard-control/src/api.rs|-|-
+UI-001|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 UI-002|AUTO_PASS|web/src/pages/overview.tsx|web/tests/console.e2e.ts|-
 UI-003|CODE_ONLY|web/src/pages/traffic.tsx|-|-
 UI-004|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
@@ -60,7 +61,7 @@ UI-008|PLANNED|-|-|-
 UI-009|CODE_ONLY|web/src/auth.tsx|-|-
 UI-010|PLANNED|-|-|-
 UI-011|CODE_ONLY|web/src/app-shell.tsx|-|-
-UI-012|CODE_ONLY|crates/guard-control/src/api.rs|-|-
+UI-012|PLANNED|-|-|-
 UI-013|CODE_ONLY|web/src/components/query-state.tsx|-|-
 UI-014|CODE_ONLY|web/src/router.tsx|-|-
 OPS-001|CODE_ONLY|scripts/deploy-g7devops.sh|-|-
@@ -73,12 +74,14 @@ OPS-007|CODE_ONLY|.github/workflows/release.yml|-|-
 OPS-008|AUTO_PASS|crates/guard-system/src/command.rs|crates/guard-system/src/command.rs|-
 SEC-001|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
 SEC-002|CODE_ONLY|crates/guard-control/src/api.rs|-|-
-SEC-003|PLANNED|-|-|-
+SEC-003|AUTO_PASS|crates/guard-control/src/admin_socket.rs|scripts/integration-gate.sh|-
 SEC-004|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
 SEC-005|CODE_ONLY|crates/guard-edge/src/telemetry.rs|-|-
+SEC-006|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/api/tests.rs|-
+SEC-007|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
 NFR-001|PLANNED|-|-|-
 NFR-002|CODE_ONLY|crates/guard-edge/src/rate_limit.rs|-|-
-NFR-003|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
+NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 NFR-004|AUTO_PASS|crates/guard-system/src/atomic_store.rs|crates/guard-system/src/atomic_store/tests.rs|-
 NFR-005|CODE_ONLY|crates/guard-control/src/api.rs|-|-
 NFR-006|AUTO_PASS|crates/guard-core/src/config.rs|crates/guard-core/src/config/tests.rs|-
