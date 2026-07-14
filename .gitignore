@@ -13,8 +13,12 @@ lcov.info
 node_modules/
 .bun/
 dist/
+!web/dist/
+!web/dist/**
+web/src/generated.css
 coverage/
 playwright-report/
+.playwright-cli/
 test-results/
 blob-report/
 

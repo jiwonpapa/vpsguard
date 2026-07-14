@@ -136,6 +136,21 @@ jobs:
         working-directory: web
       - run: bun run check
         working-directory: web
+      - run: git diff --exit-code -- web/dist
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+        working-directory: web
+      - run: bun run test:e2e
+        working-directory: web
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web-e2e-evidence
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
 
   merge-gate:
     name: merge-gate

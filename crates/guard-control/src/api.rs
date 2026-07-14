@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use guard_agent::os::OsSnapshot;
@@ -23,9 +23,9 @@ use crate::auth::SessionStore;
 use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore};
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
 
-const INDEX_HTML: &str = include_str!("../../../web/index.html");
-const APP_CSS: &str = include_str!("../../../web/app.css");
-const APP_JS: &str = include_str!("../../../web/app.js");
+const INDEX_HTML: &str = include_str!("../../../web/dist/index.html");
+const APP_CSS: &str = include_str!("../../../web/dist/assets/app.css");
+const APP_JS: &str = include_str!("../../../web/dist/assets/app.js");
 
 /// control API 공유 상태입니다.
 #[derive(Debug)]
@@ -111,8 +111,8 @@ struct SessionResponse {
 pub(crate) fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/app.css", get(styles))
-        .route("/app.js", get(script))
+        .route("/assets/app.css", get(styles))
+        .route("/assets/app.js", get(script))
         .route("/health/live", get(live))
         .route("/api/v1/status", get(status))
         .route("/api/v1/traffic/summary", get(traffic_summary))
@@ -125,20 +125,44 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/session", post(create_session))
         .route("/api/v1/actions/manual-hold", post(manual_hold))
         .route("/api/v1/actions/resume-auto", post(resume_auto))
+        .fallback(index)
         .with_state(state)
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::X_FRAME_OPTIONS, "DENY"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            ),
+        ],
+        INDEX_HTML,
+    )
 }
 
 async fn styles() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        APP_CSS,
+    )
 }
 
 async fn script() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
         APP_JS,
     )
 }

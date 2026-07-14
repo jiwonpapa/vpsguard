@@ -4,7 +4,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 evidence_dir="${repo_root}/target-evidence/integration"
 mkdir -p "${evidence_dir}" /tmp/vps-guard-smoke
-rm -f /tmp/vps-guard-smoke/telemetry.sock "${evidence_dir}/state.json"
+rm -f /tmp/vps-guard-smoke/telemetry.sock \
+  /tmp/vps-guard-smoke/control.sqlite3 \
+  /tmp/vps-guard-smoke/control.sqlite3-shm \
+  /tmp/vps-guard-smoke/control.sqlite3-wal \
+  /tmp/vps-guard-smoke/policy.json \
+  "${evidence_dir}/state.json"
 
 origin_pid=""
 edge_pid=""
@@ -53,10 +58,26 @@ rate_limited_status="$(curl --silent --output /dev/null --write-out '%{http_code
 
 curl --silent --show-error http://127.0.0.1:17727/api/v1/status >"${evidence_dir}/status.json"
 curl --silent --show-error http://127.0.0.1:17727/api/v1/traffic/summary >"${evidence_dir}/traffic.json"
+curl --silent --show-error http://127.0.0.1:17727/api/v1/clients >"${evidence_dir}/clients.json"
+curl --silent --show-error http://127.0.0.1:17727/api/v1/routes >"${evidence_dir}/routes.json"
+curl --silent --show-error http://127.0.0.1:17727/api/v1/incidents >"${evidence_dir}/incidents.json"
+curl --silent --show-error http://127.0.0.1:17727/api/v1/traffic/series >"${evidence_dir}/series.json"
 action_status="$(curl --silent --output "${evidence_dir}/manual-hold.json" --write-out '%{http_code}' \
   -X POST -H 'X-VPSGuard-Token: smoke-token' -H 'Idempotency-Key: smoke-hold-1' \
   http://127.0.0.1:17727/api/v1/actions/manual-hold)"
 [[ "${action_status}" == "200" ]]
 rg -q 'MANUAL_HOLD' "${evidence_dir}/manual-hold.json"
+
+curl --silent --show-error --dump-header "${evidence_dir}/session.headers" \
+  --output "${evidence_dir}/session.json" -X POST \
+  -H 'X-VPSGuard-Token: smoke-token' http://127.0.0.1:17727/api/v1/session
+csrf_token="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["csrf_token"])' "${evidence_dir}/session.json")"
+session_cookie="$(sed -n 's/^[Ss]et-[Cc]ookie: \([^;]*\).*/\1/p' "${evidence_dir}/session.headers" | tr -d '\r')"
+resume_status="$(curl --silent --output "${evidence_dir}/resume-auto.json" --write-out '%{http_code}' \
+  -X POST -H "Cookie: ${session_cookie}" -H "X-CSRF-Token: ${csrf_token}" \
+  -H 'Idempotency-Key: smoke-resume-1' \
+  http://127.0.0.1:17727/api/v1/actions/resume-auto)"
+[[ "${resume_status}" == "200" ]]
+rg -q 'WATCH' "${evidence_dir}/resume-auto.json"
 
 echo "integration gate: PASS"

@@ -28,7 +28,8 @@ fn main() -> ExitCode {
         "coverage" => script(&root, "scripts/coverage-gate.sh", &[]),
         "integration" => script(&root, "scripts/integration-gate.sh", &[])
             .and_then(|()| script(&root, "scripts/ops-harness.sh", &[])),
-        "web" => command(&root.join("web"), "bun", &["run", "check"]),
+        "web" => command(&root.join("web"), "bun", &["run", "check"])
+            .and_then(|()| command(&root.join("web"), "bun", &["run", "test:e2e"])),
         "release" => script(&root, "scripts/build-release.sh", &[]),
         _ => {
             eprintln!("unknown xtask: {task}");
