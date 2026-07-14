@@ -30,7 +30,7 @@ last_reviewed: 2026-07-14
 | `TLS-002`, `TLS-005` 하네스 | cert/key deploy preflight, update·uninstall 인증서 보존 | Certbot hook, ops plan |
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | CSR SPA, SSE 사건, bytes·connection, client 검색·필터·정렬·페이지, provider 진행률, 운영 명령 확인, light/dark, stale/error | Bun·Playwright·control smoke |
 | `UI-012` 일부 | 비인증 client IP network 마스킹, session 인증 후 원본 IP 표시, 민감 export 미제공 | API authorization regression |
-| `OPS-002`~`OPS-008` 하네스 | typed plan, ingress rollback, bypass, update rollback, ownership uninstall, arch matrix·SBOM·command audit | `scripts/ops-harness.sh`, release workflow |
+| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, ingress rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | plan test와 release workflow; 실제 VPS apply 증거 없음 |
 | 회귀 차단 코드 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 merge gate로 연결 | GitHub branch protection 적용 전에는 강제되지 않음 |
 | `SEC-001`, `SEC-005` | root-only token, memory session·CSRF, CSP, query·header·body 미저장 | API auth·web tests |
 | `NFR-003`, `NFR-004`, `NFR-006` 일부 | edge/control 분리, 원자 state, versioned strict schema | integration·atomic store tests |

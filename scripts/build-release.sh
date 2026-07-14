@@ -44,6 +44,8 @@ else
   cargo metadata --locked --format-version 1 >"${bundle}/sbom/cargo-metadata.json"
 fi
 {
+  echo "target=${target}"
+  echo "version=${version}"
   rustc -Vv
   git rev-parse HEAD
 } >"${bundle}/BUILD-INFO.txt"

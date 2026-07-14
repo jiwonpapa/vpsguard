@@ -5,10 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 fn main() -> ExitCode {
-    let Some(task) = env::args().nth(1) else {
-        eprintln!("usage: cargo xtask <check|test|coverage|integration|load|web|release>");
+    let mut arguments = env::args().skip(1);
+    let Some(task) = arguments.next() else {
+        eprintln!("usage: cargo xtask <check|test|coverage|integration|load|web|release> [target]");
         return ExitCode::from(2);
     };
+    let release_target = arguments
+        .next()
+        .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned());
     let root = workspace_root();
     let result = match task.as_str() {
         "check" => script(&root, "scripts/check.sh", &[]),
@@ -31,7 +35,11 @@ fn main() -> ExitCode {
         "load" => script(&root, "scripts/load-regression-gate.sh", &[]),
         "web" => command(&root.join("web"), "bun", &["run", "check"])
             .and_then(|()| command(&root.join("web"), "bun", &["run", "test:e2e"])),
-        "release" => script(&root, "scripts/build-release.sh", &[]),
+        "release" => script(
+            &root,
+            "scripts/build-release.sh",
+            &[release_target.as_str()],
+        ),
         _ => {
             eprintln!("unknown xtask: {task}");
             return ExitCode::from(2);

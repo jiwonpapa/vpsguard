@@ -10,14 +10,15 @@
 ## g7devops shadow 배포
 
 ```bash
-cargo xtask release
+CARGO_BUILD_TOOL=cross cargo xtask release x86_64-unknown-linux-gnu
 bash scripts/deploy-g7devops.sh --plan
 VPS_GUARD_DEPLOY_CONFIRM=g7devops-shadow \
   bash scripts/deploy-g7devops.sh --apply \
-  target/release-bundle/x86_64-unknown-linux-gnu/vpsguard-0.1.0
+  target/release-bundle/x86_64-unknown-linux-gnu/vpsguard-<version> \
+  /path/to/g7devops-shadow.toml
 ```
 
-이 단계는 public Nginx와 80/443을 변경하지 않습니다. 원격 smoke는 loopback edge/control health, systemd 상태와 config validation을 확인합니다.
+이 단계는 public Nginx와 80/443을 변경하지 않습니다. release checksum·target, 원격 architecture와 config를 먼저 검증합니다. 기존 `/etc/vps-guard/config.toml`은 후보와 byte 단위로 같을 때만 유지하며 자동 덮어쓰지 않습니다. 원격 smoke는 loopback edge/control health, origin ready와 systemd 상태를 확인합니다.
 
 ## Public ingress와 bypass
 
@@ -41,14 +42,17 @@ sudo VPS_GUARD_INGRESS_CONFIRM=to-nginx \
 ```bash
 bash scripts/update-release.sh --plan /path/to/bundle
 sudo VPS_GUARD_UPDATE_CONFIRM=update-with-rollback \
+  VPS_GUARD_EDGE_HOST=example.com \
   bash scripts/update-release.sh --apply /path/to/bundle
 
 bash scripts/uninstall.sh --plan
 sudo VPS_GUARD_UNINSTALL_CONFIRM=remove-owned-artifacts-only \
+  VPS_GUARD_BYPASS_VERIFIED=nginx-public \
+  VPS_GUARD_UNINSTALL_PROBE_URL=https://example.com/health \
   bash scripts/uninstall.sh --apply
 ```
 
-Update는 binary/unit/tmpfiles snapshot을 만든 뒤 health 실패 시 복구합니다. Uninstall은 `packaging/ownership-manifest.txt`의 정확한 allowlist만 제거합니다.
+Update는 binary/unit/tmpfiles snapshot을 만든 뒤 control과 Host-safe edge health 중 하나라도 실패하면 복구합니다. Uninstall은 Nginx 설정·활성 상태와 public probe를 확인하고 edge를 중지한 뒤 probe를 다시 통과해야만 `packaging/ownership-manifest.txt`의 정확한 allowlist를 제거합니다. 중간 probe가 실패하면 edge를 재기동하고 제거를 중단합니다.
 
 ## TLS 갱신
 

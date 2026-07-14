@@ -21,8 +21,24 @@ fi
   echo "VPS_GUARD_UNINSTALL_CONFIRM=remove-owned-artifacts-only is required" >&2
   exit 2
 }
+[[ "${VPS_GUARD_BYPASS_VERIFIED:-}" == "nginx-public" ]] || {
+  echo "VPS_GUARD_BYPASS_VERIFIED=nginx-public is required" >&2
+  exit 2
+}
+probe_url="${VPS_GUARD_UNINSTALL_PROBE_URL:-}"
+[[ -n "${probe_url}" ]] || { echo "VPS_GUARD_UNINSTALL_PROBE_URL is required" >&2; exit 2; }
+nginx -t
+systemctl is-active --quiet nginx.service
+curl --fail --silent --show-error "${probe_url}" >/dev/null
 
-systemctl disable --now vps-guard-edge.service vps-guard-control.service || true
+systemctl stop vps-guard-edge.service
+if ! curl --fail --silent --show-error --retry 5 --retry-delay 1 "${probe_url}" >/dev/null; then
+  systemctl start vps-guard-edge.service || true
+  echo "public Nginx probe failed after edge stop; uninstall aborted and edge restarted" >&2
+  exit 1
+fi
+systemctl disable vps-guard-edge.service
+systemctl disable --now vps-guard-control.service || true
 if /usr/sbin/nft list table inet vps_guard >/dev/null 2>&1; then
   /usr/sbin/nft delete table inet vps_guard
 fi

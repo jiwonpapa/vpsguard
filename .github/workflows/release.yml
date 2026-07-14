@@ -41,14 +41,23 @@ jobs:
           REQUIRE_CYCLONEDX: "1"
         run: bash scripts/build-release.sh "${{ matrix.target }}"
       - name: Verify checksums
+        id: bundle
         run: |
-          bundle="target/release-bundle/${{ matrix.target }}/vpsguard-0.1.0"
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bundle="target/release-bundle/${{ matrix.target }}/vpsguard-${version}"
+          test -d "${bundle}"
           (cd "${bundle}" && sha256sum --check SHA256SUMS)
+          grep -Fxq "target=${{ matrix.target }}" "${bundle}/BUILD-INFO.txt"
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) file "${bundle}/bin/vps-guard" | grep -Fq 'x86-64' ;;
+            aarch64-unknown-linux-gnu) file "${bundle}/bin/vps-guard" | grep -Eq 'ARM aarch64|aarch64' ;;
+          esac
+          echo "path=${bundle}" >>"${GITHUB_OUTPUT}"
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: target/release-bundle/${{ matrix.target }}/vpsguard-0.1.0/bin/*
+          subject-path: ${{ steps.bundle.outputs.path }}/bin/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vpsguard-${{ matrix.target }}
-          path: target/release-bundle/${{ matrix.target }}/vpsguard-0.1.0/
+          path: ${{ steps.bundle.outputs.path }}/
           if-no-files-found: error

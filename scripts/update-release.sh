@@ -5,6 +5,8 @@ mode="${1:---plan}"
 bundle="${2:-}"
 manifest_name="ownership-manifest.txt"
 health_url="${VPS_GUARD_CONTROL_HEALTH_URL:-http://127.0.0.1:7727/health/live}"
+edge_health_url="${VPS_GUARD_EDGE_HEALTH_URL:-http://127.0.0.1:18080/health/live}"
+edge_host="${VPS_GUARD_EDGE_HOST:-}"
 
 echo "mode: ${mode}"
 echo "bundle: ${bundle:-<required for apply>}"
@@ -18,6 +20,7 @@ fi
   exit 2
 }
 [[ -d "${bundle}" ]] || { echo "bundle directory is required" >&2; exit 2; }
+[[ -n "${edge_host}" ]] || { echo "VPS_GUARD_EDGE_HOST is required" >&2; exit 2; }
 (cd "${bundle}" && sha256sum --check SHA256SUMS)
 for binary in vps-guard vps-guard-control vps-guard-edge; do
   [[ -x "${bundle}/bin/${binary}" ]]
@@ -86,5 +89,6 @@ systemctl daemon-reload
 /usr/local/bin/vps-guard check-config --config /etc/vps-guard/config.toml
 systemctl restart vps-guard-control.service vps-guard-edge.service
 curl --fail --silent "${health_url}" >/dev/null
+curl --fail --silent -H "Host: ${edge_host}" "${edge_health_url}" >/dev/null
 trap - EXIT
 echo "update complete; backup=${backup}"

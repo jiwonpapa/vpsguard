@@ -59,7 +59,7 @@ cargo run -p guard-cli -- check-config --config configs/vps-guard.example.toml
 cargo run -p guard-cli -- plan --config configs/vps-guard.example.toml
 ```
 
-`g7devops` 배포 하네스는 기본이 plan-only입니다. `--apply`도 shadow port와 기존 원격 config를 요구하며 Nginx public 80/443, SSH, 인증서와 사이트 데이터를 변경하지 않습니다.
+`g7devops` 배포 하네스는 기본이 plan-only입니다. `--apply`는 checksum이 맞는 Linux x86_64 bundle과 별도 shadow config를 요구하며, 기존 원격 config는 byte 단위로 같지 않으면 거부합니다. Nginx public 80/443, SSH, 인증서와 사이트 데이터는 변경하지 않습니다.
 
 ## 아직 release 인증이 필요한 기능
 

@@ -25,4 +25,12 @@ grep -Fq 'pre-MVP' README.md
 grep -Fq 'pre-MVP' specs/product/11-mvp-implementation-status.md
 grep -Fq 'CODE_ONLY' specs/product/verification-status.tsv
 
+if grep -Fq 'vpsguard-0.1.0' .github/workflows/release.yml; then
+  echo "release workflow must derive the workspace version" >&2
+  exit 1
+fi
+grep -Fq 'SHA256SUMS' scripts/deploy-g7devops.sh
+grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
+grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
+
 echo "repository contract tests: PASS"
