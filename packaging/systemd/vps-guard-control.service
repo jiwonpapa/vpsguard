@@ -10,6 +10,8 @@ ExecStart=/usr/local/bin/vps-guard-control
 Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
 Environment=VPS_GUARD_STATE=/var/lib/vps-guard/state.json
 EnvironmentFile=-/etc/vps-guard/secrets/control.env
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
 Restart=on-failure
 RestartSec=3s
 RuntimeDirectory=vps-guard
@@ -24,6 +26,15 @@ ReadWritePaths=/run/vps-guard /var/lib/vps-guard
 RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
+UMask=0027
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target

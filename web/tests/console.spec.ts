@@ -31,6 +31,10 @@ async function mockApi(page: Page) {
         latency_p95_micros: 12500,
         unique_clients: 42,
         dropped_clients: 0,
+        request_body_bytes: 64000,
+        response_body_bytes: 819200,
+        upstream_connections: 400,
+        upstream_connections_reused: 320,
       },
       "/api/v1/resources": {
         state: "live",
@@ -44,7 +48,7 @@ async function mockApi(page: Page) {
         },
         services: [],
       },
-      "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, last_seen_unix_ms: 1784000000000 }] },
+      "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, request_body_bytes: 2048, response_body_bytes: 16384, last_seen_unix_ms: 1784000000000 }] },
       "/api/v1/routes": { items: [] },
       "/api/v1/incidents": { items: [] },
       "/api/v1/traffic/series": { items: [] },
@@ -67,10 +71,16 @@ test("renders protection posture and client drill-down", async ({ page }) => {
   await expect(page.getByText("로컬 방어", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "클라이언트" }).click();
   await expect(page.getByText("203.0.113.8")).toBeVisible();
+  await page.getByLabel("Client 검색").fill("198.51");
+  await expect(page.getByText("아직 수집된 항목이 없습니다.")).toBeVisible();
+  await page.getByLabel("Client 검색").fill("203.0");
+  await expect(page.getByText("18.0 KiB")).toBeVisible();
 });
 
 test("mutation opens bootstrap session dialog", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "자동 대응 중지" }).click();
+  await expect(page.getByRole("dialog", { name: "운영 명령 확인" })).toBeVisible();
+  await page.getByRole("button", { name: "확인 후 실행" }).click();
   await expect(page.getByRole("dialog", { name: "운영 session 시작" })).toBeVisible();
 });

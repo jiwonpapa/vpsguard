@@ -39,7 +39,7 @@ jobs:
           bash scripts/requirements-gate.sh
           bash scripts/pr-contract-gate.sh
           actionlint
-          shellcheck scripts/*.sh
+          shellcheck scripts/*.sh packaging/certbot/*
       - name: Rust quality
         run: |
           cargo fmt --all -- --check
@@ -47,7 +47,7 @@ jobs:
           RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items
           cargo audit --ignore RUSTSEC-2024-0437
           cargo deny check
-          cargo machete
+          cargo machete crates
 
   unit-contract:
     name: unit-contract
@@ -152,10 +152,31 @@ jobs:
             web/test-results/
           if-no-files-found: ignore
 
+  load-regression:
+    name: load-regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - run: bash scripts/load-regression-gate.sh
+      - name: Upload load evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: load-evidence
+          path: target-evidence/load/
+          if-no-files-found: ignore
+
   merge-gate:
     name: merge-gate
     if: always()
-    needs: [quality, unit-contract, coverage, integration, web]
+    needs: [quality, unit-contract, coverage, integration, web, load-regression]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every gate

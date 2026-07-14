@@ -74,10 +74,7 @@ impl SessionStore {
 
     /// Cookie session과 CSRF header를 함께 검증합니다.
     pub(crate) fn authorize(&self, headers: &HeaderMap) -> bool {
-        let session_id = headers
-            .get("cookie")
-            .and_then(|value| value.to_str().ok())
-            .and_then(find_session_cookie);
+        let session_id = session_id(headers);
         let csrf = headers
             .get("x-csrf-token")
             .and_then(|value| value.to_str().ok());
@@ -89,11 +86,28 @@ impl SessionStore {
         })
     }
 
+    /// Read-only 민감 API에 사용할 Cookie session만 검증합니다.
+    pub(crate) fn authenticate(&self, headers: &HeaderMap) -> bool {
+        let Some(session_id) = session_id(headers) else {
+            return false;
+        };
+        self.lock()
+            .get(session_id)
+            .is_some_and(|session| session.expires_at > SystemTime::now())
+    }
+
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Session>> {
         self.sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+fn session_id(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(find_session_cookie)
 }
 
 fn find_session_cookie(header: &str) -> Option<&str> {
@@ -115,6 +129,7 @@ mod tests {
         let issued = store.issue(false);
         let mut headers = HeaderMap::new();
         headers.insert("cookie", HeaderValue::from_str(&issued.set_cookie)?);
+        assert!(store.authenticate(&headers));
         assert!(!store.authorize(&headers));
         headers.insert("x-csrf-token", HeaderValue::from_str(&issued.csrf_token)?);
         assert!(store.authorize(&headers));

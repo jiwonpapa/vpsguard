@@ -64,6 +64,26 @@ fn never_locks_origin_before_proxy_verification() -> Result<(), ProviderError> {
 }
 
 #[test]
+fn exposes_single_steps_for_durable_checkpoints() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend {
+        proxy_verified: true,
+        origin_verified: true,
+        ..FakeBackend::default()
+    };
+    let mut transaction = transaction()?;
+    assert_eq!(
+        transaction.enable_step(&mut backend)?,
+        ProviderStage::Snapshotted
+    );
+    assert_eq!(
+        transaction.enable_step(&mut backend)?,
+        ProviderStage::ProxyRequested
+    );
+    assert_eq!(backend.origin_lock_calls, 0);
+    Ok(())
+}
+
+#[test]
 fn completes_and_is_idempotent() -> Result<(), ProviderError> {
     let mut backend = FakeBackend {
         proxy_verified: true,

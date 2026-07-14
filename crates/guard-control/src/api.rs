@@ -2,7 +2,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -20,6 +21,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::SessionStore;
+use crate::provider::ProviderController;
 use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore};
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
 
@@ -36,10 +38,12 @@ pub(crate) struct AppState {
     pub(crate) os_snapshot: RwLock<Option<OsSnapshot>>,
     pub(crate) service_health: RwLock<Vec<CollectorHealth>>,
     pub(crate) action_token: String,
-    pub(crate) completed_actions: Mutex<VecDeque<(String, GuardMode)>>,
+    pub(crate) completed_actions: Mutex<VecDeque<(String, String, GuardMode)>>,
     pub(crate) storage: Arc<SqliteStore>,
     pub(crate) events: broadcast::Sender<GuardEvent>,
     pub(crate) sessions: SessionStore,
+    pub(crate) provider: Arc<Mutex<Option<ProviderController>>>,
+    pub(crate) provider_action_active: Arc<AtomicBool>,
 }
 
 /// overview 상태 응답입니다.
@@ -54,7 +58,7 @@ struct StatusResponse {
     edge: &'static str,
     origin: &'static str,
     agent: CollectorState,
-    provider: &'static str,
+    provider: String,
     tls: &'static str,
 }
 
@@ -125,6 +129,8 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/session", post(create_session))
         .route("/api/v1/actions/manual-hold", post(manual_hold))
         .route("/api/v1/actions/resume-auto", post(resume_auto))
+        .route("/api/v1/actions/emergency-proxy", post(emergency_proxy))
+        .route("/api/v1/actions/provider-restore", post(provider_restore))
         .fallback(index)
         .with_state(state)
 }
@@ -183,6 +189,16 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
         GuardMode::ManualHold => vec!["관리자가 자동 상태 전이를 중지했습니다."],
         _ => vec!["최근 요청 비용과 자원 압력을 상세 관찰 중입니다."],
     };
+    let provider = match app.provider.try_lock() {
+        Ok(guard) => guard
+            .as_ref()
+            .map_or_else(|| "unavailable".to_owned(), ProviderController::status),
+        Err(TryLockError::WouldBlock) => "running".to_owned(),
+        Err(TryLockError::Poisoned(error)) => error
+            .into_inner()
+            .as_ref()
+            .map_or_else(|| "unavailable".to_owned(), ProviderController::status),
+    };
     Json(StatusResponse {
         schema_version: 1,
         mode: state.current_mode,
@@ -193,7 +209,7 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
         edge: "live",
         origin: "unknown",
         agent,
-        provider: "unavailable",
+        provider,
         tls: "unknown",
     })
 }
@@ -226,8 +242,25 @@ async fn traffic_series(
     storage_list(app.storage.series(since))
 }
 
-async fn clients(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
-    storage_list::<ClientRow>(app.storage.clients(bounded_limit(query.limit)))
+async fn clients(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ListQuery>,
+) -> Response {
+    let reveal_ip =
+        authorized_token(&headers, &app.action_token) || app.sessions.authenticate(&headers);
+    let result = app
+        .storage
+        .clients(bounded_limit(query.limit))
+        .map(|mut rows| {
+            if !reveal_ip {
+                for row in &mut rows {
+                    row.client_ip = mask_client_ip(&row.client_ip);
+                }
+            }
+            rows
+        });
+    storage_list::<ClientRow>(result)
 }
 
 async fn routes(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
@@ -286,6 +319,172 @@ async fn resume_auto(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Re
     apply_action(&app, &headers, false).await
 }
 
+async fn emergency_proxy(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    apply_provider_action(&app, &headers, false).await
+}
+
+async fn provider_restore(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    apply_provider_action(&app, &headers, true).await
+}
+
+async fn apply_provider_action(
+    app: &Arc<AppState>,
+    headers: &HeaderMap,
+    restore: bool,
+) -> Response {
+    if !authorized(headers, app) {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "ACTION_AUTH_REQUIRED",
+            "운영 session 또는 token이 필요합니다.",
+            "Provider 상태를 변경하지 않았습니다.",
+            "운영 session을 발급하거나 action token을 확인하십시오.",
+        );
+    }
+    let Some(operation_id) = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+    else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Idempotency-Key가 필요합니다.",
+            "Provider 상태를 변경하지 않았습니다.",
+            "고유 operation ID로 다시 요청하십시오.",
+        );
+    };
+    let action_name = if restore {
+        "provider_restore"
+    } else {
+        "emergency_proxy"
+    };
+    if let Some((completed_action, mode)) = completed_action(app, &operation_id) {
+        if completed_action != action_name {
+            return idempotency_conflict();
+        }
+        return Json(ActionResponse {
+            applied: false,
+            mode,
+            operation_id,
+        })
+        .into_response();
+    }
+    if app.state.read().await.manual_hold {
+        return api_error(
+            StatusCode::CONFLICT,
+            "MANUAL_HOLD_ACTIVE",
+            "수동 고정 중에는 provider 전환을 실행하지 않습니다.",
+            "Cloudflare와 원본 firewall 상태를 변경하지 않았습니다.",
+            "자동 대응을 재개한 뒤 다시 검토하십시오.",
+        );
+    }
+    let Some(_provider_action_lease) = ProviderActionLease::acquire(app) else {
+        return api_error(
+            StatusCode::CONFLICT,
+            "PROVIDER_ACTION_IN_PROGRESS",
+            "다른 provider transaction이 실행 중입니다.",
+            "충돌하는 운영 명령을 적용하지 않았습니다.",
+            "현재 단계가 완료된 뒤 다시 시도하십시오.",
+        );
+    };
+    let provider = Arc::clone(&app.provider);
+    let operation_for_task = operation_id.clone();
+    let provider_result = tokio::task::spawn_blocking(move || {
+        let mut guard = provider
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let controller = guard
+            .as_mut()
+            .ok_or_else(|| "PROVIDER_NOT_CONFIGURED".to_owned())?;
+        if restore {
+            controller.restore().map_err(|error| error.to_string())
+        } else {
+            controller
+                .enable(&operation_for_task)
+                .map_err(|error| error.to_string())
+        }
+    })
+    .await;
+    let stage = match provider_result {
+        Ok(Ok(stage)) => stage,
+        Ok(Err(error)) => {
+            tracing::warn!(error, operation_id, "provider action failed");
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "PROVIDER_ACTION_FAILED",
+                "Provider transaction을 완료하지 못했습니다.",
+                "저장된 단계에서 재개하거나 snapshot 복구가 필요합니다.",
+                "Provider 상태와 사건 timeline을 확인한 뒤 같은 operation ID로 재시도하십시오.",
+            );
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "provider task failed");
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PROVIDER_TASK_FAILED",
+                "Provider 작업 task가 종료됐습니다.",
+                "Edge와 로컬 보호는 계속 동작합니다.",
+                "Control 로그를 확인하십시오.",
+            );
+        }
+    };
+    let now = current_timestamp();
+    let mut next = app.state.read().await.clone();
+    next.current_mode = if restore {
+        GuardMode::Recovering
+    } else {
+        GuardMode::EmergencyProxy
+    };
+    next.last_transition_at.clone_from(&now);
+    if !restore && next.active_incident_id.is_none() {
+        next.active_incident_id = Some(format!("provider-{operation_id}"));
+    }
+    let store = app.state_store.clone();
+    let value = next.clone();
+    if !matches!(
+        tokio::task::spawn_blocking(move || store.write(&value)).await,
+        Ok(Ok(()))
+    ) {
+        return api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "STATE_WRITE_FAILED",
+            "Provider 결과 뒤 제어 상태를 저장하지 못했습니다.",
+            "Provider transaction state는 별도 저장됐지만 UI 상태가 지연됩니다.",
+            "disk 상태를 확인하고 저장된 provider transaction을 read-back하십시오.",
+        );
+    }
+    *app.state.write().await = next.clone();
+    remember_action(app, operation_id.clone(), action_name, next.current_mode);
+    if let Err(error) = app.storage.record_action(
+        &operation_id,
+        &now,
+        action_name,
+        mode_name(next.current_mode),
+        &format!("{:?}", stage),
+    ) {
+        tracing::warn!(error = %error, "provider audit persistence failed");
+    }
+    let event = provider_event(
+        operation_id.clone(),
+        now,
+        action_name,
+        next.current_mode,
+        stage,
+    );
+    if let Err(error) = app.storage.record_event(&event) {
+        tracing::warn!(error = %error, "provider event persistence failed");
+    }
+    let _send_result = app.events.send(event);
+    Json(ActionResponse {
+        applied: true,
+        mode: next.current_mode,
+        operation_id,
+    })
+    .into_response()
+}
+
 async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> Response {
     if !authorized(headers, app) {
         return api_error(
@@ -310,7 +509,11 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
             "고유 operation ID로 다시 요청하십시오.",
         );
     };
-    if let Some(mode) = completed_action(app, &operation_id) {
+    let action_name = if hold { "manual_hold" } else { "resume_auto" };
+    if let Some((completed_action, mode)) = completed_action(app, &operation_id) {
+        if completed_action != action_name {
+            return idempotency_conflict();
+        }
         return Json(ActionResponse {
             applied: false,
             mode,
@@ -340,8 +543,7 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
         );
     }
     *app.state.write().await = next.clone();
-    remember_action(app, operation_id.clone(), next.current_mode);
-    let action_name = if hold { "manual_hold" } else { "resume_auto" };
+    remember_action(app, operation_id.clone(), action_name, next.current_mode);
     if let Err(error) = app.storage.record_action(
         &operation_id,
         &now,
@@ -404,24 +606,25 @@ fn lock_traffic(app: &AppState) -> MutexGuard<'_, TrafficAggregator> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn completed_action(app: &AppState, operation_id: &str) -> Option<GuardMode> {
+fn completed_action(app: &AppState, operation_id: &str) -> Option<(String, GuardMode)> {
     let memory_mode = app
         .completed_actions
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
-        .find_map(|(completed_id, mode)| (completed_id == operation_id).then_some(*mode));
+        .find_map(|(completed_id, action, mode)| {
+            (completed_id == operation_id).then(|| (action.clone(), *mode))
+        });
     memory_mode.or_else(|| {
         app.storage
             .completed_action(operation_id)
             .ok()
             .flatten()
-            .as_deref()
-            .and_then(parse_mode)
+            .and_then(|(action, mode)| parse_mode(&mode).map(|parsed| (action, parsed)))
     })
 }
 
-fn remember_action(app: &AppState, operation_id: String, mode: GuardMode) {
+fn remember_action(app: &AppState, operation_id: String, action: &str, mode: GuardMode) {
     const MAX_COMPLETED_ACTIONS: usize = 1_024;
     let mut actions = app
         .completed_actions
@@ -430,7 +633,38 @@ fn remember_action(app: &AppState, operation_id: String, mode: GuardMode) {
     if actions.len() == MAX_COMPLETED_ACTIONS {
         actions.pop_front();
     }
-    actions.push_back((operation_id, mode));
+    actions.push_back((operation_id, action.to_owned(), mode));
+}
+
+fn idempotency_conflict() -> Response {
+    api_error(
+        StatusCode::CONFLICT,
+        "IDEMPOTENCY_KEY_CONFLICT",
+        "같은 Idempotency-Key가 다른 운영 명령에 사용됐습니다.",
+        "새 운영 명령을 적용하지 않았습니다.",
+        "명령마다 고유 operation ID를 사용하십시오.",
+    )
+}
+
+pub(crate) struct ProviderActionLease {
+    active: Arc<AtomicBool>,
+}
+
+impl ProviderActionLease {
+    pub(crate) fn acquire(app: &AppState) -> Option<Self> {
+        app.provider_action_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self {
+                active: Arc::clone(&app.provider_action_active),
+            })
+    }
+}
+
+impl Drop for ProviderActionLease {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
 }
 
 fn current_timestamp() -> String {
@@ -453,6 +687,25 @@ fn unix_millis() -> u64 {
 
 fn bounded_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(100).clamp(1, 1_000)
+}
+
+fn mask_client_ip(value: &str) -> String {
+    use std::net::IpAddr;
+
+    match value.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => {
+            let [a, b, c, _] = address.octets();
+            format!("{a}.{b}.{c}.0/24")
+        }
+        Ok(IpAddr::V6(address)) => {
+            let segments = address.segments();
+            format!(
+                "{:x}:{:x}:{:x}:{:x}::/64",
+                segments[0], segments[1], segments[2], segments[3]
+            )
+        }
+        Err(_) => "redacted".to_owned(),
+    }
 }
 
 fn storage_list<T: Serialize>(result: Result<Vec<T>, crate::storage::StorageError>) -> Response {
@@ -492,6 +745,38 @@ fn action_event(
             ("mode".to_owned(), mode_name(mode).to_owned()),
         ]),
         recovery: BTreeMap::new(),
+    }
+}
+
+fn provider_event(
+    operation_id: String,
+    occurred_at: String,
+    action_name: &str,
+    mode: GuardMode,
+    stage: guard_provider::ProviderStage,
+) -> GuardEvent {
+    GuardEvent {
+        schema_version: 1,
+        event_id: format!("provider-{operation_id}"),
+        occurred_at,
+        severity: if mode == GuardMode::EmergencyProxy {
+            Severity::Critical
+        } else {
+            Severity::Info
+        },
+        kind: "provider.transaction".to_owned(),
+        summary: format!(
+            "Provider 명령 {action_name}이 {:?} 단계에 도달했습니다.",
+            stage
+        ),
+        reason_codes: Vec::new(),
+        evidence: BTreeMap::from([("read_back_stage".to_owned(), format!("{:?}", stage))]),
+        action: BTreeMap::from([("name".to_owned(), action_name.to_owned())]),
+        result: BTreeMap::from([("mode".to_owned(), mode_name(mode).to_owned())]),
+        recovery: BTreeMap::from([(
+            "method".to_owned(),
+            "provider snapshot 역순 복구".to_owned(),
+        )]),
     }
 }
 

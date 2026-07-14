@@ -32,6 +32,13 @@ language = "ko"
 profile = "gnuboard"
 mode = "observe"
 
+[cloudflare]
+enabled = false
+zone_id = ""
+record_names = []
+token_file = "/etc/vps-guard/secrets/cloudflare-token"
+ip_networks = []
+
 [retention]
 live_seconds = 900
 detail_hours = 24

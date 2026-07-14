@@ -206,6 +206,9 @@ pub struct CloudflareConfig {
     /// root-only token 파일 경로입니다.
     #[serde(default)]
     pub token_file: PathBuf,
+    /// 원본 80/443에 허용할 Cloudflare network CIDR입니다.
+    #[serde(default)]
+    pub ip_networks: Vec<IpNet>,
 }
 
 /// 데이터 계층별 보존기간입니다.
@@ -407,11 +410,12 @@ impl GuardConfig {
         if self.cloudflare.enabled
             && (self.cloudflare.zone_id.trim().is_empty()
                 || self.cloudflare.record_names.is_empty()
-                || self.cloudflare.token_file.as_os_str().is_empty())
+                || self.cloudflare.token_file.as_os_str().is_empty()
+                || self.cloudflare.ip_networks.is_empty())
         {
             return invalid(
                 "cloudflare",
-                "활성화 시 zone, record allowlist와 token 파일이 필요합니다",
+                "활성화 시 zone, record allowlist, token 파일과 IP network가 필요합니다",
             );
         }
         if self.retention.live_seconds == 0

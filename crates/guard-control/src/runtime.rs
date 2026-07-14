@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,7 @@ use uuid::Uuid;
 
 use crate::api::{AppState, router};
 use crate::auth::SessionStore;
+use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{SqliteStore, StorageError};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
@@ -41,6 +43,9 @@ pub enum ControlError {
     /// SQLite 저장소 초기화 실패입니다.
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// Provider adapter 초기화 실패입니다.
+    #[error(transparent)]
+    Provider(#[from] ProviderControllerError),
     /// HTTP server 실패입니다.
     #[error("control HTTP server 실패: {0}")]
     Serve(String),
@@ -67,6 +72,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         .validate()
         .map_err(|error| ControlError::Serve(error.to_string()))?;
     let storage = Arc::new(SqliteStore::open(&config.storage.database_path)?);
+    let provider = Arc::new(Mutex::new(ProviderController::from_config(&config)?));
     let (events, _) = broadcast::channel(512);
     let app = Arc::new(AppState {
         state: RwLock::new(initial_state),
@@ -79,6 +85,8 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         storage: Arc::clone(&storage),
         events,
         sessions: SessionStore::new(),
+        provider,
+        provider_action_active: Arc::new(AtomicBool::new(false)),
     });
     if app.action_token.is_empty() {
         warn!("VPS_GUARD_ACTION_TOKEN is empty; mutation and session endpoints are disabled");
@@ -198,10 +206,15 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             let assessment = Detector::assess(&input);
             let occurred_at = current_timestamp();
             let current = app.state.read().await.clone();
+            let provider_verified = app.provider.try_lock().ok().is_some_and(|provider| {
+                provider
+                    .as_ref()
+                    .is_some_and(ProviderController::recovery_ready)
+            });
             let mut next = current.clone().transition(&TransitionInput {
                 assessment: assessment.clone(),
                 distributed_pressure: assessment.bot_likelihood >= 80,
-                provider_verified: false,
+                provider_verified,
                 occurred_at: occurred_at.clone(),
             });
             if !enforce
@@ -211,6 +224,38 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                 )
             {
                 next.current_mode = GuardMode::Watch;
+            }
+            if enforce
+                && current.current_mode != GuardMode::EmergencyProxy
+                && next.current_mode == GuardMode::EmergencyProxy
+            {
+                match run_provider_transaction(&app, false).await {
+                    Ok(guard_provider::ProviderStage::Complete) => {}
+                    Ok(stage) => {
+                        warn!(?stage, "provider transaction stopped before completion");
+                        keep_local_guard(&current, &mut next);
+                    }
+                    Err(error) => {
+                        warn!(error, "automatic provider transaction unavailable");
+                        keep_local_guard(&current, &mut next);
+                    }
+                }
+            }
+            if enforce
+                && current.current_mode == GuardMode::EmergencyProxy
+                && next.current_mode == GuardMode::Recovering
+            {
+                match run_provider_transaction(&app, true).await {
+                    Ok(guard_provider::ProviderStage::Restored) => {}
+                    Ok(stage) => {
+                        warn!(?stage, "provider restore stopped before completion");
+                        keep_emergency(&current, &mut next);
+                    }
+                    Err(error) => {
+                        warn!(error, "automatic provider restore failed");
+                        keep_emergency(&current, &mut next);
+                    }
+                }
             }
             if next.current_mode == current.current_mode {
                 continue;
@@ -259,6 +304,44 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             let _send_result = app.events.send(event);
         }
     });
+}
+
+async fn run_provider_transaction(
+    app: &Arc<AppState>,
+    restore: bool,
+) -> Result<guard_provider::ProviderStage, String> {
+    let _lease = crate::api::ProviderActionLease::acquire(app)
+        .ok_or_else(|| "PROVIDER_ACTION_IN_PROGRESS".to_owned())?;
+    let provider = Arc::clone(&app.provider);
+    tokio::task::spawn_blocking(move || {
+        let mut guard = provider
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let controller = guard
+            .as_mut()
+            .ok_or_else(|| "PROVIDER_NOT_CONFIGURED".to_owned())?;
+        if restore {
+            controller.restore().map_err(|error| error.to_string())
+        } else {
+            controller
+                .enable(&format!("auto-{}", Uuid::new_v4()))
+                .map_err(|error| error.to_string())
+        }
+    })
+    .await
+    .map_err(|error| format!("PROVIDER_TASK_FAILED: {error}"))?
+}
+
+fn keep_local_guard(current: &GuardState, next: &mut GuardState) {
+    next.current_mode = GuardMode::LocalGuard;
+    next.last_transition_at
+        .clone_from(&current.last_transition_at);
+}
+
+fn keep_emergency(current: &GuardState, next: &mut GuardState) {
+    next.current_mode = GuardMode::EmergencyProxy;
+    next.last_transition_at
+        .clone_from(&current.last_transition_at);
 }
 
 async fn persist_state(app: &AppState, state: &GuardState) -> Result<(), ()> {

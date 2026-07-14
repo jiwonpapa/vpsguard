@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod cloudflare;
+
 /// provider read-back snapshot입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -120,37 +122,58 @@ impl ProviderTransaction {
     ///
     /// backend 실패 또는 검증 실패를 반환하며 proxy 검증 전에는 origin lock을 호출하지 않습니다.
     pub fn enable<B: ProviderBackend>(&mut self, backend: &mut B) -> Result<(), ProviderError> {
-        if self.stage == ProviderStage::Complete {
-            return Ok(());
-        }
-        if self.stage == ProviderStage::Pending {
-            self.snapshot = Some(backend.snapshot(&self.record_name)?);
-            self.stage = ProviderStage::Snapshotted;
-        }
-        if self.stage == ProviderStage::Snapshotted {
-            backend.request_proxy_enable(&self.record_name)?;
-            self.stage = ProviderStage::ProxyRequested;
-        }
-        if self.stage == ProviderStage::ProxyRequested {
-            if !backend.verify_proxy_enabled(&self.record_name)? {
-                self.last_error = Some("PROXY_NOT_VERIFIED".to_owned());
-                return Err(ProviderError::ProxyNotVerified);
+        loop {
+            if self.enable_step(backend)? == ProviderStage::Complete {
+                return Ok(());
             }
-            self.stage = ProviderStage::ProxyVerified;
         }
-        if self.stage == ProviderStage::ProxyVerified {
-            backend.request_origin_lock()?;
-            self.stage = ProviderStage::OriginLockRequested;
-        }
-        if self.stage == ProviderStage::OriginLockRequested {
-            if !backend.verify_origin_lock()? {
-                self.last_error = Some("ORIGIN_LOCK_NOT_VERIFIED".to_owned());
-                return Err(ProviderError::OriginLockNotVerified);
+    }
+
+    /// 외부 side effect를 한 단계만 실행해 호출자가 즉시 checkpoint할 수 있게 합니다.
+    ///
+    /// # Errors
+    ///
+    /// backend 실패, read-back 불일치 또는 복구 완료 transaction 재사용을 반환합니다.
+    pub fn enable_step<B: ProviderBackend>(
+        &mut self,
+        backend: &mut B,
+    ) -> Result<ProviderStage, ProviderError> {
+        match self.stage {
+            ProviderStage::Pending => {
+                self.snapshot = Some(backend.snapshot(&self.record_name)?);
+                self.stage = ProviderStage::Snapshotted;
             }
-            self.stage = ProviderStage::Complete;
-            self.last_error = None;
+            ProviderStage::Snapshotted => {
+                backend.request_proxy_enable(&self.record_name)?;
+                self.stage = ProviderStage::ProxyRequested;
+            }
+            ProviderStage::ProxyRequested => {
+                if !backend.verify_proxy_enabled(&self.record_name)? {
+                    self.last_error = Some("PROXY_NOT_VERIFIED".to_owned());
+                    return Err(ProviderError::ProxyNotVerified);
+                }
+                self.stage = ProviderStage::ProxyVerified;
+            }
+            ProviderStage::ProxyVerified => {
+                backend.request_origin_lock()?;
+                self.stage = ProviderStage::OriginLockRequested;
+            }
+            ProviderStage::OriginLockRequested => {
+                if !backend.verify_origin_lock()? {
+                    self.last_error = Some("ORIGIN_LOCK_NOT_VERIFIED".to_owned());
+                    return Err(ProviderError::OriginLockNotVerified);
+                }
+                self.stage = ProviderStage::Complete;
+                self.last_error = None;
+            }
+            ProviderStage::Complete => {}
+            ProviderStage::Restored => {
+                return Err(ProviderError::Backend(
+                    "RESTORED_TRANSACTION_CANNOT_RESUME".to_owned(),
+                ));
+            }
         }
-        Ok(())
+        Ok(self.stage)
     }
 
     /// snapshot 기반으로 이전 상태를 복구합니다.

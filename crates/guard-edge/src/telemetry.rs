@@ -50,6 +50,10 @@ pub struct RequestTelemetry {
     pub client_ip: Option<IpAddr>,
     /// edge에서 확인한 request body bytes입니다.
     pub request_body_bytes: u64,
+    /// downstream으로 전달한 response body bytes입니다.
+    pub response_body_bytes: u64,
+    /// upstream connection 재사용 여부입니다.
+    pub upstream_connection_reused: Option<bool>,
     /// 요청 처리 판정입니다.
     pub decision: DecisionKind,
     /// edge에 적용된 정책 버전입니다.

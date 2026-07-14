@@ -4,6 +4,8 @@
 *.profraw
 lcov.info
 *.profdata
+bom.json
+*.cdx.json
 
 # Cargo credentials are local secrets. Cargo.lock is intentionally tracked.
 .cargo/credentials

@@ -118,6 +118,10 @@ impl GuardEdge {
         context.normalized_route = route_profile.normalized_route;
         context.route_cost = route_profile.base_cost;
         context.request_body_bytes_seen = 0;
+        context.response_body_bytes_seen = 0;
+        context.response_status = 0;
+        context.upstream_connection_reused = None;
+        context.telemetry_emitted = false;
 
         if !host_allowed(host.as_deref(), &self.config.allowed_hosts) {
             warn!(
@@ -366,6 +370,7 @@ impl ProxyHttp for GuardEdge {
         context: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
         self.origin_ready.store(true, Ordering::Release);
+        context.response_status = upstream_response.status.as_u16();
         add_common_headers(upstream_response, &context.request_id)?;
         info!(
             request_id = %context.request_id,
@@ -376,11 +381,43 @@ impl ProxyHttp for GuardEdge {
             latency_ms = context.started_at.elapsed().as_millis(),
             "request completed"
         );
-        self.emit_telemetry(
-            context,
-            upstream_response.status.as_u16(),
-            DecisionKind::Allow,
+        Ok(())
+    }
+
+    fn response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        end_of_stream: bool,
+        context: &mut Self::CTX,
+    ) -> pingora_core::Result<Option<std::time::Duration>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        context.response_body_bytes_seen = context.response_body_bytes_seen.saturating_add(
+            body.as_ref()
+                .map_or(0, |chunk| u64::try_from(chunk.len()).unwrap_or(u64::MAX)),
         );
+        if end_of_stream {
+            self.emit_telemetry(context, context.response_status, DecisionKind::Allow);
+        }
+        Ok(None)
+    }
+
+    async fn connected_to_upstream(
+        &self,
+        _session: &mut Session,
+        reused: bool,
+        _peer: &HttpPeer,
+        #[cfg(unix)] _fd: std::os::unix::io::RawFd,
+        #[cfg(windows)] _socket: std::os::windows::io::RawSocket,
+        _digest: Option<&pingora_core::protocols::Digest>,
+        context: &mut Self::CTX,
+    ) -> pingora_core::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        context.upstream_connection_reused = Some(reused);
         Ok(())
     }
 
@@ -440,7 +477,11 @@ impl ProxyHttp for GuardEdge {
 }
 
 impl GuardEdge {
-    fn emit_telemetry(&self, context: &RequestContext, status: u16, decision: DecisionKind) {
+    fn emit_telemetry(&self, context: &mut RequestContext, status: u16, decision: DecisionKind) {
+        if context.telemetry_emitted {
+            return;
+        }
+        context.telemetry_emitted = true;
         self.telemetry.emit(&RequestTelemetry {
             schema_version: 1,
             request_id: context.request_id.clone(),
@@ -457,6 +498,8 @@ impl GuardEdge {
                 .unwrap_or(u64::MAX),
             client_ip: context.client_ip,
             request_body_bytes: context.request_body_bytes_seen,
+            response_body_bytes: context.response_body_bytes_seen,
+            upstream_connection_reused: context.upstream_connection_reused,
             decision,
             policy_version: context.policy_version,
             occurred_at_unix_ms: unix_millis(),

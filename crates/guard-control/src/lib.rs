@@ -2,6 +2,7 @@
 
 mod api;
 mod auth;
+mod provider;
 mod runtime;
 mod storage;
 pub mod telemetry;

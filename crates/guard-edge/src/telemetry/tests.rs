@@ -18,6 +18,8 @@ fn fixture() -> RequestTelemetry {
         latency_micros: 500,
         client_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         request_body_bytes: 0,
+        response_body_bytes: 512,
+        upstream_connection_reused: Some(true),
         decision: DecisionKind::Allow,
         policy_version: 3,
         occurred_at_unix_ms: 1_000,

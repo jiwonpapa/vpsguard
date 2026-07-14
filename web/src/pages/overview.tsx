@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Pause, Play, ShieldAlert } from "lucide-react";
+import { CloudCog, Pause, Play, RotateCcw, ShieldAlert } from "lucide-react";
 
 import { useAuth } from "../auth";
 import { ErrorState, LoadingState } from "../components/query-state";
@@ -74,6 +74,26 @@ export function OverviewPage() {
         ))}
       </section>
 
+      {state.provider !== "unavailable" ? (
+        <section className="mb-10 flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">
+          <div className="min-w-64 flex-1">
+            <div className="text-sm font-semibold">Cloudflare transaction</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">read-back stage: {state.provider}</div>
+            <div className="mt-3 h-1.5 max-w-lg overflow-hidden bg-zinc-900" aria-label={`Provider 진행률 ${providerProgress(state.provider)}%`}>
+              <div className="h-full bg-orange-500 transition-[width]" style={{ width: `${providerProgress(state.provider)}%` }} />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={() => void runAction("/api/v1/actions/emergency-proxy")}>
+              <CloudCog className="size-3.5" /> 비상 보호
+            </Button>
+            <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}>
+              <RotateCcw className="size-3.5" /> Snapshot 복구
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
       <section>
         <div className="mb-4 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-orange-400">Live window</div>
         <div className="grid grid-cols-2 border-t border-zinc-800 lg:grid-cols-4">
@@ -82,6 +102,15 @@ export function OverviewPage() {
           <Metric label="고유 client" value={traffic.unique_clients.toLocaleString()} note={`overflow ${traffic.dropped_clients}`} />
           <Metric label="방어 판정" value={blocked.toLocaleString()} note={`${percent(blocked, traffic.requests)}% of traffic`} alert />
         </div>
+        <dl className="mt-5 grid grid-cols-2 border-y border-zinc-800 lg:grid-cols-4">
+          <Resource label="요청 body" value={formatBytes(traffic.request_body_bytes)} />
+          <Resource label="응답 body" value={formatBytes(traffic.response_body_bytes)} />
+          <Resource label="Upstream 연결" value={traffic.upstream_connections.toLocaleString()} />
+          <Resource
+            label="연결 재사용"
+            value={`${traffic.upstream_connections_reused.toLocaleString()} (${percent(traffic.upstream_connections_reused, traffic.upstream_connections)}%)`}
+          />
+        </dl>
         <div className="mt-5 flex h-9 overflow-hidden bg-zinc-900 text-[10px] font-bold">
           <StatusSegment label="2xx" value={traffic.status_2xx} total={traffic.requests} className="bg-emerald-800" />
           <StatusSegment label="3xx" value={traffic.status_3xx} total={traffic.requests} className="bg-sky-900" />
@@ -101,6 +130,20 @@ export function OverviewPage() {
       </section>
     </>
   );
+}
+
+function providerProgress(stage: string): number {
+  return {
+    ready: 0,
+    pending: 5,
+    snapshotted: 20,
+    proxy_requested: 40,
+    proxy_verified: 60,
+    origin_lock_requested: 80,
+    running: 90,
+    complete: 100,
+    restored: 100,
+  }[stage] ?? 0;
 }
 
 function Metric({ label, value, note, alert = false }: { label: string; value: string; note: string; alert?: boolean }) {

@@ -24,6 +24,10 @@ export interface TrafficSummary {
   latency_p95_micros: number;
   unique_clients: number;
   dropped_clients: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
+  upstream_connections: number;
+  upstream_connections_reused: number;
 }
 
 export interface OsSnapshot {
@@ -53,6 +57,8 @@ export interface ClientRow {
   requests: number;
   throttled: number;
   denied: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
   last_seen_unix_ms: number;
 }
 
@@ -63,6 +69,8 @@ export interface RouteRow {
   errors: number;
   latency_avg_micros: number;
   max_route_cost: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
 }
 
 export interface SeriesPoint {
@@ -71,6 +79,8 @@ export interface SeriesPoint {
   errors: number;
   throttled: number;
   latency_avg_micros: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
 }
 
 export interface GuardEventPayload {

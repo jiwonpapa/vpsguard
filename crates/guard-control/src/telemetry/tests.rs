@@ -16,6 +16,8 @@ fn telemetry(ip: u8, status: u16, latency: u64) -> TelemetryEnvelope {
         latency_micros: latency,
         client_ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, ip))),
         request_body_bytes: 0,
+        response_body_bytes: 128,
+        upstream_connection_reused: Some(false),
         decision: "allow".to_owned(),
         policy_version: 0,
         occurred_at_unix_ms: 1_000,

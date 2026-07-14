@@ -16,6 +16,7 @@ path = "src/main.rs"
 axum.workspace = true
 guard-agent = { path = "../guard-agent", version = "0.1.0" }
 guard-core = { path = "../guard-core", version = "0.1.0" }
+guard-provider = { path = "../guard-provider", version = "0.1.0" }
 guard-system = { path = "../guard-system", version = "0.1.0" }
 rusqlite.workspace = true
 serde.workspace = true

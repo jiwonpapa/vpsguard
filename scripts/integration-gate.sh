@@ -62,6 +62,19 @@ curl --silent --show-error http://127.0.0.1:17727/api/v1/clients >"${evidence_di
 curl --silent --show-error http://127.0.0.1:17727/api/v1/routes >"${evidence_dir}/routes.json"
 curl --silent --show-error http://127.0.0.1:17727/api/v1/incidents >"${evidence_dir}/incidents.json"
 curl --silent --show-error http://127.0.0.1:17727/api/v1/traffic/series >"${evidence_dir}/series.json"
+python3 - "${evidence_dir}/traffic.json" "${evidence_dir}/clients.json" "${evidence_dir}/routes.json" <<'PY'
+import json
+import sys
+
+traffic = json.load(open(sys.argv[1], encoding="utf-8"))
+clients = json.load(open(sys.argv[2], encoding="utf-8"))["items"]
+routes = json.load(open(sys.argv[3], encoding="utf-8"))["items"]
+assert traffic["requests"] >= 5
+assert traffic["response_body_bytes"] > 0
+assert traffic["upstream_connections"] >= 1
+assert clients and clients[0]["client_ip"].endswith("/24")
+assert any(route["response_body_bytes"] > 0 for route in routes)
+PY
 action_status="$(curl --silent --output "${evidence_dir}/manual-hold.json" --write-out '%{http_code}' \
   -X POST -H 'X-VPSGuard-Token: smoke-token' -H 'Idempotency-Key: smoke-hold-1' \
   http://127.0.0.1:17727/api/v1/actions/manual-hold)"
@@ -73,6 +86,15 @@ curl --silent --show-error --dump-header "${evidence_dir}/session.headers" \
   -H 'X-VPSGuard-Token: smoke-token' http://127.0.0.1:17727/api/v1/session
 csrf_token="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["csrf_token"])' "${evidence_dir}/session.json")"
 session_cookie="$(sed -n 's/^[Ss]et-[Cc]ookie: \([^;]*\).*/\1/p' "${evidence_dir}/session.headers" | tr -d '\r')"
+curl --silent --show-error -H "Cookie: ${session_cookie}" \
+  http://127.0.0.1:17727/api/v1/clients >"${evidence_dir}/clients-authenticated.json"
+python3 - "${evidence_dir}/clients-authenticated.json" <<'PY'
+import json
+import sys
+
+clients = json.load(open(sys.argv[1], encoding="utf-8"))["items"]
+assert clients and clients[0]["client_ip"] == "127.0.0.1"
+PY
 resume_status="$(curl --silent --output "${evidence_dir}/resume-auto.json" --write-out '%{http_code}' \
   -X POST -H "Cookie: ${session_cookie}" -H "X-CSRF-Token: ${csrf_token}" \
   -H 'Idempotency-Key: smoke-resume-1' \

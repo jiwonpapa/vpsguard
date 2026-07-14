@@ -32,6 +32,10 @@ pub struct TelemetryEnvelope {
     pub client_ip: Option<IpAddr>,
     /// request body bytes입니다.
     pub request_body_bytes: u64,
+    /// response body bytes입니다.
+    pub response_body_bytes: u64,
+    /// upstream connection 재사용 여부입니다.
+    pub upstream_connection_reused: Option<bool>,
     /// edge 판정입니다.
     pub decision: String,
     /// edge에 적용된 정책 버전입니다.
@@ -60,6 +64,14 @@ pub struct TrafficSummary {
     pub denied: u64,
     /// browser 검증을 요구한 요청입니다.
     pub challenged: u64,
+    /// request body 누적 bytes입니다.
+    pub request_body_bytes: u64,
+    /// response body 누적 bytes입니다.
+    pub response_body_bytes: u64,
+    /// 새 upstream connection 수입니다.
+    pub upstream_connections: u64,
+    /// 재사용한 upstream connection 수입니다.
+    pub upstream_connections_reused: u64,
     /// 최근 window p95 지연 microseconds입니다.
     pub latency_p95_micros: u64,
     /// 추적 중인 unique client입니다.
@@ -77,6 +89,10 @@ pub struct TrafficAggregator {
     throttled: u64,
     denied: u64,
     challenged: u64,
+    request_body_bytes: u64,
+    response_body_bytes: u64,
+    upstream_connections: u64,
+    upstream_connections_reused: u64,
     latencies: VecDeque<u64>,
     clients: HashMap<IpAddr, u64>,
     dropped_clients: u64,
@@ -103,6 +119,10 @@ impl TrafficAggregator {
             throttled: 0,
             denied: 0,
             challenged: 0,
+            request_body_bytes: 0,
+            response_body_bytes: 0,
+            upstream_connections: 0,
+            upstream_connections_reused: 0,
             latencies: VecDeque::with_capacity(LATENCY_WINDOW),
             clients: HashMap::with_capacity(max_clients.min(10_000)),
             dropped_clients: 0,
@@ -145,6 +165,22 @@ impl TrafficAggregator {
         self.window.max_route_cost = self.window.max_route_cost.max(telemetry.route_cost);
         self.window.max_latency_micros =
             self.window.max_latency_micros.max(telemetry.latency_micros);
+        self.request_body_bytes = self
+            .request_body_bytes
+            .saturating_add(telemetry.request_body_bytes);
+        self.response_body_bytes = self
+            .response_body_bytes
+            .saturating_add(telemetry.response_body_bytes);
+        match telemetry.upstream_connection_reused {
+            Some(true) => {
+                self.upstream_connections_reused =
+                    self.upstream_connections_reused.saturating_add(1);
+            }
+            Some(false) => {
+                self.upstream_connections = self.upstream_connections.saturating_add(1);
+            }
+            None => {}
+        }
         if self.latencies.len() == LATENCY_WINDOW {
             self.latencies.pop_front();
         }
@@ -179,6 +215,10 @@ impl TrafficAggregator {
             throttled: self.throttled,
             denied: self.denied,
             challenged: self.challenged,
+            request_body_bytes: self.request_body_bytes,
+            response_body_bytes: self.response_body_bytes,
+            upstream_connections: self.upstream_connections,
+            upstream_connections_reused: self.upstream_connections_reused,
             latency_p95_micros: sorted.get(p95_index).copied().unwrap_or_default(),
             unique_clients: self.clients.len(),
             dropped_clients: self.dropped_clients,

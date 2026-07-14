@@ -1,0 +1,6 @@
+/usr/local/bin/vps-guard
+/usr/local/bin/vps-guard-control
+/usr/local/bin/vps-guard-edge
+/etc/systemd/system/vps-guard-control.service
+/etc/systemd/system/vps-guard-edge.service
+/usr/lib/tmpfiles.d/vps-guard.conf

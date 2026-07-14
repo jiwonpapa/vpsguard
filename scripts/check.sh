@@ -9,7 +9,7 @@ cargo audit --ignore RUSTSEC-2024-0437
 cargo deny check
 
 if command -v cargo-machete >/dev/null 2>&1; then
-  cargo machete
+  cargo machete crates
 fi
 
 bash scripts/docs-gate.sh

@@ -6,7 +6,7 @@ use std::process::{Command, ExitCode};
 
 fn main() -> ExitCode {
     let Some(task) = env::args().nth(1) else {
-        eprintln!("usage: cargo xtask <check|test|coverage|integration|web|release>");
+        eprintln!("usage: cargo xtask <check|test|coverage|integration|load|web|release>");
         return ExitCode::from(2);
     };
     let root = workspace_root();
@@ -28,6 +28,7 @@ fn main() -> ExitCode {
         "coverage" => script(&root, "scripts/coverage-gate.sh", &[]),
         "integration" => script(&root, "scripts/integration-gate.sh", &[])
             .and_then(|()| script(&root, "scripts/ops-harness.sh", &[])),
+        "load" => script(&root, "scripts/load-regression-gate.sh", &[]),
         "web" => command(&root.join("web"), "bun", &["run", "check"])
             .and_then(|()| command(&root.join("web"), "bun", &["run", "test:e2e"])),
         "release" => script(&root, "scripts/build-release.sh", &[]),

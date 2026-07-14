@@ -33,6 +33,7 @@ pingora-core = { version = "=0.8.0", features = ["rustls"] }
 pingora-error = "=0.8.0"
 pingora-http = "=0.8.0"
 pingora-proxy = { version = "=0.8.0", features = ["rustls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-pemfile = "2.2"
 rusqlite = { version = "0.32", features = ["bundled"] }

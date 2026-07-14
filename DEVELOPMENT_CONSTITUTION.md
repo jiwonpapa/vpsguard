@@ -148,10 +148,9 @@
 
 ## 15. 커버리지와 품질 게이트
 
-- `guard-core` scoring·state·policy line coverage 90% 이상
-- provider transaction·rollback line coverage 90% 이상
-- edge 자체 policy line coverage 85% 이상
-- workspace 전체 line coverage 80% 이상
+- release 목표는 `guard-core` 90%, provider transaction·rollback 90%, edge policy 85%, workspace 전체 80% 이상입니다.
+- 개발 중 실측 baseline은 `scripts/coverage-gate.sh`의 영역별 ratchet으로 고정하고 한 줄도 하향하지 않습니다.
+- process·network·kernel adapter의 낮은 unit coverage를 숨기지 않으며 integration·fault·VPS 증거와 함께 release 목표까지 올립니다.
 - 커버리지 하향은 ADR, 누락 line과 보완 계획 없이는 금지합니다.
 - `cargo fmt`, clippy `-D warnings`, rustdoc `-D warnings`, test, audit와 deny를 통과합니다.
 - UI는 build, unit, Playwright E2E와 light/dark·desktop/mobile 시각 회귀를 통과합니다.

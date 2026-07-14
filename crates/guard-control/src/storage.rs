@@ -31,6 +31,8 @@ pub(crate) struct ClientRow {
     pub(crate) requests: u64,
     pub(crate) throttled: u64,
     pub(crate) denied: u64,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
     pub(crate) last_seen_unix_ms: u64,
 }
 
@@ -43,6 +45,8 @@ pub(crate) struct RouteRow {
     pub(crate) errors: u64,
     pub(crate) latency_avg_micros: u64,
     pub(crate) max_route_cost: u8,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
 }
 
 /// traffic 시계열 bucket입니다.
@@ -53,6 +57,8 @@ pub(crate) struct SeriesPoint {
     pub(crate) errors: u64,
     pub(crate) throttled: u64,
     pub(crate) latency_avg_micros: u64,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
 }
 
 /// 사건 API row입니다.
@@ -104,6 +110,9 @@ impl SqliteStore {
                 route_cost INTEGER NOT NULL,
                 status INTEGER NOT NULL,
                 latency_micros INTEGER NOT NULL,
+                request_body_bytes INTEGER NOT NULL DEFAULT 0,
+                response_body_bytes INTEGER NOT NULL DEFAULT 0,
+                upstream_connection_reused INTEGER,
                 decision TEXT NOT NULL,
                 policy_version INTEGER NOT NULL
             );
@@ -129,6 +138,17 @@ impl SqliteStore {
             );
             INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);",
         )?;
+        ensure_column(
+            &connection,
+            "request_body_bytes",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "response_body_bytes",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(&connection, "upstream_connection_reused", "INTEGER")?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -139,8 +159,9 @@ impl SqliteStore {
         self.lock().execute(
             "INSERT INTO traffic_samples(
                 occurred_at_ms, client_ip, route_class, normalized_route, route_cost,
-                status, latency_micros, decision, policy_version
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                status, latency_micros, request_body_bytes, response_body_bytes,
+                upstream_connection_reused, decision, policy_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 to_i64(telemetry.occurred_at_unix_ms),
                 telemetry.client_ip.map(|value| value.to_string()),
@@ -149,6 +170,9 @@ impl SqliteStore {
                 telemetry.route_cost,
                 telemetry.status,
                 to_i64(telemetry.latency_micros),
+                to_i64(telemetry.request_body_bytes),
+                to_i64(telemetry.response_body_bytes),
+                telemetry.upstream_connection_reused,
                 telemetry.decision,
                 to_i64(telemetry.policy_version),
             ],
@@ -163,6 +187,7 @@ impl SqliteStore {
             "SELECT client_ip, COUNT(*),
                     SUM(CASE WHEN decision = 'throttle' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN decision = 'deny' THEN 1 ELSE 0 END),
+                    SUM(request_body_bytes), SUM(response_body_bytes),
                     MAX(occurred_at_ms)
              FROM traffic_samples WHERE client_ip IS NOT NULL
              GROUP BY client_ip ORDER BY COUNT(*) DESC LIMIT ?1",
@@ -173,7 +198,9 @@ impl SqliteStore {
                 requests: from_i64(row.get(1)?),
                 throttled: from_i64(row.get(2)?),
                 denied: from_i64(row.get(3)?),
-                last_seen_unix_ms: from_i64(row.get(4)?),
+                request_body_bytes: from_i64(row.get(4)?),
+                response_body_bytes: from_i64(row.get(5)?),
+                last_seen_unix_ms: from_i64(row.get(6)?),
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -185,7 +212,8 @@ impl SqliteStore {
         let mut statement = connection.prepare(
             "SELECT normalized_route, route_class, COUNT(*),
                     SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),
-                    CAST(AVG(latency_micros) AS INTEGER), MAX(route_cost)
+                    CAST(AVG(latency_micros) AS INTEGER), MAX(route_cost),
+                    SUM(request_body_bytes), SUM(response_body_bytes)
              FROM traffic_samples GROUP BY normalized_route, route_class
              ORDER BY COUNT(*) DESC LIMIT ?1",
         )?;
@@ -197,6 +225,8 @@ impl SqliteStore {
                 errors: from_i64(row.get(3)?),
                 latency_avg_micros: from_i64(row.get(4)?),
                 max_route_cost: row.get(5)?,
+                request_body_bytes: from_i64(row.get(6)?),
+                response_body_bytes: from_i64(row.get(7)?),
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -210,7 +240,8 @@ impl SqliteStore {
             "SELECT (occurred_at_ms / 60000) * 60000, COUNT(*),
                     SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),
                     SUM(CASE WHEN decision = 'throttle' THEN 1 ELSE 0 END),
-                    CAST(AVG(latency_micros) AS INTEGER)
+                    CAST(AVG(latency_micros) AS INTEGER),
+                    SUM(request_body_bytes), SUM(response_body_bytes)
              FROM traffic_samples WHERE occurred_at_ms >= ?1
              GROUP BY occurred_at_ms / 60000 ORDER BY 1 ASC",
         )?;
@@ -222,6 +253,8 @@ impl SqliteStore {
                 errors: from_i64(row.get(2)?),
                 throttled: from_i64(row.get(3)?),
                 latency_avg_micros: from_i64(row.get(4)?),
+                request_body_bytes: from_i64(row.get(5)?),
+                response_body_bytes: from_i64(row.get(6)?),
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -275,17 +308,17 @@ impl SqliteStore {
         .collect()
     }
 
-    /// idempotency key의 기존 action mode를 확인합니다.
+    /// idempotency key의 기존 action과 mode를 확인합니다.
     pub(crate) fn completed_action(
         &self,
         operation_id: &str,
-    ) -> Result<Option<String>, StorageError> {
+    ) -> Result<Option<(String, String)>, StorageError> {
         Ok(self
             .lock()
             .query_row(
-                "SELECT mode FROM audit_actions WHERE operation_id = ?1",
+                "SELECT action, mode FROM audit_actions WHERE operation_id = ?1",
                 [operation_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?)
     }
@@ -344,6 +377,24 @@ fn from_i64(value: i64) -> u64 {
     value.max(0) as u64
 }
 
+fn ensure_column(
+    connection: &Connection,
+    name: &str,
+    definition: &str,
+) -> Result<(), rusqlite::Error> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('traffic_samples') WHERE name = ?1",
+        [name],
+        |row| row.get(0),
+    )?;
+    if count == 0 {
+        connection.execute_batch(&format!(
+            "ALTER TABLE traffic_samples ADD COLUMN {name} {definition}"
+        ))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
@@ -365,6 +416,8 @@ mod tests {
             latency_micros: 900,
             client_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             request_body_bytes: 0,
+            response_body_bytes: 256,
+            upstream_connection_reused: Some(false),
             decision: "throttle".to_owned(),
             policy_version: 2,
             occurred_at_unix_ms: 120_000,

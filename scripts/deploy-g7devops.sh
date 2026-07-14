@@ -27,11 +27,11 @@ for binary in vps-guard vps-guard-control vps-guard-edge; do
   test -x "${bundle}/bin/${binary}"
 done
 
-ssh g7devops "rm -rf '${remote_stage}' && mkdir -p '${remote_stage}'"
+ssh g7devops "rm -rf /tmp/vpsguard-shadow-deploy && mkdir -p /tmp/vpsguard-shadow-deploy"
 scp -r "${bundle}/bin" "${bundle}/systemd" "${bundle}/tmpfiles" g7devops:"${remote_stage}/"
 ssh g7devops "test -f /etc/vps-guard/config.toml && grep -Eq '^http_bind = \"127\\.0\\.0\\.1:' /etc/vps-guard/config.toml"
 ssh g7devops "sudo id -u vps-guard >/dev/null 2>&1 || sudo useradd --system --home /var/lib/vps-guard --shell /usr/sbin/nologin vps-guard"
-ssh g7devops "sudo install -m 0755 '${remote_stage}'/bin/* /usr/local/bin/ && sudo install -m 0644 '${remote_stage}'/systemd/* /etc/systemd/system/ && sudo install -m 0644 '${remote_stage}'/tmpfiles/vps-guard.conf /usr/lib/tmpfiles.d/ && sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/vps-guard.conf && sudo systemctl daemon-reload"
+ssh g7devops "sudo install -m 0755 /tmp/vpsguard-shadow-deploy/bin/* /usr/local/bin/ && sudo install -m 0644 /tmp/vpsguard-shadow-deploy/systemd/* /etc/systemd/system/ && sudo install -m 0644 /tmp/vpsguard-shadow-deploy/tmpfiles/vps-guard.conf /usr/lib/tmpfiles.d/ && sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/vps-guard.conf && sudo systemctl daemon-reload"
 ssh g7devops "sudo /usr/local/bin/vps-guard check-config --config /etc/vps-guard/config.toml"
 ssh g7devops "sudo systemctl enable --now vps-guard-control.service vps-guard-edge.service"
 ssh g7devops "curl --fail --silent http://127.0.0.1:7727/health/live && sudo systemctl --no-pager --full status vps-guard-control.service vps-guard-edge.service"

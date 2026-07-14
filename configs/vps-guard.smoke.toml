@@ -37,6 +37,7 @@ mode = "observe"
 
 [cloudflare]
 enabled = false
+ip_networks = []
 
 [retention]
 live_seconds = 900

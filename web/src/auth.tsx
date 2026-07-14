@@ -17,6 +17,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState("");
   const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [confirmPath, setConfirmPath] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -58,8 +59,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ runAction: execute, openLogin: () => setOpen(true) }}>
+    <AuthContext.Provider
+      value={{
+        runAction: async (path) => setConfirmPath(path),
+        openLogin: () => setOpen(true),
+      }}
+    >
       {children}
+      {confirmPath ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" role="presentation">
+          <section
+            className="w-full max-w-md border border-zinc-700 bg-zinc-950 p-6 shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+          >
+            <h2 id="confirm-title" className="text-lg font-semibold">운영 명령 확인</h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-500">
+              {actionDescription(confirmPath)} 실행 결과는 감사 timeline에 기록되며 idempotency key로 중복 적용을 차단합니다.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmPath(null)}>취소</Button>
+              <Button
+                variant={confirmPath.includes("emergency") ? "danger" : "default"}
+                onClick={() => {
+                  const path = confirmPath;
+                  setConfirmPath(null);
+                  void execute(path);
+                }}
+              >
+                확인 후 실행
+              </Button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {open ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" role="presentation">
           <section
@@ -112,6 +146,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ) : null}
     </AuthContext.Provider>
   );
+}
+
+function actionDescription(path: string): string {
+  if (path.includes("emergency-proxy")) return "Cloudflare 비상 보호와 검증된 원본 잠금을";
+  if (path.includes("provider-restore")) return "저장된 provider snapshot 복구를";
+  if (path.includes("manual-hold")) return "자동 상태 전이의 수동 고정을";
+  return "자동 상태 전이 재개를";
 }
 
 export function useAuth(): AuthContextValue {
