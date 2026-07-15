@@ -7,6 +7,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$(mktemp -d)"
 trap 'rm -rf "${fixture}"' EXIT
 
+file_mode() {
+  if stat -c '%a' "$1" >/dev/null 2>&1; then
+    stat -c '%a' "$1"
+  else
+    stat -f '%Lp' "$1"
+  fi
+}
+
 root="${fixture}/root"
 snapshots="${fixture}/snapshots"
 mkdir -p \
@@ -65,7 +73,7 @@ grep -Fq 'restore=pass' <<<"${restore_output}"
 grep -Fxq 'old-binary' "${root}/usr/local/bin/vps-guard"
 grep -Fxq 'old-config' "${root}/etc/vps-guard/config.toml"
 grep -Fxq 'fixture-old-token' "${root}/etc/vps-guard/secrets/cloudflare-token"
-[[ "$(stat -f '%Lp' "${root}/etc/vps-guard/secrets/cloudflare-token")" == 600 ]]
+[[ "$(file_mode "${root}/etc/vps-guard/secrets/cloudflare-token")" == 600 ]]
 [[ ! -e "${root}/usr/local/bin/vps-guard-control" ]]
 [[ ! -e "${root}/etc/systemd/system/vps-guard-edge.service" ]]
 grep -Fxq 'enabled' "${root}/.vpsguard-test/systemd/vps-guard-control.service.enabled"
