@@ -123,8 +123,12 @@ fn execute(cli: Cli) -> Result<String, CliError> {
         Command::CheckConfig { config } => {
             let parsed = read_config(&config)?;
             Ok(format!(
-                "config valid: schema={} edge={} origin={} ui={}",
-                parsed.schema_version, parsed.edge.http_bind, parsed.origin.address, parsed.ui.bind
+                "config valid: schema={} edge={} origin={} ui={} inspection={}",
+                parsed.schema_version,
+                parsed.edge.http_bind,
+                parsed.origin.address,
+                parsed.ui.bind,
+                parsed.detection.inspection.as_str()
             ))
         }
         Command::Plan { config } => {

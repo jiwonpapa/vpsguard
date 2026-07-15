@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use guard_agent::os::OsSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
-use guard_core::config::TlsManagementMode;
+use guard_core::config::{InspectionMode, TlsManagementMode};
 use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
 use guard_system::{
     AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, build_certbot_assisted_plan,
@@ -41,6 +41,7 @@ pub(crate) struct AppState {
     pub(crate) traffic: Mutex<TrafficAggregator>,
     pub(crate) os_snapshot: RwLock<Option<OsSnapshot>>,
     pub(crate) service_health: RwLock<Vec<CollectorHealth>>,
+    pub(crate) inspection_mode: InspectionMode,
     pub(crate) tls_management: RwLock<TlsManagementSnapshot>,
     pub(crate) tls_plan_mode: TlsManagementMode,
     pub(crate) tls_plan_domains: Vec<String>,
@@ -58,6 +59,7 @@ pub(crate) struct AppState {
 #[derive(Debug, Serialize)]
 struct StatusResponse {
     schema_version: u32,
+    inspection: InspectionMode,
     mode: GuardMode,
     manual_hold: bool,
     policy_version: u64,
@@ -311,6 +313,7 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
     let tls_management = app.tls_management.read().await.clone();
     Json(StatusResponse {
         schema_version: 1,
+        inspection: app.inspection_mode,
         mode: state.current_mode,
         manual_hold: state.manual_hold,
         policy_version: state.policy_version,

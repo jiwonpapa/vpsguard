@@ -12,7 +12,7 @@ EDGE-009|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src
 EDGE-010|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 EDGE-011|CODE_ONLY|crates/guard-edge/src/telemetry.rs|-|-
 EDGE-012|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
-EDGE-013|PLANNED|-|-|-
+EDGE-013|AUTO_PASS|crates/guard-edge/src/runtime.rs|scripts/integration-gate.sh|-
 OBS-001|AUTO_PASS|crates/guard-control/src/telemetry.rs|crates/guard-control/src/telemetry/tests.rs|-
 OBS-002|CODE_ONLY|crates/guard-control/src/storage.rs|-|-
 OBS-003|CODE_ONLY|crates/guard-agent/src/os.rs|-|-

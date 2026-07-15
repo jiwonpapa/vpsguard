@@ -195,9 +195,34 @@ pub struct UiConfig {
 pub struct DetectionConfig {
     /// 애플리케이션 route profile입니다.
     pub profile: DetectionProfile,
+    /// HTTP parsing 뒤 적용할 분석 계층입니다.
+    #[serde(default)]
+    pub inspection: InspectionMode,
     /// 첫 설치 동작 모드입니다.
     #[serde(default)]
     pub mode: DetectionMode,
+}
+
+/// HTTP 요청에 적용할 분석 범위입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectionMode {
+    /// app profile, route class와 행동 기반 동적 정책을 사용합니다.
+    #[default]
+    Profiled,
+    /// app profile·행동 판정을 생략하고 정적 HTTP 안전 불변조건만 유지합니다.
+    ProtocolOnly,
+}
+
+impl InspectionMode {
+    /// 설정·API·CLI에 쓰는 안정된 문자열입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Profiled => "profiled",
+            Self::ProtocolOnly => "protocol_only",
+        }
+    }
 }
 
 /// 초기 애플리케이션 profile입니다.

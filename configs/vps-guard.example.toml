@@ -46,6 +46,7 @@ language = "ko"
 
 [detection]
 profile = "gnuboard7"
+inspection = "profiled" # app 분석 생략은 protocol_only
 mode = "observe"
 
 [cloudflare]

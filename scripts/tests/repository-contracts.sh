@@ -62,6 +62,9 @@ grep -Fq 'VPSGuard의 기본 생성 경로는 Cloudflare User API Token입니다
 grep -Fq 'Account DNS Settings`, `DNS Firewall`, `DNS View`는' docs/OPERATIONS.md
 grep -Fq 'Account API Tokens Read/Write' docs/OPERATIONS.md
 grep -Fq '전체 systemd unit·process 목록' specs/product/09-monitoring-web-ui.md
+grep -Fq 'inspection = "profiled"' configs/vps-guard.example.toml
+grep -Fq 'inspection = "protocol_only"' configs/vps-guard.protocol-only.integration.toml
+grep -Fq 'protocol_only_tls=pass' scripts/integration-gate.sh
 
 # SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
 # 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.

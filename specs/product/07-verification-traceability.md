@@ -41,7 +41,7 @@ last_reviewed: 2026-07-15
 | `EDGE-010` | `tests/integration/health_contract.rs` | origin down 상태 live/ready 비교 |
 | `EDGE-011` | `tests/security/log_secret_scan.rs` | 배포 로그 secret scan |
 | `EDGE-012` | `tests/load/high_cardinality.js` | RSS와 eviction/drop counter |
-| `EDGE-013` | `tests/e2e/inspection_modes.rs` | `profiled`·`protocol_only` 정상 요청과 정적 불변조건 report |
+| `EDGE-013` | `scripts/integration-gate.sh` | `profiled`·`protocol_only` HTTP/TLS 정상 요청, app 판정 생략과 정적 불변조건 report |
 
 ### 3.2 Observation
 

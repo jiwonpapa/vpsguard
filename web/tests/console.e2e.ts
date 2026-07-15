@@ -4,6 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const status = {
   schema_version: 1,
+  inspection: "profiled",
   mode: "LOCAL_GUARD",
   manual_hold: false,
   policy_version: 7,

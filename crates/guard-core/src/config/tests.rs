@@ -4,7 +4,10 @@
 
 use std::net::IpAddr;
 
-use super::{ConfigError, DetectionProfile, GuardConfig, ServiceCollectorKind, TlsManagementMode};
+use super::{
+    ConfigError, DetectionProfile, GuardConfig, InspectionMode, ServiceCollectorKind,
+    TlsManagementMode,
+};
 
 const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -53,9 +56,23 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.tls.management, TlsManagementMode::Auto);
     assert!(!config.cloudflare.enabled);
     assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
+    assert_eq!(config.detection.inspection, InspectionMode::Profiled);
     assert_eq!(config.retention.audit_days, 365);
     assert_eq!(config.storage.max_database_bytes, 512 * 1_024 * 1_024);
     assert_eq!(config.storage.min_disk_free_bytes, 256 * 1_024 * 1_024);
+}
+
+#[test]
+fn parses_protocol_only_independently_from_enforcement() {
+    let source = VALID_CONFIG
+        .replace(
+            "profile = \"gnuboard\"",
+            "profile = \"gnuboard\"\ninspection = \"protocol_only\"",
+        )
+        .replace("mode = \"observe\"", "mode = \"enforce\"");
+    let config = GuardConfig::from_toml(&source).expect("protocol-only config should parse");
+    assert_eq!(config.detection.inspection, InspectionMode::ProtocolOnly);
+    assert_eq!(config.detection.mode, super::DetectionMode::Enforce);
 }
 
 #[test]

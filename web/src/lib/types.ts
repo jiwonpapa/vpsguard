@@ -1,5 +1,6 @@
 export interface StatusResponse {
   schema_version: number;
+  inspection: "profiled" | "protocol_only";
   mode: string;
   manual_hold: boolean;
   policy_version: number;

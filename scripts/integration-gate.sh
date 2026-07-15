@@ -14,20 +14,37 @@ rm -f /tmp/vps-guard-smoke/telemetry.sock \
   /tmp/vps-guard-smoke/tls-cert.pem \
   /tmp/vps-guard-smoke/tls-key.pem \
   /tmp/vps-guard-smoke/login.json \
+  /tmp/vps-guard-smoke/protocol-body.bin \
+  /tmp/vps-guard-smoke/protocol-only-telemetry.sock \
   "${evidence_dir}/state.json"
 
 origin_pid=""
 edge_pid=""
+protocol_edge_pid=""
 control_pid=""
+stop_process() {
+  local pid="$1"
+  [[ -z "${pid}" ]] && return
+  kill "${pid}" 2>/dev/null || true
+  for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      wait "${pid}" 2>/dev/null || true
+      return
+    fi
+    sleep 0.05
+  done
+  kill -KILL "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+}
 cleanup() {
-  for pid in "${edge_pid}" "${control_pid}" "${origin_pid}"; do
-    [[ -z "${pid}" ]] && continue
-    kill "${pid}" 2>/dev/null || true
-    wait "${pid}" 2>/dev/null || true
+  for pid in "${protocol_edge_pid}" "${edge_pid}" "${control_pid}" "${origin_pid}"; do
+    stop_process "${pid}"
   done
   rm -f /tmp/vps-guard-smoke/login.json \
     /tmp/vps-guard-smoke/tls-key.pem \
     /tmp/vps-guard-smoke/tls-cert.pem \
+    /tmp/vps-guard-smoke/protocol-body.bin \
+    /tmp/vps-guard-smoke/protocol-only-telemetry.sock \
     /tmp/vps-guard-smoke/admin.sock \
     "${evidence_dir}/session.headers" \
     "${evidence_dir}/session.json"
@@ -44,10 +61,11 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -out /tmp/vps-guard-smoke/tls-cert.pem >/dev/null 2>&1
 chmod 0600 /tmp/vps-guard-smoke/tls-key.pem
 
-python3 tests/fixtures/origin_server.py >"${evidence_dir}/origin.log" 2>&1 &
+VPS_GUARD_TEST_ORIGIN_PORT=28081 \
+  python3 tests/fixtures/origin_server.py >"${evidence_dir}/origin.log" 2>&1 &
 origin_pid=$!
 curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
-  http://127.0.0.1:18081/health >"${evidence_dir}/origin-live.json"
+  http://127.0.0.1:28081/health >"${evidence_dir}/origin-live.json"
 
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.integration.toml" \
 VPS_GUARD_STATE="${evidence_dir}/state.json" \
@@ -55,39 +73,94 @@ VPS_GUARD_STATE="${evidence_dir}/state.json" \
 control_pid=$!
 
 curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
-  http://127.0.0.1:17727/health/live >"${evidence_dir}/control-live.txt"
+  http://127.0.0.1:27727/health/live >"${evidence_dir}/control-live.txt"
 
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.integration.toml" \
   target/debug/vps-guard-edge >"${evidence_dir}/edge.log" 2>&1 &
 edge_pid=$!
 curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   --dump-header "${evidence_dir}/edge-live.headers" \
-  -H 'Host: example.test' http://127.0.0.1:18080/health/live >"${evidence_dir}/edge-live.txt"
+  -H 'Host: example.test' http://127.0.0.1:28080/health/live >"${evidence_dir}/edge-live.txt"
 grep -Eiq '^x-vpsguard-telemetry-(emitted|dropped|reconnected): [0-9]+' "${evidence_dir}/edge-live.headers"
 
-initial_ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:18080/health/ready)"
+initial_ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
 [[ "${initial_ready_status}" == "503" ]]
 
 app_request() {
   local path="$1"
   shift
   curl --silent --show-error --insecure --noproxy '*' \
-    --resolve example.test:18443:127.0.0.1 "$@" "https://example.test:18443${path}"
+    --resolve example.test:28443:127.0.0.1 "$@" "https://example.test:28443${path}"
+}
+
+protocol_request() {
+  local path="$1"
+  shift
+  curl --silent --show-error --noproxy '*' \
+    -H 'Host: example.test' "$@" "http://127.0.0.1:28082${path}"
+}
+
+protocol_tls_request() {
+  local path="$1"
+  shift
+  curl --silent --show-error --insecure --noproxy '*' \
+    --resolve example.test:28444:127.0.0.1 "$@" "https://example.test:28444${path}"
 }
 
 admin_request() {
   local path="$1"
   shift
   curl --silent --show-error --insecure --noproxy '*' \
-    --resolve guard.example.test:18443:127.0.0.1 "$@" "https://guard.example.test:18443${path}"
+    --resolve guard.example.test:28443:127.0.0.1 "$@" "https://guard.example.test:28443${path}"
 }
 
 proxy_body="$(app_request /hello)"
 [[ "${proxy_body}" == *'"path": "/hello"'* ]]
 [[ "${proxy_body}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
 [[ "${proxy_body}" != *'secret='* ]]
-ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:18080/health/ready)"
+ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
 [[ "${ready_status}" == "200" ]]
+
+# EDGE-013: protocol_only는 G7 app profile과 동적 판정을 건너뛰지만
+# HTTP parsing, Host, forwarded header, body 상한과 telemetry 경계는 유지합니다.
+VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.protocol-only.integration.toml" \
+  target/debug/vps-guard-edge >"${evidence_dir}/protocol-only-edge.log" 2>&1 &
+protocol_edge_pid=$!
+curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+  -H 'Host: example.test' http://127.0.0.1:28082/health/live \
+  >"${evidence_dir}/protocol-only-live.txt"
+for _request in 1 2 3 4; do
+  [[ "$(protocol_request /api/auth/login --output /dev/null --write-out '%{http_code}')" == "200" ]]
+done
+[[ "$(protocol_tls_request /protocol-only-tls --output /dev/null --write-out '%{http_code}')" == "200" ]]
+protocol_spoof="$(protocol_request /protocol-only -H 'X-Forwarded-For: 203.0.113.7')"
+[[ "${protocol_spoof}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
+[[ "${protocol_spoof}" != *'203.0.113.7'* ]]
+[[ "$(protocol_request / --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test')" == "400" ]]
+python3 -c 'from pathlib import Path; Path("/tmp/vps-guard-smoke/protocol-body.bin").write_bytes(b"x" * 2048)'
+[[ "$(protocol_request /upload --output /dev/null --write-out '%{http_code}' -X POST --data-binary @/tmp/vps-guard-smoke/protocol-body.bin)" == "200" ]]
+[[ "$(protocol_request /regular --output /dev/null --write-out '%{http_code}' -X POST --data-binary @/tmp/vps-guard-smoke/protocol-body.bin)" == "413" ]]
+python3 - <<'PY'
+import socket
+
+with socket.create_connection(("127.0.0.1", 28082), timeout=2) as connection:
+    connection.sendall(b"SSH-2.0-not-http\r\n")
+    connection.settimeout(1)
+    try:
+        response = connection.recv(4096)
+    except (BrokenPipeError, ConnectionResetError, TimeoutError, socket.timeout):
+        response = b""
+assert b'"path"' not in response
+PY
+printf '%s\n' \
+  'profiled_http=pass' \
+  'protocol_only_http=pass' \
+  'protocol_only_tls=pass' \
+  'host_forwarded_body_invariants=pass' \
+  'owned_port_non_http_rejected=pass' \
+  >"${evidence_dir}/inspection-modes.txt"
+stop_process "${protocol_edge_pid}"
+protocol_edge_pid=""
 
 invalid_host_status="$(app_request / --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test')"
 [[ "${invalid_host_status}" == "400" ]]
@@ -99,7 +172,7 @@ management_unknown="$(admin_request /hello)"
 [[ "${management_unknown}" != *'"path": "/hello"'* ]]
 redirect_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --dump-header "${evidence_dir}/management-redirect.headers" \
-  -H 'Host: guard.example.test' http://127.0.0.1:18080/)"
+  -H 'Host: guard.example.test' http://127.0.0.1:28080/)"
 [[ "${redirect_status}" == "308" ]]
 grep -Eiq '^location: https://guard\.example\.test/' "${evidence_dir}/management-redirect.headers"
 
@@ -193,6 +266,6 @@ control_pid=""
 [[ "$(app_request /hello --output /dev/null --write-out '%{http_code}')" == "200" ]]
 [[ "$(admin_request / --output /dev/null --write-out '%{http_code}')" == "502" ]]
 [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -H 'Host: example.test' http://127.0.0.1:18080/health/ready)" == "200" ]]
+  -H 'Host: example.test' http://127.0.0.1:28080/health/ready)" == "200" ]]
 
 echo "integration gate: PASS"

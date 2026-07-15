@@ -11,7 +11,7 @@ use axum::http::{Request, StatusCode};
 use guard_agent::cgroup::CgroupSnapshot;
 use guard_agent::services::ServiceSemanticSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
-use guard_core::config::UiConfig;
+use guard_core::config::{InspectionMode, UiConfig};
 use guard_core::{GuardMode, GuardState};
 use guard_system::{AtomicJsonStore, inspect_tls_management};
 use tokio::sync::{RwLock, broadcast};
@@ -59,6 +59,7 @@ fn app_with_options(
         traffic: Mutex::new(TrafficAggregator::new(10)),
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
+        inspection_mode: InspectionMode::Profiled,
         tls_management: RwLock::new(inspect_tls_management(
             &guard_core::config::TlsConfig::default(),
         )),
@@ -243,6 +244,31 @@ async fn existing_cookie_restores_csrf_without_a_new_login_code()
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&body)?["csrf_token"],
         issued.csrf_token
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_exposes_the_active_inspection_mode() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mut state = app(&directory.path().join("state.json"))?;
+    Arc::get_mut(&mut state)
+        .ok_or("exclusive app state unavailable")?
+        .inspection_mode = InspectionMode::ProtocolOnly;
+    let issued = state.sessions.issue(false);
+    let response = router(state)
+        .oneshot(
+            Request::get("/api/v1/status")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4_096).await?;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body)?["inspection"],
+        "protocol_only"
     );
     Ok(())
 }

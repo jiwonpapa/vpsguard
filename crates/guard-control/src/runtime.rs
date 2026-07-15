@@ -12,7 +12,7 @@ use guard_agent::services::{
     ServiceProbe, ServiceTarget, ServiceTargets, ServiceTargetsError, collect_services,
     merge_service_history,
 };
-use guard_core::config::{DetectionMode, ServiceCollectorKind};
+use guard_core::config::{DetectionMode, InspectionMode, ServiceCollectorKind};
 use guard_core::policy::{RouteRule, StaticLimits};
 use guard_core::{
     Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
@@ -111,6 +111,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         )),
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
+        inspection_mode: config.detection.inspection,
         tls_management: RwLock::new(initial_tls),
         tls_plan_mode: config.tls.management,
         tls_plan_domains: tls_plan_domains(&config),
@@ -404,7 +405,8 @@ fn spawn_storage_health(storage: Arc<SqliteStore>) {
 }
 
 fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
-    let enforce = config.detection.mode == DetectionMode::Enforce;
+    let enforce = config.detection.mode == DetectionMode::Enforce
+        && config.detection.inspection == InspectionMode::Profiled;
     let policy_store = AtomicJsonStore::<PolicySnapshot>::new(config.edge.policy_path.clone());
     let max_body_bytes = config.edge.max_body_bytes;
     let max_tracked_clients = config.edge.max_tracked_clients;

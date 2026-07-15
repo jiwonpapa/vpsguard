@@ -60,7 +60,7 @@ export function OverviewPage() {
                 {MODE_LABELS[state.mode] ?? state.mode}
               </div>
               <div className="mt-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                마지막 전이 {formatTime(state.last_transition_at)} · 정책 v{state.policy_version}
+                마지막 전이 {formatTime(state.last_transition_at)} · 정책 v{state.policy_version} · inspection {state.inspection}
               </div>
             </div>
           </div>

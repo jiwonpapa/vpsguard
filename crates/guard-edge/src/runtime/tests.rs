@@ -1,6 +1,7 @@
 //! Edge runtime 설정 불변조건 회귀 테스트입니다.
 
 use guard_core::GuardConfig;
+use guard_core::config::InspectionMode;
 
 use super::{EdgeRuntimeConfig, RouteClassSource, UpstreamKind};
 use crate::rate_limit::RouteClass;
@@ -14,6 +15,32 @@ fn observe_mode_never_enables_dynamic_rate_limits() -> Result<(), Box<dyn std::e
     assert_eq!(runtime.rate_limit(RouteClass::General), None);
     assert_eq!(runtime.rate_limit(RouteClass::Strict), None);
     assert_eq!(runtime.rate_limit(RouteClass::Upload), None);
+    Ok(())
+}
+
+#[test]
+fn protocol_only_skips_application_profile_and_dynamic_protection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../../configs/vps-guard.smoke.toml")
+        .replace(
+            "inspection = \"profiled\"",
+            "inspection = \"protocol_only\"",
+        )
+        .replace("mode = \"observe\"", "mode = \"enforce\"");
+    let config = GuardConfig::from_toml(&source)?;
+    let runtime = EdgeRuntimeConfig::try_from_guard(&config)?;
+    let auth = runtime.effective_route_profile(
+        UpstreamKind::Application,
+        "/api/auth/login",
+        "/api/auth/login?next=%2Fadmin",
+    );
+
+    assert_eq!(runtime.inspection_mode, InspectionMode::ProtocolOnly);
+    assert!(!runtime.enforces_dynamic_protection());
+    assert_eq!(auth.route_class, RouteClass::General);
+    assert_eq!(auth.normalized_route, "/api/auth/login");
+    assert_eq!(auth.base_cost, 1);
+    assert_eq!(auth.source, RouteClassSource::CoreDefault);
     Ok(())
 }
 

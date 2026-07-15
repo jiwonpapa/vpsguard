@@ -1,8 +1,8 @@
 schema_version = 1
 
 [edge]
-http_bind = "127.0.0.1:18080"
-https_bind = "127.0.0.1:18443"
+http_bind = "127.0.0.1:28080"
+https_bind = "127.0.0.1:28443"
 allowed_hosts = ["example.test"]
 trusted_proxy_cidrs = ["127.0.0.1/32"]
 max_body_bytes = 1024
@@ -22,7 +22,7 @@ policy_reload_interval_ms = 100
 clearance_ttl_seconds = 600
 
 [origin]
-address = "127.0.0.1:18081"
+address = "127.0.0.1:28081"
 protocol = "http"
 
 [tls]
@@ -32,7 +32,7 @@ cert_file = "/tmp/vps-guard-smoke/tls-cert.pem"
 key_file = "/tmp/vps-guard-smoke/tls-key.pem"
 
 [ui]
-bind = "127.0.0.1:17727"
+bind = "127.0.0.1:27727"
 public_host = "guard.example.test"
 admin_socket = "/tmp/vps-guard-smoke/admin.sock"
 login_rate_limit_rpm = 10
@@ -40,6 +40,7 @@ language = "ko"
 
 [detection]
 profile = "gnuboard7"
+inspection = "profiled"
 mode = "observe"
 
 [cloudflare]

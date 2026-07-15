@@ -4,7 +4,9 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use guard_core::config::{DetectionMode, DetectionProfile, GuardConfig, OriginProtocol};
+use guard_core::config::{
+    DetectionMode, DetectionProfile, GuardConfig, InspectionMode, OriginProtocol,
+};
 use guard_profiles::{ApplicationProfile, RouteKind, classify};
 use ipnet::IpNet;
 use thiserror::Error;
@@ -93,6 +95,7 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) challenge_secret_file: Option<PathBuf>,
     pub(crate) clearance_ttl_seconds: u64,
     pub(crate) application_profile: ApplicationProfile,
+    pub(crate) inspection_mode: InspectionMode,
     pub(crate) detection_mode: DetectionMode,
 }
 
@@ -186,6 +189,7 @@ impl EdgeRuntimeConfig {
                 DetectionProfile::Gnuboard7 => ApplicationProfile::Gnuboard7,
                 DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
             },
+            inspection_mode: config.detection.inspection,
             detection_mode: config.detection.mode,
         })
     }
@@ -228,11 +232,24 @@ impl EdgeRuntimeConfig {
                 },
             };
         }
-        let application = classify(self.application_profile, target);
-        let (route_class, source) = if path_matches_any(path, &self.upload_path_prefixes) {
+        let site_override = if path_matches_any(path, &self.upload_path_prefixes) {
             (RouteClass::Upload, RouteClassSource::SiteUploadOverride)
         } else if path_matches_any(path, &self.strict_path_prefixes) {
             (RouteClass::Strict, RouteClassSource::SiteStrictOverride)
+        } else {
+            (RouteClass::General, RouteClassSource::CoreDefault)
+        };
+        if self.inspection_mode == InspectionMode::ProtocolOnly {
+            return EffectiveRouteProfile {
+                route_class: site_override.0,
+                normalized_route: path.to_owned(),
+                base_cost: 1,
+                source: site_override.1,
+            };
+        }
+        let application = classify(self.application_profile, target);
+        let (route_class, source) = if site_override.1 != RouteClassSource::CoreDefault {
+            site_override
         } else {
             match application.kind {
                 RouteKind::Upload => (RouteClass::Upload, RouteClassSource::ApplicationProfile),
@@ -293,6 +310,7 @@ impl EdgeRuntimeConfig {
     /// observe-only 설치에서 동적 throttle·challenge·deny를 실행하지 않습니다.
     pub(crate) fn enforces_dynamic_protection(&self) -> bool {
         self.detection_mode == DetectionMode::Enforce
+            && self.inspection_mode == InspectionMode::Profiled
     }
 
     pub(crate) fn trusts_peer(&self, peer: IpAddr) -> bool {

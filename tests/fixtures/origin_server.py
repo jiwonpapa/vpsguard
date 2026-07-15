@@ -2,6 +2,7 @@
 """Loopback-only HTTP origin used by the VPSGuard integration harness."""
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -23,9 +24,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def do_POST(self):  # noqa: N802
+        """Consume the bounded integration body before returning the same echo."""
+        content_length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(content_length)
+        self.do_GET()
+
     def log_message(self, _format, *_args):
         """Keep the test output deterministic."""
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", 18081), Handler).serve_forever()
+    port = int(os.environ.get("VPS_GUARD_TEST_ORIGIN_PORT", "18081"))
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
