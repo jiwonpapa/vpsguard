@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use crate::policy::path_matches_any;
 use crate::rate_limit::RouteClass;
+use crate::security::ResponseSecurityPolicy;
 
 /// 한 TLS listener에 적용할 PEM 경로입니다.
 #[derive(Debug, Clone)]
@@ -63,6 +64,7 @@ pub(crate) struct EffectiveRouteProfile {
     pub(crate) normalized_route: String,
     pub(crate) base_cost: u8,
     pub(crate) source: RouteClassSource,
+    pub(crate) authentication_route: bool,
 }
 
 /// `guard-edge`가 요청마다 참조하는 불변 runtime 설정입니다.
@@ -95,6 +97,8 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) challenge_secret_file: Option<PathBuf>,
     pub(crate) clearance_ttl_seconds: u64,
     pub(crate) application_profile: ApplicationProfile,
+    pub(crate) response_security: ResponseSecurityPolicy,
+    pub(crate) auth_rate_limit_rpm: u32,
     pub(crate) inspection_mode: InspectionMode,
     pub(crate) detection_mode: DetectionMode,
 }
@@ -152,6 +156,12 @@ impl EdgeRuntimeConfig {
         if let Some(management) = &management {
             allowed_hosts.push(management.host.clone());
         }
+        let application_profile = match config.detection.profile {
+            DetectionProfile::Php => ApplicationProfile::Php,
+            DetectionProfile::Gnuboard5 => ApplicationProfile::Gnuboard5,
+            DetectionProfile::Gnuboard7 => ApplicationProfile::Gnuboard7,
+            DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
+        };
         Ok(Self {
             listen_addr: config.edge.http_bind.to_string(),
             tls,
@@ -183,12 +193,13 @@ impl EdgeRuntimeConfig {
             policy_reload_interval: Duration::from_millis(config.edge.policy_reload_interval_ms),
             challenge_secret_file: config.edge.challenge_secret_file.clone(),
             clearance_ttl_seconds: config.edge.clearance_ttl_seconds,
-            application_profile: match config.detection.profile {
-                DetectionProfile::Php => ApplicationProfile::Php,
-                DetectionProfile::Gnuboard5 => ApplicationProfile::Gnuboard5,
-                DetectionProfile::Gnuboard7 => ApplicationProfile::Gnuboard7,
-                DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
-            },
+            application_profile,
+            response_security: ResponseSecurityPolicy::from_config(
+                &config.security,
+                config.detection.inspection,
+                application_profile,
+            ),
+            auth_rate_limit_rpm: config.security.auth_rate_limit_rpm,
             inspection_mode: config.detection.inspection,
             detection_mode: config.detection.mode,
         })
@@ -230,6 +241,7 @@ impl EdgeRuntimeConfig {
                 } else {
                     RouteClassSource::CoreDefault
                 },
+                authentication_route: false,
             };
         }
         let site_override = if path_matches_any(path, &self.upload_path_prefixes) {
@@ -245,6 +257,7 @@ impl EdgeRuntimeConfig {
                 normalized_route: path.to_owned(),
                 base_cost: 1,
                 source: site_override.1,
+                authentication_route: false,
             };
         }
         let application = classify(self.application_profile, target);
@@ -273,6 +286,7 @@ impl EdgeRuntimeConfig {
             normalized_route: application.normalized_route,
             base_cost: application.base_cost,
             source,
+            authentication_route: application.kind == RouteKind::Authentication,
         }
     }
 
@@ -303,8 +317,15 @@ impl EdgeRuntimeConfig {
             RouteClass::General => self.rate_limit_rpm,
             RouteClass::Strict => self.strict_rate_limit_rpm.or(self.rate_limit_rpm),
             RouteClass::Upload => self.upload_rate_limit_rpm.or(self.rate_limit_rpm),
+            RouteClass::Authentication => None,
             RouteClass::ManagementAuth => None,
         }
+    }
+
+    /// app profile 인증 경로의 별도 client 한도를 반환합니다.
+    pub(crate) fn authentication_rate_limit(&self) -> Option<u32> {
+        (self.enforces_dynamic_protection() && self.auth_rate_limit_rpm > 0)
+            .then_some(self.auth_rate_limit_rpm)
     }
 
     /// observe-only 설치에서 동적 throttle·challenge·deny를 실행하지 않습니다.

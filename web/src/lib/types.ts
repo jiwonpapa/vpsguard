@@ -1,6 +1,14 @@
 export interface StatusResponse {
   schema_version: number;
   inspection: "profiled" | "protocol_only";
+  security: {
+    app_layer_active: boolean;
+    baseline_response_headers: boolean;
+    strip_origin_headers: boolean;
+    csp_mode: "off" | "report_only" | "enforce";
+    hsts_max_age_seconds: number;
+    auth_rate_limit_rpm: number | null;
+  };
   mode: string;
   manual_hold: boolean;
   policy_version: number;

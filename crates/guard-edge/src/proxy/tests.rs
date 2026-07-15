@@ -1,6 +1,6 @@
 //! HTTP redirect와 ACME 예외 회귀 테스트입니다.
 
-use super::{https_redirect_location, select_request_host};
+use super::{https_redirect_location, select_request_host, stricter_limit};
 
 #[test]
 fn uses_http2_authority_when_host_header_is_absent() {
@@ -44,4 +44,12 @@ fn keeps_https_and_http01_challenge_on_the_current_listener() {
         ),
         None
     );
+}
+
+#[test]
+fn authentication_limit_never_weakens_an_incident_limit() {
+    assert_eq!(stricter_limit(Some(30), Some(10)), Some(10));
+    assert_eq!(stricter_limit(Some(5), Some(10)), Some(5));
+    assert_eq!(stricter_limit(None, Some(10)), Some(10));
+    assert_eq!(stricter_limit(None, None), None);
 }

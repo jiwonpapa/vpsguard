@@ -112,6 +112,8 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
         inspection_mode: config.detection.inspection,
+        detection_mode: config.detection.mode,
+        security: config.security.clone(),
         tls_management: RwLock::new(initial_tls),
         tls_plan_mode: config.tls.management,
         tls_plan_domains: tls_plan_domains(&config),

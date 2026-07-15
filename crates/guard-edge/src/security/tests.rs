@@ -1,0 +1,86 @@
+//! Response 보안 policy 회귀 테스트입니다.
+
+use guard_core::config::{CspMode, InspectionMode, SecurityConfig};
+use guard_profiles::ApplicationProfile;
+use pingora_http::ResponseHeader;
+
+use super::{ResponseSecurityPolicy, rejects_method};
+
+#[test]
+fn applies_g7_report_only_headers_without_weakening_origin_policy()
+-> Result<(), Box<dyn std::error::Error>> {
+    let config = SecurityConfig {
+        hsts_max_age_seconds: 86_400,
+        ..SecurityConfig::default()
+    };
+    let policy = ResponseSecurityPolicy::from_config(
+        &config,
+        InspectionMode::Profiled,
+        ApplicationProfile::Gnuboard7,
+    );
+    let mut response = ResponseHeader::build(200, Some(8))?;
+    response.insert_header("server", "origin/1.0")?;
+    response.insert_header("x-powered-by", "PHP/8.3")?;
+    response.insert_header("referrer-policy", "no-referrer")?;
+
+    policy.apply(&mut response, true)?;
+
+    assert!(!response.headers.contains_key("server"));
+    assert!(!response.headers.contains_key("x-powered-by"));
+    assert_eq!(response.headers["x-content-type-options"], "nosniff");
+    assert_eq!(response.headers["referrer-policy"], "no-referrer");
+    assert_eq!(
+        response.headers["strict-transport-security"],
+        "max-age=86400"
+    );
+    let csp = response.headers["content-security-policy-report-only"].to_str()?;
+    assert!(csp.contains("script-src 'self'"));
+    assert!(!csp.contains("script-src 'self' 'unsafe-inline'"));
+    Ok(())
+}
+
+#[test]
+fn protocol_only_keeps_baseline_but_skips_app_csp() -> Result<(), Box<dyn std::error::Error>> {
+    let policy = ResponseSecurityPolicy::from_config(
+        &SecurityConfig::default(),
+        InspectionMode::ProtocolOnly,
+        ApplicationProfile::Gnuboard7,
+    );
+    let mut response = ResponseHeader::build(200, Some(4))?;
+    policy.apply(&mut response, false)?;
+    assert_eq!(response.headers["x-content-type-options"], "nosniff");
+    assert!(
+        !response
+            .headers
+            .contains_key("content-security-policy-report-only")
+    );
+    assert!(!response.headers.contains_key("strict-transport-security"));
+    Ok(())
+}
+
+#[test]
+fn enforce_uses_site_policy_and_dangerous_methods_are_rejected()
+-> Result<(), Box<dyn std::error::Error>> {
+    let config = SecurityConfig {
+        csp_mode: CspMode::Enforce,
+        csp_policy: Some("default-src 'none'".to_owned()),
+        ..SecurityConfig::default()
+    };
+    let policy = ResponseSecurityPolicy::from_config(
+        &config,
+        InspectionMode::Profiled,
+        ApplicationProfile::Php,
+    );
+    let mut response = ResponseHeader::build(200, Some(4))?;
+    policy.apply(&mut response, false)?;
+    assert_eq!(
+        response.headers["content-security-policy"],
+        "default-src 'none'"
+    );
+    assert!(rejects_method("TRACE"));
+    assert!(rejects_method("track"));
+    assert!(rejects_method("Connect"));
+    assert!(!rejects_method("GET"));
+    assert!(!rejects_method("OPTIONS"));
+    Ok(())
+}

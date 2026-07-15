@@ -28,6 +28,9 @@ pub struct GuardConfig {
     pub ui: UiConfig,
     /// 탐지 profile과 초기 모드입니다.
     pub detection: DetectionConfig,
+    /// 애플리케이션 앞단 보안 정책입니다.
+    #[serde(default)]
+    pub security: SecurityConfig,
     /// Cloudflare provider 설정입니다.
     #[serde(default)]
     pub cloudflare: CloudflareConfig,
@@ -221,6 +224,68 @@ impl InspectionMode {
         match self {
             Self::Profiled => "profiled",
             Self::ProtocolOnly => "protocol_only",
+        }
+    }
+}
+
+/// response header와 인증 시도 보호 정책입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityConfig {
+    /// `nosniff`와 최소 referrer policy를 응답에 적용합니다.
+    #[serde(default = "default_true")]
+    pub baseline_response_headers: bool,
+    /// origin의 구현·버전 노출 header를 제거합니다.
+    #[serde(default = "default_true")]
+    pub strip_origin_headers: bool,
+    /// Content Security Policy 적용 단계입니다.
+    #[serde(default)]
+    pub csp_mode: CspMode,
+    /// app profile 기본값을 대체하는 site CSP입니다.
+    #[serde(default)]
+    pub csp_policy: Option<String>,
+    /// HTTPS 응답의 HSTS `max-age`입니다. 0이면 비활성화합니다.
+    #[serde(default)]
+    pub hsts_max_age_seconds: u64,
+    /// app profile 인증 경로의 client별 분당 한도입니다. 0이면 비활성화합니다.
+    #[serde(default = "default_auth_rate_limit_rpm")]
+    pub auth_rate_limit_rpm: u32,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            baseline_response_headers: true,
+            strip_origin_headers: true,
+            csp_mode: CspMode::ReportOnly,
+            csp_policy: None,
+            hsts_max_age_seconds: 0,
+            auth_rate_limit_rpm: default_auth_rate_limit_rpm(),
+        }
+    }
+}
+
+/// Content Security Policy의 적용 단계입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CspMode {
+    /// CSP header를 추가하지 않습니다.
+    Off,
+    /// 위반을 차단하지 않고 브라우저 진단만 생성합니다.
+    #[default]
+    ReportOnly,
+    /// 검증된 CSP를 실제로 강제합니다.
+    Enforce,
+}
+
+impl CspMode {
+    /// 설정·API에 쓰는 안정된 문자열입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::ReportOnly => "report_only",
+            Self::Enforce => "enforce",
         }
     }
 }
@@ -524,6 +589,33 @@ impl GuardConfig {
         .any(|limit| limit == 0)
         {
             return invalid("edge.rate_limit_rpm", "설정된 한도는 0보다 커야 합니다");
+        }
+        if self.security.hsts_max_age_seconds > 63_072_000 {
+            return invalid("security.hsts_max_age_seconds", "0부터 2년 사이여야 합니다");
+        }
+        if self.security.auth_rate_limit_rpm > 600 {
+            return invalid(
+                "security.auth_rate_limit_rpm",
+                "0 또는 1..=600 범위여야 합니다",
+            );
+        }
+        if self.security.csp_mode == CspMode::Off && self.security.csp_policy.is_some() {
+            return invalid(
+                "security.csp_policy",
+                "CSP off에서는 site policy를 함께 둘 수 없습니다",
+            );
+        }
+        if let Some(policy) = self.security.csp_policy.as_deref()
+            && (policy.is_empty()
+                || policy.len() > 4_096
+                || policy.trim() != policy
+                || !policy.is_ascii()
+                || policy.bytes().any(|byte| byte.is_ascii_control()))
+        {
+            return invalid(
+                "security.csp_policy",
+                "공백 경계와 제어문자 없는 4KiB 이하 ASCII policy가 필요합니다",
+            );
         }
         if self.origin.address == self.edge.http_bind
             || self.edge.https_bind == Some(self.origin.address)
@@ -1022,6 +1114,14 @@ fn default_admin_socket() -> PathBuf {
 
 const fn default_login_rate_limit_rpm() -> u32 {
     10
+}
+
+const fn default_auth_rate_limit_rpm() -> u32 {
+    10
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 fn default_telemetry_socket() -> PathBuf {

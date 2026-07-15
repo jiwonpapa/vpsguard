@@ -32,6 +32,7 @@
 8. [보안 advisory 예외](docs/security/advisory-exceptions.md)
 9. [개발 MVP 구현 현황](specs/product/11-mvp-implementation-status.md)
 10. [핵심 서비스 관측 설정](docs/SERVICE_OBSERVABILITY.md)
+11. [애플리케이션 보안 경계](docs/APP_SECURITY.md)
 
 전체 배경과 사업 가설은 [제품 문서 색인](specs/product/README.md)에서 확인합니다.
 

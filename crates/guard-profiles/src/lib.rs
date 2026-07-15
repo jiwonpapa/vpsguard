@@ -59,6 +59,29 @@ pub struct RouteProfile {
     pub base_cost: u8,
 }
 
+/// app별 기본 response 보안 overlay입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplicationSecurityProfile {
+    /// report-only로 시작하는 기본 Content Security Policy입니다.
+    pub csp_policy: &'static str,
+}
+
+const LEGACY_CSP: &str = "default-src 'self' https: data: blob:; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' https: ws: wss:";
+const GNUBOARD7_CSP: &str = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; media-src 'self' blob:";
+
+/// 범용 core에 합성할 app별 기본 보안 overlay를 반환합니다.
+#[must_use]
+pub const fn security_profile(profile: ApplicationProfile) -> ApplicationSecurityProfile {
+    ApplicationSecurityProfile {
+        csp_policy: match profile {
+            ApplicationProfile::Gnuboard7 => GNUBOARD7_CSP,
+            ApplicationProfile::Php
+            | ApplicationProfile::Gnuboard5
+            | ApplicationProfile::Wordpress => LEGACY_CSP,
+        },
+    }
+}
+
 /// 지정 profile로 경로를 정규화하고 비용을 분류합니다.
 #[must_use]
 pub fn classify(profile: ApplicationProfile, raw_target: &str) -> RouteProfile {

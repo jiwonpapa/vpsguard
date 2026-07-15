@@ -16,7 +16,7 @@ use pingora_error::{
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use time::OffsetDateTime;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::challenge::ClearanceSigner;
 use crate::context::RequestContext;
@@ -27,6 +27,7 @@ use crate::response::{
     add_common_headers, respond_redirect, respond_text, respond_text_with_headers,
 };
 use crate::runtime::{EdgeRuntimeConfig, UpstreamKind};
+use crate::security::rejects_method;
 use crate::telemetry::{DecisionKind, RequestTelemetry, TelemetrySink};
 
 const LIVE_PATH: &str = "/health/live";
@@ -117,6 +118,7 @@ impl GuardEdge {
             self.config
                 .effective_route_profile(context.upstream_kind, &path, &target);
         context.route_class = route_profile.route_class;
+        context.authentication_route = route_profile.authentication_route;
         context.normalized_route = route_profile.normalized_route;
         context.route_cost = route_profile.base_cost;
         context.request_body_bytes_seen = 0;
@@ -134,6 +136,21 @@ impl GuardEdge {
             );
             respond_text(session, 400, b"invalid host\n", &context.request_id, None).await?;
             self.emit_telemetry(context, 400, DecisionKind::Deny);
+            return Ok(true);
+        }
+        if rejects_method(&context.method) {
+            respond_text_with_headers(
+                session,
+                405,
+                b"method not allowed\n",
+                &context.request_id,
+                &[(
+                    "allow",
+                    "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS".to_owned(),
+                )],
+            )
+            .await?;
+            self.emit_telemetry(context, 405, DecisionKind::Deny);
             return Ok(true);
         }
         if path == LIVE_PATH {
@@ -269,15 +286,25 @@ impl GuardEdge {
             self.config
                 .management_login_rate_limit(&context.method, &path)
         } else {
-            dynamic_protection_enabled
+            let route_limit = dynamic_protection_enabled
                 .then_some(runtime_decision.requests_per_minute)
                 .flatten()
-                .or_else(|| self.config.rate_limit(context.route_class))
+                .or_else(|| self.config.rate_limit(context.route_class));
+            let auth_limit = context
+                .authentication_route
+                .then(|| self.config.authentication_rate_limit())
+                .flatten();
+            stricter_limit(route_limit, auth_limit)
         };
         if let (Some(client_ip), Some(limit)) = (context.client_ip, rate_limit) {
+            let limiter_class = if context.authentication_route {
+                RouteClass::Authentication
+            } else {
+                context.route_class
+            };
             match self
                 .rate_limiter
-                .check(client_ip, context.route_class, limit, SystemTime::now())
+                .check(client_ip, limiter_class, limit, SystemTime::now())
             {
                 LimitDecision::Allow => {}
                 LimitDecision::Deny => {
@@ -419,7 +446,7 @@ impl ProxyHttp for GuardEdge {
 
     async fn response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         context: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
@@ -427,13 +454,17 @@ impl ProxyHttp for GuardEdge {
             self.origin_ready.store(true, Ordering::Release);
         }
         context.response_status = upstream_response.status.as_u16();
+        if context.upstream_kind == UpstreamKind::Application {
+            self.config.response_security.apply(
+                upstream_response,
+                current_proto(session, context.forwarded_headers_trusted) == "https",
+            )?;
+        }
         add_common_headers(upstream_response, &context.request_id)?;
-        info!(
+        debug!(
             request_id = %context.request_id,
             method = %context.method,
-            path = %context.path,
             status = upstream_response.status.as_u16(),
-            client_ip = ?context.client_ip,
             latency_ms = context.started_at.elapsed().as_millis(),
             "request completed"
         );
@@ -584,6 +615,14 @@ fn unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn stricter_limit(left: Option<u32>, right: Option<u32>) -> Option<u32> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(limit), None) | (None, Some(limit)) => Some(limit),
+        (None, None) => None,
+    }
 }
 
 fn unix_millis() -> u64 {

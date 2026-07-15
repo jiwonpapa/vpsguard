@@ -10,7 +10,7 @@ EDGE-007|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 EDGE-008|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/policy_runtime/tests.rs|-
 EDGE-009|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/policy_runtime/tests.rs|-
 EDGE-010|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
-EDGE-011|CODE_ONLY|crates/guard-edge/src/telemetry.rs|-|-
+EDGE-011|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 EDGE-012|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 EDGE-013|AUTO_PASS|crates/guard-edge/src/runtime.rs|scripts/integration-gate.sh|-
 OBS-001|AUTO_PASS|crates/guard-control/src/telemetry.rs|crates/guard-control/src/telemetry/tests.rs|-
@@ -35,7 +35,7 @@ DET-008|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/
 DET-009|PLANNED|-|-|-
 DET-010|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-011|AUTO_PASS|crates/guard-edge/src/runtime.rs|crates/guard-edge/src/runtime/tests.rs|-
-DET-012|PLANNED|-|-|-
+DET-012|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-
 ACT-001|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 ACT-002|CODE_ONLY|crates/guard-edge/src/response.rs|-|-
 ACT-003|AUTO_PASS|crates/guard-edge/src/challenge.rs|crates/guard-edge/src/challenge.rs|-
@@ -80,13 +80,13 @@ SEC-001|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
 SEC-002|CODE_ONLY|crates/guard-control/src/api.rs|-|-
 SEC-003|AUTO_PASS|crates/guard-control/src/admin_socket.rs|scripts/integration-gate.sh|-
 SEC-004|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
-SEC-005|CODE_ONLY|crates/guard-edge/src/telemetry.rs|-|-
+SEC-005|AUTO_PASS|crates/guard-edge/src/telemetry.rs|scripts/integration-gate.sh|-
 SEC-006|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/api/tests.rs|-
 SEC-007|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
-SEC-008|PLANNED|-|-|-
-SEC-009|PLANNED|-|-|-
-SEC-010|PLANNED|-|-|-
-SEC-011|PLANNED|-|-|-
+SEC-008|AUTO_PASS|crates/guard-edge/src/security.rs|scripts/integration-gate.sh|-
+SEC-009|AUTO_PASS|crates/guard-edge/src/security.rs|scripts/integration-gate.sh|-
+SEC-010|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
+SEC-011|AUTO_PASS|docs/APP_SECURITY.md|scripts/integration-gate.sh|-
 NFR-001|PLANNED|-|-|-
 NFR-002|CODE_ONLY|crates/guard-edge/src/rate_limit.rs|-|-
 NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-

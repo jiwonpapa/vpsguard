@@ -15,6 +15,7 @@ fn observe_mode_never_enables_dynamic_rate_limits() -> Result<(), Box<dyn std::e
     assert_eq!(runtime.rate_limit(RouteClass::General), None);
     assert_eq!(runtime.rate_limit(RouteClass::Strict), None);
     assert_eq!(runtime.rate_limit(RouteClass::Upload), None);
+    assert_eq!(runtime.authentication_rate_limit(), None);
     Ok(())
 }
 
@@ -41,6 +42,7 @@ fn protocol_only_skips_application_profile_and_dynamic_protection()
     assert_eq!(auth.normalized_route, "/api/auth/login");
     assert_eq!(auth.base_cost, 1);
     assert_eq!(auth.source, RouteClassSource::CoreDefault);
+    assert!(!auth.authentication_route);
     Ok(())
 }
 
@@ -57,6 +59,7 @@ fn gnuboard7_profile_strengthens_auth_and_upload_routes() -> Result<(), Box<dyn 
     );
     assert_eq!(auth.route_class, RouteClass::Strict);
     assert_eq!(auth.source, RouteClassSource::ApplicationProfile);
+    assert!(auth.authentication_route);
 
     let upload = runtime.effective_route_profile(
         UpstreamKind::Application,
@@ -65,6 +68,30 @@ fn gnuboard7_profile_strengthens_auth_and_upload_routes() -> Result<(), Box<dyn 
     );
     assert_eq!(upload.route_class, RouteClass::Upload);
     assert_eq!(upload.source, RouteClassSource::ApplicationProfile);
+    Ok(())
+}
+
+#[test]
+fn enforce_mode_applies_auth_limit_only_to_profiled_authentication()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../../configs/vps-guard.smoke.toml")
+        .replace("mode = \"observe\"", "mode = \"enforce\"");
+    let config = GuardConfig::from_toml(&source)?;
+    let runtime = EdgeRuntimeConfig::try_from_guard(&config)?;
+    let auth = runtime.effective_route_profile(
+        UpstreamKind::Application,
+        "/api/auth/login",
+        "/api/auth/login",
+    );
+    let search = runtime.effective_route_profile(
+        UpstreamKind::Application,
+        "/api/search",
+        "/api/search?q=secret",
+    );
+
+    assert_eq!(runtime.authentication_rate_limit(), Some(2));
+    assert!(auth.authentication_route);
+    assert!(!search.authentication_route);
     Ok(())
 }
 

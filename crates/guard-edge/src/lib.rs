@@ -10,6 +10,7 @@ mod proxy;
 pub mod rate_limit;
 mod response;
 mod runtime;
+mod security;
 mod startup;
 pub mod telemetry;
 pub mod tls;

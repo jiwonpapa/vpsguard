@@ -5,6 +5,14 @@ import { expect, test, type Page } from "@playwright/test";
 const status = {
   schema_version: 1,
   inspection: "profiled",
+  security: {
+    app_layer_active: true,
+    baseline_response_headers: true,
+    strip_origin_headers: true,
+    csp_mode: "report_only",
+    hsts_max_age_seconds: 0,
+    auth_rate_limit_rpm: null,
+  },
   mode: "LOCAL_GUARD",
   manual_hold: false,
   policy_version: 7,
@@ -169,6 +177,7 @@ test("renders protection posture and client drill-down", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "현재 방어 상태" })).toBeVisible();
   await expect(page.getByText("로컬 방어", { exact: true })).toBeVisible();
+  await expect(page.getByText(/앱 보안 활성 · CSP report_only/)).toBeVisible();
   await page.getByRole("link", { name: "클라이언트" }).click();
   await expect(page.getByText("203.0.113.8")).toBeVisible();
   await page.getByLabel("Client 검색").fill("198.51");

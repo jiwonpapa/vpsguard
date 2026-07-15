@@ -49,6 +49,14 @@ profile = "gnuboard7"
 inspection = "profiled" # app 분석 생략은 protocol_only
 mode = "observe"
 
+[security]
+baseline_response_headers = true
+strip_origin_headers = true
+csp_mode = "report_only" # 정상 browser 관찰 뒤에만 enforce
+# csp_policy = "default-src 'self'; object-src 'none'" # app 기본값 대체
+hsts_max_age_seconds = 0 # public HTTPS와 bypass 검증 뒤 활성화
+auth_rate_limit_rpm = 10 # 0은 비활성화, 계정별 제한은 origin 책임
+
 [cloudflare]
 enabled = false
 # 기본 생성 경로는 User API Token입니다.

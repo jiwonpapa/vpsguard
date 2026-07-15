@@ -11,7 +11,7 @@ use axum::http::{Request, StatusCode};
 use guard_agent::cgroup::CgroupSnapshot;
 use guard_agent::services::ServiceSemanticSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
-use guard_core::config::{InspectionMode, UiConfig};
+use guard_core::config::{DetectionMode, InspectionMode, SecurityConfig, UiConfig};
 use guard_core::{GuardMode, GuardState};
 use guard_system::{AtomicJsonStore, inspect_tls_management};
 use tokio::sync::{RwLock, broadcast};
@@ -60,6 +60,8 @@ fn app_with_options(
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
         inspection_mode: InspectionMode::Profiled,
+        detection_mode: DetectionMode::Observe,
+        security: SecurityConfig::default(),
         tls_management: RwLock::new(inspect_tls_management(
             &guard_core::config::TlsConfig::default(),
         )),
@@ -266,10 +268,42 @@ async fn status_exposes_the_active_inspection_mode() -> Result<(), Box<dyn std::
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), 4_096).await?;
+    let json = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(json["inspection"], "protocol_only");
+    assert_eq!(json["security"]["app_layer_active"], false);
+    assert_eq!(json["security"]["csp_mode"], "off");
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&body)?["inspection"],
-        "protocol_only"
+        json["security"]["auth_rate_limit_rpm"],
+        serde_json::Value::Null
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_exposes_effective_application_security_posture()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mut state = app(&directory.path().join("state.json"))?;
+    let mutable = Arc::get_mut(&mut state).ok_or("exclusive app state unavailable")?;
+    mutable.detection_mode = DetectionMode::Enforce;
+    mutable.security.csp_mode = guard_core::config::CspMode::Enforce;
+    mutable.security.hsts_max_age_seconds = 86_400;
+    mutable.security.auth_rate_limit_rpm = 6;
+    let issued = state.sessions.issue(false);
+    let response = router(state)
+        .oneshot(
+            Request::get("/api/v1/status")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), 4_096).await?;
+    let json = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(json["security"]["app_layer_active"], true);
+    assert_eq!(json["security"]["csp_mode"], "enforce");
+    assert_eq!(json["security"]["hsts_max_age_seconds"], 86_400);
+    assert_eq!(json["security"]["auth_rate_limit_rpm"], 6);
     Ok(())
 }
 

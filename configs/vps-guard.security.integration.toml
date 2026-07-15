@@ -1,9 +1,9 @@
 schema_version = 1
 
 [edge]
-http_bind = "127.0.0.1:18080"
+http_bind = "127.0.0.1:28083"
 allowed_hosts = ["example.test"]
-trusted_proxy_cidrs = ["127.0.0.1/32"]
+trusted_proxy_cidrs = []
 max_body_bytes = 1024
 upload_max_body_bytes = 4096
 upload_path_prefixes = ["/upload"]
@@ -12,31 +12,31 @@ upstream_connect_timeout_ms = 1000
 upstream_read_timeout_ms = 3000
 upload_upstream_read_timeout_ms = 5000
 max_tracked_clients = 1000
-rate_limit_rpm = 2
-strict_rate_limit_rpm = 1
-upload_rate_limit_rpm = 1
-telemetry_socket = "/tmp/vps-guard-smoke/telemetry.sock"
-policy_path = "/tmp/vps-guard-smoke/policy.json"
+rate_limit_rpm = 100
+strict_rate_limit_rpm = 100
+upload_rate_limit_rpm = 100
+telemetry_socket = "/tmp/vps-guard-smoke/security-telemetry.sock"
+policy_path = "/tmp/vps-guard-smoke/security-policy.json"
 policy_reload_interval_ms = 100
 clearance_ttl_seconds = 600
 
 [origin]
-address = "127.0.0.1:18081"
+address = "127.0.0.1:28081"
 protocol = "http"
 
 [tls]
 certificates = []
 
 [ui]
-bind = "127.0.0.1:17727"
-admin_socket = "/tmp/vps-guard-smoke/admin.sock"
+bind = "127.0.0.1:27729"
+admin_socket = "/tmp/vps-guard-smoke/security-admin.sock"
 login_rate_limit_rpm = 10
 language = "ko"
 
 [detection]
 profile = "gnuboard7"
 inspection = "profiled"
-mode = "observe"
+mode = "enforce"
 
 [security]
 baseline_response_headers = true
@@ -55,11 +55,11 @@ detail_hours = 24
 aggregate_days = 30
 incident_days = 90
 audit_days = 365
-raw_ip_days = 7
+raw_ip_days = 0
 
 [storage]
-database_path = "/tmp/vps-guard-smoke/control.sqlite3"
-events_directory = "/tmp/vps-guard-smoke/events"
+database_path = "/tmp/vps-guard-smoke/security.sqlite3"
+events_directory = "/tmp/vps-guard-smoke/security-events"
 max_database_bytes = 536870912
 min_disk_free_bytes = 67108864
 

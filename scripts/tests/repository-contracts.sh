@@ -65,6 +65,11 @@ grep -Fq '전체 systemd unit·process 목록' specs/product/09-monitoring-web-u
 grep -Fq 'inspection = "profiled"' configs/vps-guard.example.toml
 grep -Fq 'inspection = "protocol_only"' configs/vps-guard.protocol-only.integration.toml
 grep -Fq 'protocol_only_tls=pass' scripts/integration-gate.sh
+grep -Fq 'csp_mode = "report_only"' configs/vps-guard.example.toml
+grep -Fq 'auth_rate_limit_rpm = 10' configs/vps-guard.example.toml
+grep -Fq 'rejects_method(&context.method)' crates/guard-edge/src/proxy.rs
+grep -Fq 'VPSGUARD_INTEGRATION_BODY_SECRET' scripts/integration-gate.sh
+grep -Fq '계정·session·device별 한도' docs/APP_SECURITY.md
 
 # SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
 # 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.

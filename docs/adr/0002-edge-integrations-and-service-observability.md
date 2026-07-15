@@ -2,7 +2,7 @@
 
 - 상태: 승인
 - 날짜: 2026-07-15
-- 요구사항: EDGE-013, OBS-011, TLS-006, NFR-008, ACT-006, SEC-004
+- 요구사항: EDGE-013, OBS-011, TLS-006, NFR-008, ACT-006, SEC-004, DET-012, SEC-008, SEC-009, SEC-010, SEC-011
 
 ## 문맥
 
@@ -75,6 +75,7 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 - Redis RESP/auth protocol은 `redis 0.32.7`을 default feature 없이 `tokio-comp`만 켜 사용합니다. BSD-3-Clause, MSRV 1.80이며 direct crate source에 `unsafe` block이 없습니다. 최신 1.4.0은 이 사용 범위와 무관한 unconditional `xxhash-rust`의 BSL-1.0 license가 repository policy를 위반해 제외했습니다. adapter는 loopback URL과 `PING`, `INFO`만 허용합니다.
 - 두 driver와 공통 `url` 검증을 추가하면서 lockfile production package가 10개 늘었습니다. Control macOS release binary는 7,527,824 bytes에서 9,343,696 bytes로 1,815,872 bytes(24.12%) 증가했고 SHA-256은 `661bf6347c430a39acb47dd65905a73e2682a87d8606f870221900eabf5f842c`입니다. wire protocol·인증을 직접 구현하지 않는 안전성과 교환한 증가이며 9.34MB absolute 크기는 유지하되, 2GB Linux RSS·5초 probe 비용이 256MB 합산 상한을 넘으면 collector 별도 프로세스 또는 feature 분리를 재검토합니다.
 - `protocol_only`는 새 dependency 없이 typed config와 기존 edge 분기만 사용합니다. inspection status를 포함한 Control macOS release binary는 9,343,696 bytes에서 9,343,712 bytes로 16 bytes 증가했고 SHA-256은 `1f364592cbbda38eb7411878c1785aae9d5cc0d1cc3a13bff5b5cd3a167b8826`입니다.
+- 범용 HTTP 보안 코어와 G7 overlay는 새 dependency 없이 기존 typed config, profile과 Pingora header API로 구현했습니다. Control macOS release binary는 9,343,712 bytes에서 9,360,256 bytes로 16,544 bytes(0.18%) 증가했고 SHA-256은 `49a99b8dddce8fe7aa1cf7d6db6caf5b66a0db6a7ca225b80651f662de740e9d`입니다. 실제 G7 CSP 호환성과 shared-IP 인증 한도는 release pilot에 남깁니다.
 - `cargo audit`: 허용되지 않은 알려진 취약점은 없고 Pingora 경로의 unmaintained `daemonize`, `derivative`, `rustls-pemfile` 경고 3건이 예외 문서로 추적됩니다.
 - `rustls-pemfile`은 VPSGuard도 직접 사용하므로 유지보수되는 rustls pki type 경로로 교체 가능한지 우선 확인합니다. Pingora 전이 의존성 제거는 upstream 갱신과 별도입니다.
 - `cargo deny check`: 통과했으며 Pingora 중심의 중복 version은 계속 측정합니다.

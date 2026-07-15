@@ -5,7 +5,7 @@
 use std::net::IpAddr;
 
 use super::{
-    ConfigError, DetectionProfile, GuardConfig, InspectionMode, ServiceCollectorKind,
+    ConfigError, CspMode, DetectionProfile, GuardConfig, InspectionMode, ServiceCollectorKind,
     TlsManagementMode,
 };
 
@@ -57,9 +57,69 @@ fn parses_valid_observe_only_config() {
     assert!(!config.cloudflare.enabled);
     assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
     assert_eq!(config.detection.inspection, InspectionMode::Profiled);
+    assert!(config.security.baseline_response_headers);
+    assert!(config.security.strip_origin_headers);
+    assert_eq!(config.security.csp_mode, CspMode::ReportOnly);
+    assert_eq!(config.security.auth_rate_limit_rpm, 10);
     assert_eq!(config.retention.audit_days, 365);
     assert_eq!(config.storage.max_database_bytes, 512 * 1_024 * 1_024);
     assert_eq!(config.storage.min_disk_free_bytes, 256 * 1_024 * 1_024);
+}
+
+#[test]
+fn validates_typed_application_security_settings() {
+    let valid = format!(
+        "{VALID_CONFIG}\n[security]\ncsp_mode = \"enforce\"\ncsp_policy = \"default-src 'self'; object-src 'none'\"\nhsts_max_age_seconds = 31536000\nauth_rate_limit_rpm = 6\n"
+    );
+    let config = GuardConfig::from_toml(&valid).expect("security config should parse");
+    assert_eq!(config.security.csp_mode, CspMode::Enforce);
+    assert_eq!(config.security.hsts_max_age_seconds, 31_536_000);
+    assert_eq!(config.security.auth_rate_limit_rpm, 6);
+
+    let disabled_with_policy = format!(
+        "{VALID_CONFIG}\n[security]\ncsp_mode = \"off\"\ncsp_policy = \"default-src 'self'\"\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&disabled_with_policy),
+        Err(ConfigError::Invalid {
+            field: "security.csp_policy",
+            ..
+        })
+    ));
+
+    let oversized_policy = "a".repeat(4_097);
+    let oversized = format!(
+        "{VALID_CONFIG}\n[security]\ncsp_mode = \"report_only\"\ncsp_policy = \"{oversized_policy}\"\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&oversized),
+        Err(ConfigError::Invalid {
+            field: "security.csp_policy",
+            ..
+        })
+    ));
+
+    let injected = format!(
+        "{VALID_CONFIG}\n[security]\ncsp_mode = \"enforce\"\ncsp_policy = \"default-src 'self'\\r\\nx-injected: true\"\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&injected),
+        Err(ConfigError::Invalid {
+            field: "security.csp_policy",
+            ..
+        })
+    ));
+
+    let unsafe_limits = format!(
+        "{VALID_CONFIG}\n[security]\nhsts_max_age_seconds = 63072001\nauth_rate_limit_rpm = 601\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&unsafe_limits),
+        Err(ConfigError::Invalid {
+            field: "security.hsts_max_age_seconds",
+            ..
+        })
+    ));
 }
 
 #[test]

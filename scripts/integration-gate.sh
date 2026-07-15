@@ -16,11 +16,13 @@ rm -f /tmp/vps-guard-smoke/telemetry.sock \
   /tmp/vps-guard-smoke/login.json \
   /tmp/vps-guard-smoke/protocol-body.bin \
   /tmp/vps-guard-smoke/protocol-only-telemetry.sock \
+  /tmp/vps-guard-smoke/security-telemetry.sock \
   "${evidence_dir}/state.json"
 
 origin_pid=""
 edge_pid=""
 protocol_edge_pid=""
+security_edge_pid=""
 control_pid=""
 stop_process() {
   local pid="$1"
@@ -37,7 +39,7 @@ stop_process() {
   wait "${pid}" 2>/dev/null || true
 }
 cleanup() {
-  for pid in "${protocol_edge_pid}" "${edge_pid}" "${control_pid}" "${origin_pid}"; do
+  for pid in "${security_edge_pid}" "${protocol_edge_pid}" "${edge_pid}" "${control_pid}" "${origin_pid}"; do
     stop_process "${pid}"
   done
   rm -f /tmp/vps-guard-smoke/login.json \
@@ -45,6 +47,7 @@ cleanup() {
     /tmp/vps-guard-smoke/tls-cert.pem \
     /tmp/vps-guard-smoke/protocol-body.bin \
     /tmp/vps-guard-smoke/protocol-only-telemetry.sock \
+    /tmp/vps-guard-smoke/security-telemetry.sock \
     /tmp/vps-guard-smoke/admin.sock \
     "${evidence_dir}/session.headers" \
     "${evidence_dir}/session.json"
@@ -107,6 +110,13 @@ protocol_tls_request() {
     --resolve example.test:28444:127.0.0.1 "$@" "https://example.test:28444${path}"
 }
 
+security_request() {
+  local path="$1"
+  shift
+  curl --silent --show-error --noproxy '*' \
+    -H 'Host: example.test' "$@" "http://127.0.0.1:28083${path}"
+}
+
 admin_request() {
   local path="$1"
   shift
@@ -118,6 +128,17 @@ proxy_body="$(app_request /hello)"
 [[ "${proxy_body}" == *'"path": "/hello"'* ]]
 [[ "${proxy_body}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
 [[ "${proxy_body}" != *'secret='* ]]
+app_request /security-headers \
+  --dump-header "${evidence_dir}/app-security.headers" \
+  --output /dev/null
+grep -Eiq '^x-content-type-options: nosniff' "${evidence_dir}/app-security.headers"
+grep -Eiq '^referrer-policy: strict-origin-when-cross-origin' "${evidence_dir}/app-security.headers"
+grep -Eiq '^content-security-policy-report-only: .*script-src .self.' "${evidence_dir}/app-security.headers"
+grep -Eiq '^strict-transport-security: max-age=86400' "${evidence_dir}/app-security.headers"
+if grep -Eiq '^(server|x-powered-by|x-aspnet-version):' "${evidence_dir}/app-security.headers"; then
+  echo "origin version header leaked through edge" >&2
+  exit 1
+fi
 ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
 [[ "${ready_status}" == "200" ]]
 
@@ -133,6 +154,18 @@ for _request in 1 2 3 4; do
   [[ "$(protocol_request /api/auth/login --output /dev/null --write-out '%{http_code}')" == "200" ]]
 done
 [[ "$(protocol_tls_request /protocol-only-tls --output /dev/null --write-out '%{http_code}')" == "200" ]]
+protocol_tls_request /protocol-only-tls \
+  --dump-header "${evidence_dir}/protocol-only-security.headers" \
+  --output /dev/null
+grep -Eiq '^x-content-type-options: nosniff' "${evidence_dir}/protocol-only-security.headers"
+grep -Eiq '^strict-transport-security: max-age=86400' "${evidence_dir}/protocol-only-security.headers"
+if grep -Eiq '^content-security-policy(-report-only)?:' "${evidence_dir}/protocol-only-security.headers"; then
+  echo "protocol_only unexpectedly applied app CSP" >&2
+  exit 1
+fi
+for unsafe_method in CONNECT TRACE TRACK; do
+  [[ "$(protocol_request / --request "${unsafe_method}" --output /dev/null --write-out '%{http_code}')" == "405" ]]
+done
 protocol_spoof="$(protocol_request /protocol-only -H 'X-Forwarded-For: 203.0.113.7')"
 [[ "${protocol_spoof}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
 [[ "${protocol_spoof}" != *'203.0.113.7'* ]]
@@ -161,6 +194,46 @@ printf '%s\n' \
   >"${evidence_dir}/inspection-modes.txt"
 stop_process "${protocol_edge_pid}"
 protocol_edge_pid=""
+
+# SEC-010: G7 인증 경로는 search·일반 경로와 분리된 bounded client 한도를 사용합니다.
+VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.security.integration.toml" \
+  target/debug/vps-guard-edge >"${evidence_dir}/security-edge.log" 2>&1 &
+security_edge_pid=$!
+curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+  -H 'Host: example.test' http://127.0.0.1:28083/health/live \
+  >"${evidence_dir}/security-live.txt"
+for _request in 1 2; do
+  [[ "$(security_request /api/auth/login --request POST --data 'credential=redacted' --output /dev/null --write-out '%{http_code}')" == "200" ]]
+done
+[[ "$(security_request /api/auth/login --request POST --data 'credential=redacted' \
+  --dump-header "${evidence_dir}/auth-throttle.headers" \
+  --output /dev/null --write-out '%{http_code}')" == "429" ]]
+grep -Eiq '^retry-after: 60' "${evidence_dir}/auth-throttle.headers"
+[[ "$(security_request /api/search --output /dev/null --write-out '%{http_code}')" == "200" ]]
+[[ "$(security_request /hello --output /dev/null --write-out '%{http_code}')" == "200" ]]
+printf '%s\n' \
+  'dangerous_methods_rejected=pass' \
+  'baseline_headers=pass' \
+  'gnuboard7_csp_report_only=pass' \
+  'protocol_only_app_csp_skipped=pass' \
+  'gnuboard7_auth_limit_isolated=pass' \
+  >"${evidence_dir}/app-security.txt"
+stop_process "${security_edge_pid}"
+security_edge_pid=""
+
+# EDGE-011, SEC-011: query·authorization·body secret은 구조화 log나 evidence에 남기지 않습니다.
+app_request '/hello?token=VPSGUARD_INTEGRATION_QUERY_SECRET' \
+  --header 'Authorization: Bearer VPSGUARD_INTEGRATION_HEADER_SECRET' \
+  --output /dev/null
+app_request /hello --request POST \
+  --data 'password=VPSGUARD_INTEGRATION_BODY_SECRET' \
+  --output /dev/null
+if grep -R -F -e 'VPSGUARD_INTEGRATION_QUERY_SECRET' \
+  -e 'VPSGUARD_INTEGRATION_HEADER_SECRET' \
+  -e 'VPSGUARD_INTEGRATION_BODY_SECRET' "${evidence_dir}"; then
+  echo "request secret leaked into integration evidence" >&2
+  exit 1
+fi
 
 invalid_host_status="$(app_request / --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test')"
 [[ "${invalid_host_status}" == "400" ]]

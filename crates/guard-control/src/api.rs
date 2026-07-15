@@ -15,7 +15,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use guard_agent::os::OsSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
-use guard_core::config::{InspectionMode, TlsManagementMode};
+use guard_core::config::{
+    CspMode, DetectionMode, InspectionMode, SecurityConfig, TlsManagementMode,
+};
 use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
 use guard_system::{
     AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, build_certbot_assisted_plan,
@@ -42,6 +44,8 @@ pub(crate) struct AppState {
     pub(crate) os_snapshot: RwLock<Option<OsSnapshot>>,
     pub(crate) service_health: RwLock<Vec<CollectorHealth>>,
     pub(crate) inspection_mode: InspectionMode,
+    pub(crate) detection_mode: DetectionMode,
+    pub(crate) security: SecurityConfig,
     pub(crate) tls_management: RwLock<TlsManagementSnapshot>,
     pub(crate) tls_plan_mode: TlsManagementMode,
     pub(crate) tls_plan_domains: Vec<String>,
@@ -60,6 +64,7 @@ pub(crate) struct AppState {
 struct StatusResponse {
     schema_version: u32,
     inspection: InspectionMode,
+    security: SecurityStatus,
     mode: GuardMode,
     manual_hold: bool,
     policy_version: u64,
@@ -71,6 +76,16 @@ struct StatusResponse {
     provider: String,
     tls: String,
     tls_management: TlsManagementSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct SecurityStatus {
+    app_layer_active: bool,
+    baseline_response_headers: bool,
+    strip_origin_headers: bool,
+    csp_mode: CspMode,
+    hsts_max_age_seconds: u64,
+    auth_rate_limit_rpm: Option<u32>,
 }
 
 /// resource endpoint 응답입니다.
@@ -311,9 +326,26 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
             .map_or_else(|| "unavailable".to_owned(), ProviderController::status),
     };
     let tls_management = app.tls_management.read().await.clone();
+    let app_layer_active = app.inspection_mode == InspectionMode::Profiled;
+    let auth_rate_limit_rpm = (app_layer_active
+        && app.detection_mode == DetectionMode::Enforce
+        && app.security.auth_rate_limit_rpm > 0)
+        .then_some(app.security.auth_rate_limit_rpm);
     Json(StatusResponse {
         schema_version: 1,
         inspection: app.inspection_mode,
+        security: SecurityStatus {
+            app_layer_active,
+            baseline_response_headers: app.security.baseline_response_headers,
+            strip_origin_headers: app.security.strip_origin_headers,
+            csp_mode: if app_layer_active {
+                app.security.csp_mode
+            } else {
+                CspMode::Off
+            },
+            hsts_max_age_seconds: app.security.hsts_max_age_seconds,
+            auth_rate_limit_rpm,
+        },
         mode: state.current_mode,
         manual_hold: state.manual_hold,
         policy_version: state.policy_version,

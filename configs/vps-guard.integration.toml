@@ -43,6 +43,13 @@ profile = "gnuboard7"
 inspection = "profiled"
 mode = "observe"
 
+[security]
+baseline_response_headers = true
+strip_origin_headers = true
+csp_mode = "report_only"
+hsts_max_age_seconds = 86400
+auth_rate_limit_rpm = 2
+
 [cloudflare]
 enabled = false
 ip_networks = []

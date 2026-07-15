@@ -1,6 +1,6 @@
 //! 애플리케이션 profile 회귀 테스트입니다.
 
-use super::{ApplicationProfile, RouteKind, classify};
+use super::{ApplicationProfile, RouteKind, classify, security_profile};
 
 #[test]
 fn gnuboard5_search_is_expensive_and_query_is_removed() {
@@ -81,4 +81,18 @@ fn static_asset_is_low_cost() {
     let route = classify(ApplicationProfile::Gnuboard5, "/theme/app/main.CSS?v=2");
     assert_eq!(route.kind, RouteKind::Static);
     assert_eq!(route.base_cost, 1);
+}
+
+#[test]
+fn gnuboard7_security_overlay_is_stricter_than_legacy_profiles() {
+    let g7 = security_profile(ApplicationProfile::Gnuboard7);
+    let php = security_profile(ApplicationProfile::Php);
+    let g5 = security_profile(ApplicationProfile::Gnuboard5);
+    let wordpress = security_profile(ApplicationProfile::Wordpress);
+
+    assert!(!g7.csp_policy.contains("script-src 'self' 'unsafe-inline'"));
+    assert!(g7.csp_policy.contains("connect-src 'self' ws: wss:"));
+    assert!(php.csp_policy.contains("script-src 'self' 'unsafe-inline'"));
+    assert_eq!(g5, php);
+    assert_eq!(wordpress, php);
 }

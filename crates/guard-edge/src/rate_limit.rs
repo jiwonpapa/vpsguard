@@ -17,6 +17,8 @@ pub enum RouteClass {
     Strict,
     /// 업로드 요청입니다.
     Upload,
+    /// app profile이 식별한 인증 시도입니다.
+    Authentication,
     /// 애플리케이션 traffic과 counter를 공유하지 않는 관리 로그인입니다.
     ManagementAuth,
 }
@@ -29,6 +31,7 @@ impl RouteClass {
             Self::General => "general",
             Self::Strict => "strict",
             Self::Upload => "upload",
+            Self::Authentication => "authentication",
             Self::ManagementAuth => "management_auth",
         }
     }
