@@ -98,7 +98,7 @@ last_reviewed: 2026-07-15
 | `OPS-005`, `OPS-006` | `tests/e2e/update_uninstall.rs` | rollback·소유 파일 manifest |
 | `OPS-007` | release workflow | arch별 hash·SBOM·smoke artifact |
 | `OPS-008` | `crates/guard-system/tests/command_audit.rs` | masked command log |
-| `OPS-009` | `scripts/tests/deployment-restore-harness.sh` | `g7devops` first-install apply 실패·수동 restore 뒤 설정·service·protected hash 동일성 report |
+| `OPS-009` | `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
 
 ### 3.6 UI, security and NFR
 
