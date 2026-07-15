@@ -31,7 +31,8 @@ stage_restore_harness() {
     exit 1
   }
   scp -q "${repo_root}/scripts/deployment-state.sh" "${target}:${remote_stage}/deployment-state.sh"
-  ssh "${target}" "chmod 0700 '${remote_stage}/deployment-state.sh'"
+  scp -q "${repo_root}/scripts/operation-lock.sh" "${target}:${remote_stage}/operation-lock.sh"
+  ssh "${target}" "chmod 0700 '${remote_stage}/deployment-state.sh' '${remote_stage}/operation-lock.sh'"
 }
 
 case "${mode}" in
@@ -57,7 +58,7 @@ case "${mode}" in
       exit 2
     }
     stage_restore_harness
-    ssh "${target}" "sudo env VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot bash '${remote_stage}/deployment-state.sh' --restore '${snapshot_root}/${snapshot_id}'"
+    ssh "${target}" "sudo bash -c \"source '${remote_stage}/operation-lock.sh'; operation_lock_acquire 'deployment-restore-${snapshot_id}'; VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot bash '${remote_stage}/deployment-state.sh' --restore '${snapshot_root}/${snapshot_id}'; operation_lock_release\""
     ssh "${target}" 'set -eu
 sudo systemctl is-active --quiet nginx.service
 sudo nginx -t >/dev/null

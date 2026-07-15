@@ -100,6 +100,7 @@ last_reviewed: 2026-07-15
 | `OPS-007` | release workflow | arch별 hash·SBOM·smoke artifact |
 | `OPS-008` | `crates/guard-system/tests/command_audit.rs` | masked command log |
 | `OPS-009` | `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
+| `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `scripts/tests/operation-harness.sh` | 2GB Ubuntu VM 20회 apply·restore의 100ms probe timeline과 단계별 duration report |
 
 ### 3.6 UI, security and NFR
 

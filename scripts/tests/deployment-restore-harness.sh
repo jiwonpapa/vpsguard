@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # OPS-002, OPS-005, OPS-009, SEC-001, TLS-005, ACT-010: first-install
-# snapshot은 기존 파일과 부재 상태를 정확히 복구하고 보호 경계를 변경하지 않습니다.
+# snapshot은 VPSGuard 파일과 부재 상태만 복구하고 사용자 Nginx·site 변경은
+# 전체 tree scan하거나 되돌리지 않습니다.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$(mktemp -d)"
 trap 'rm -rf "${fixture}"' EXIT
@@ -19,6 +20,8 @@ root="${fixture}/root"
 snapshots="${fixture}/snapshots"
 mkdir -p \
   "${root}/usr/local/bin" \
+  "${root}/usr/local/lib/vps-guard/releases/release-old/bin" \
+  "${root}/usr/local/lib/vps-guard/releases/release-new/bin" \
   "${root}/etc/vps-guard/secrets" \
   "${root}/etc/nginx/sites-enabled" \
   "${root}/etc/ssh" \
@@ -27,6 +30,8 @@ mkdir -p \
   "${root}/.vpsguard-test/systemd"
 
 printf 'old-binary\n' >"${root}/usr/local/bin/vps-guard"
+ln -s /usr/local/lib/vps-guard/releases/release-old \
+  "${root}/usr/local/lib/vps-guard/current"
 printf 'old-config\n' >"${root}/etc/vps-guard/config.toml"
 printf 'fixture-old-token\n' >"${root}/etc/vps-guard/secrets/cloudflare-token"
 chmod 0600 "${root}/etc/vps-guard/secrets/cloudflare-token"
@@ -51,11 +56,21 @@ if grep -Rqs 'fixture-old-token' "${snapshot}"/manifest.* "${snapshot}"/*.txt 2>
   echo "snapshot metadata exposed a token" >&2
   exit 1
 fi
+[[ "$(wc -l <"${snapshot}/protected.tsv" | tr -d ' ')" -eq 11 ]]
+if grep -Rqs 'site-original\|nginx-original\|certificate-original\|ssh-original' \
+  "${snapshot}/protected.tsv"; then
+  echo "protected metadata scanned user file contents" >&2
+  exit 1
+fi
 
 printf 'new-binary\n' >"${root}/usr/local/bin/vps-guard"
 printf 'new-control\n' >"${root}/usr/local/bin/vps-guard-control"
+ln -sfn /usr/local/lib/vps-guard/releases/release-new \
+  "${root}/usr/local/lib/vps-guard/current"
 printf 'new-config\n' >"${root}/etc/vps-guard/config.toml"
 printf 'fixture-new-token\n' >"${root}/etc/vps-guard/secrets/cloudflare-token"
+printf 'nginx-user-change\n' >"${root}/etc/nginx/sites-enabled/g7.conf"
+printf 'site-user-change\n' >"${root}/home/g7devops/public_html/app/index.php"
 mkdir -p "${root}/etc/systemd/system"
 printf 'new-unit\n' >"${root}/etc/systemd/system/vps-guard-edge.service"
 printf 'disabled\n' >"${root}/.vpsguard-test/systemd/vps-guard-control.service.enabled"
@@ -75,11 +90,14 @@ grep -Fxq 'old-config' "${root}/etc/vps-guard/config.toml"
 grep -Fxq 'fixture-old-token' "${root}/etc/vps-guard/secrets/cloudflare-token"
 [[ "$(file_mode "${root}/etc/vps-guard/secrets/cloudflare-token")" == 600 ]]
 [[ ! -e "${root}/usr/local/bin/vps-guard-control" ]]
+[[ "$(readlink "${root}/usr/local/lib/vps-guard/current")" == "/usr/local/lib/vps-guard/releases/release-old" ]]
 [[ ! -e "${root}/etc/systemd/system/vps-guard-edge.service" ]]
 grep -Fxq 'enabled' "${root}/.vpsguard-test/systemd/vps-guard-control.service.enabled"
 grep -Fxq 'active' "${root}/.vpsguard-test/systemd/vps-guard-control.service.active"
 grep -Fxq 'disabled' "${root}/.vpsguard-test/systemd/vps-guard-edge.service.enabled"
 grep -Fxq 'inactive' "${root}/.vpsguard-test/systemd/vps-guard-edge.service.active"
+grep -Fxq 'nginx-user-change' "${root}/etc/nginx/sites-enabled/g7.conf"
+grep -Fxq 'site-user-change' "${root}/home/g7devops/public_html/app/index.php"
 
 verify_output="$(
   VPS_GUARD_TEST_ROOT="${root}" \
@@ -87,14 +105,6 @@ verify_output="$(
     bash "${repo_root}/scripts/deployment-state.sh" --verify "${snapshot}"
 )"
 grep -Fq 'protected=pass' <<<"${verify_output}"
-
-printf 'nginx-drift\n' >"${root}/etc/nginx/sites-enabled/g7.conf"
-if VPS_GUARD_TEST_ROOT="${root}" VPS_GUARD_SNAPSHOT_ROOT="${snapshots}" \
-  bash "${repo_root}/scripts/deployment-state.sh" --verify "${snapshot}" >/dev/null 2>&1; then
-  echo "protected Nginx drift was accepted" >&2
-  exit 1
-fi
-printf 'nginx-original\n' >"${root}/etc/nginx/sites-enabled/g7.conf"
 
 payload_file="$(find "${snapshot}/payload" -type f | head -1)"
 printf 'corrupt\n' >>"${payload_file}"

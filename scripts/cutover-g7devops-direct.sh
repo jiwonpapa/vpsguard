@@ -15,7 +15,8 @@ if [[ "${mode}" == "--plan" ]]; then
   echo "target: ssh ${target}"
   echo "topology: VPSGuard public 80/443 -> Nginx 127.0.0.1:18081 -> PHP-FPM"
   echo "certificate: existing Certbot lineage via systemd credentials"
-  echo "rollback: exact Nginx/config/drop-in backup"
+  echo "rollback: persistent checksum snapshot of exact ingress/service state"
+  echo "standalone restore: scripts/restore-g7devops-direct.sh"
   exit 0
 fi
 [[ "${mode}" == "--apply" && -d "${bundle}" ]] || { usage >&2; exit 2; }
@@ -23,6 +24,8 @@ fi
 for file in \
   BUILD-INFO.txt \
   SHA256SUMS \
+  scripts/operation-lock.sh \
+  scripts/g7devops-direct-state.sh \
   scripts/cutover-g7devops-direct-remote.sh \
   certbot/vps-guard-deploy-hook \
   g7devops/vps-guard.direct.toml \
@@ -61,6 +64,10 @@ scp -q "${bundle}/g7devops/certbot/deploy-hook" \
   "${target}:${stage}/g7-certbot-deploy-hook"
 scp -q "${bundle}/scripts/cutover-g7devops-direct-remote.sh" \
   "${target}:${stage}/cutover-direct.sh"
+scp -q "${bundle}/scripts/operation-lock.sh" \
+  "${target}:${stage}/operation-lock.sh"
+scp -q "${bundle}/scripts/g7devops-direct-state.sh" \
+  "${target}:${stage}/direct-state.sh"
 # shellcheck disable=SC2029 # validated mktemp path intentionally expands locally
 ssh "${target}" \
   "sudo VPS_GUARD_DIRECT_CONFIRM=g7devops:direct-tls bash '${stage}/cutover-direct.sh' '${stage}'"

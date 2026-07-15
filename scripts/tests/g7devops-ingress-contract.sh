@@ -45,6 +45,8 @@ grep -Fq 'cert_file = "tls-cert.pem"' "${direct_config}"
 grep -Fq 'key_file = "tls-key.pem"' "${direct_config}"
 grep -Fq 'trusted_proxy_cidrs = []' "${direct_config}"
 grep -Fq 'listen 127.0.0.1:18081;' "${origin_only}"
+grep -Fq 'map $http_x_forwarded_proto $vpsguard_fastcgi_https {' "${origin_only}"
+grep -Fq 'fastcgi_param HTTPS $vpsguard_fastcgi_https;' "${origin_only}"
 if grep -Eq 'listen .*(:|[[:space:]])(80|443)([[:space:];]|$)' "${origin_only}"; then
   echo "direct origin candidate must not own public 80/443" >&2
   exit 1
@@ -57,6 +59,10 @@ grep -Fq 'topology=VPSGuard:80/443->Nginx:127.0.0.1:18081->PHP-FPM' \
 direct_plan="$(bash scripts/cutover-g7devops-direct.sh --plan)"
 grep -Fq 'VPSGuard public 80/443 -> Nginx 127.0.0.1:18081' <<<"${direct_plan}"
 grep -Fq 'existing Certbot lineage via systemd credentials' <<<"${direct_plan}"
+grep -Fq 'standalone restore: scripts/restore-g7devops-direct.sh' <<<"${direct_plan}"
+grep -Fq 'scripts/g7devops-direct-state.sh' scripts/cutover-g7devops-direct.sh
+grep -Fq -- '--snapshot direct' scripts/cutover-g7devops-direct-remote.sh
+grep -Fq 'VPS_GUARD_DIRECT_RESTORE_CONFIRM' scripts/restore-g7devops-direct.sh
 grep -Fq -- '--retry-connrefused' packaging/certbot/vps-guard-deploy-hook
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_HOST=www.g7devops.com' \
   configs/certbot/g7devops-deploy-hook

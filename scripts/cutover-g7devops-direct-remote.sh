@@ -14,10 +14,8 @@ generic_certbot_hook="/usr/local/libexec/vps-guard/certbot-deploy-hook"
 site_certbot_hook="/etc/letsencrypt/renewal-hooks/deploy/vps-guard"
 headers=""
 default_deny_was_enabled=false
-default_deny_target=""
-generic_hook_existed=false
-site_hook_existed=false
 current_direct=false
+backup=""
 
 [[ "${EUID}" -eq 0 ]] || { echo "root is required" >&2; exit 2; }
 [[ "${stage}" =~ ^/tmp/vpsguard-direct\.[A-Za-z0-9]+$ ]] || {
@@ -34,12 +32,18 @@ for file in \
   origin-only.conf \
   edge-tls.conf \
   certbot-deploy-hook \
-  g7-certbot-deploy-hook; do
+  g7-certbot-deploy-hook \
+  operation-lock.sh \
+  direct-state.sh; do
   [[ -f "${stage}/${file}" && ! -L "${stage}/${file}" ]] || {
     echo "missing staged file: ${file}" >&2
     exit 2
   }
 done
+# shellcheck source=operation-lock.sh
+source "${stage}/operation-lock.sh"
+operation_lock_acquire "direct-cutover-$$"
+operation_progress preflight started
 
 systemctl is-active --quiet nginx.service
 systemctl is-active --quiet php8.5-fpm.service
@@ -62,27 +66,10 @@ awk -v candidate="${stage}/origin-only.conf" '
 nginx -t -p /etc/nginx/ -c "${test_config}" >/dev/null
 cleanup_test_config
 trap - EXIT
+operation_progress preflight completed
 
-timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-backup="/var/lib/vps-guard/backups/direct-${timestamp}"
-install -d -m 0750 "${backup}"
-install -m 0644 "${active_nginx}" "${backup}/g7.conf"
-install -m 0640 "${active_config}" "${backup}/config.toml"
-if [[ -f "${dropin}" ]]; then
-  install -m 0644 "${dropin}" "${backup}/edge-tls.conf"
-  touch "${backup}/dropin-existed"
-fi
 if [[ -L "${default_deny}" ]]; then
   default_deny_was_enabled=true
-  default_deny_target="$(readlink "${default_deny}")"
-fi
-if [[ -f "${generic_certbot_hook}" ]]; then
-  generic_hook_existed=true
-  install -m 0755 "${generic_certbot_hook}" "${backup}/certbot-deploy-hook"
-fi
-if [[ -f "${site_certbot_hook}" ]]; then
-  site_hook_existed=true
-  install -m 0755 "${site_certbot_hook}" "${backup}/g7-certbot-deploy-hook"
 fi
 certificate_fingerprint="$(openssl x509 \
   -in /etc/letsencrypt/live/g7devops.com/fullchain.pem \
@@ -90,6 +77,15 @@ certificate_fingerprint="$(openssl x509 \
 if ss -H -ltnp | grep -Eq '(0\.0\.0\.0|\*):443.*vps-guard-edge'; then
   current_direct=true
 fi
+snapshot_output="$(
+  VPS_GUARD_DIRECT_SNAPSHOT_ROOT=/var/backups/vps-guard/ingress \
+    bash "${stage}/direct-state.sh" --snapshot direct
+)"
+backup="${snapshot_output#snapshot=}"
+[[ "${backup}" =~ ^/var/backups/vps-guard/ingress/direct-[0-9]{8}T[0-9]{6}Z-[0-9]+-direct$ ]] || {
+  echo "persistent direct snapshot was not created" >&2
+  exit 1
+}
 
 stop_edge_now() {
   systemctl stop --no-block vps-guard-edge.service || true
@@ -109,36 +105,14 @@ rollback() {
   trap - EXIT
   [[ -z "${headers}" ]] || rm -f "${headers}"
   echo "direct TLS cutover failed; restoring prior topology" >&2
-  stop_edge_now || true
-  install -m 0640 -o root -g vps-guard "${backup}/config.toml" "${active_config}"
-  if [[ -f "${backup}/dropin-existed" ]]; then
-    install -d -m 0755 "${dropin_dir}"
-    install -m 0644 -o root -g root "${backup}/edge-tls.conf" "${dropin}"
-  else
-    rm -f "${dropin}"
+  operation_progress rollback started
+  if ! VPS_GUARD_DIRECT_SNAPSHOT_ROOT=/var/backups/vps-guard/ingress \
+    VPS_GUARD_DIRECT_RESTORE_CONFIRM=restore-direct-snapshot \
+      bash "${stage}/direct-state.sh" --restore "${backup}"; then
+    echo "automatic direct restore failed: ${backup}" >&2
   fi
-  install -m 0644 -o root -g root "${backup}/g7.conf" "${active_nginx}"
-  if [[ "${default_deny_was_enabled}" == true ]]; then
-    ln -sfn "${default_deny_target}" "${default_deny}"
-  fi
-  if [[ "${generic_hook_existed}" == true ]]; then
-    install -d -m 0755 "$(dirname "${generic_certbot_hook}")"
-    install -m 0755 -o root -g root \
-      "${backup}/certbot-deploy-hook" "${generic_certbot_hook}"
-  else
-    rm -f "${generic_certbot_hook}"
-  fi
-  if [[ "${site_hook_existed}" == true ]]; then
-    install -d -m 0755 "$(dirname "${site_certbot_hook}")"
-    install -m 0755 -o root -g root \
-      "${backup}/g7-certbot-deploy-hook" "${site_certbot_hook}"
-  else
-    rm -f "${site_certbot_hook}"
-  fi
-  systemctl daemon-reload
-  nginx -t || true
-  systemctl restart nginx.service || true
-  systemctl start vps-guard-edge.service || true
+  operation_progress rollback completed
+  operation_lock_release
   echo "rollback backup=${backup}" >&2
   exit "${rc}"
 }
@@ -206,6 +180,8 @@ install -m 0755 -o root -g root \
 install -m 0755 -o root -g root \
   "${stage}/g7-certbot-deploy-hook" "${site_certbot_hook}"
 
+operation_progress verify completed
+operation_lock_release
 trap - EXIT
 echo "g7devops direct TLS cutover: PASS"
 echo "topology=VPSGuard:80/443->Nginx:127.0.0.1:18081->PHP-FPM"

@@ -77,6 +77,7 @@ OPS-006|CODE_ONLY|scripts/uninstall.sh|-|-
 OPS-007|CODE_ONLY|.github/workflows/release.yml|-|-
 OPS-008|AUTO_PASS|crates/guard-system/src/command.rs|crates/guard-system/src/command.rs|-
 OPS-009|VPS_PASS|scripts/deployment-state.sh|scripts/tests/deployment-restore-harness.sh|specs/product/evidence/g7devops-shadow-roundtrip-20260715.md
+OPS-010|AUTO_PASS|crates/guard-system/src/operation.rs|scripts/tests/operation-harness.sh|-
 SEC-001|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
 SEC-002|CODE_ONLY|crates/guard-control/src/api.rs|-|-
 SEC-003|AUTO_PASS|crates/guard-control/src/admin_socket.rs|scripts/integration-gate.sh|-

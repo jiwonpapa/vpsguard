@@ -33,6 +33,9 @@ install -m 0644 packaging/ownership-manifest.txt "${bundle}/"
 install -m 0755 packaging/certbot/vps-guard-deploy-hook "${bundle}/certbot/"
 install -m 0755 \
   scripts/deployment-state.sh \
+  scripts/operation-lock.sh \
+  scripts/g7devops-direct-state.sh \
+  scripts/restore-g7devops-direct.sh \
   scripts/cutover-g7devops-direct.sh \
   scripts/cutover-g7devops-remote.sh \
   scripts/cutover-g7devops-direct-remote.sh \

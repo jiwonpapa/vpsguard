@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # OPS-002, OPS-005, OPS-009, SEC-001, TLS-005, ACT-010: VPSGuard가 소유하는
-# 배포 상태만 snapshot·복구하고 기존 ingress·인증서·사이트 경계는 hash로 검증합니다.
+# 배포 상태만 snapshot·복구하고 기존 ingress·인증서·사이트 directory 경계는
+# 전체 tree scan 없이 identity와 service/listener read-back으로 검증합니다.
 mode="${1:---plan}"
 snapshot_arg="${2:-}"
 test_root="${VPS_GUARD_TEST_ROOT:-}"
@@ -12,6 +13,7 @@ owned_files=(
   /usr/local/bin/vps-guard
   /usr/local/bin/vps-guard-control
   /usr/local/bin/vps-guard-edge
+  /usr/local/lib/vps-guard/current
   /usr/local/libexec/vps-guard/deployment-state
   /etc/systemd/system/vps-guard-control.service
   /etc/systemd/system/vps-guard-edge.service
@@ -26,6 +28,8 @@ owned_files=(
 )
 
 owned_directories=(
+  /usr/local/lib/vps-guard/releases
+  /usr/local/lib/vps-guard
   /usr/local/libexec/vps-guard
   /etc/systemd/system/vps-guard-control.service.d
   /etc/systemd/system/vps-guard-edge.service.d
@@ -210,42 +214,37 @@ restore_account_absence() {
   fi
 }
 
-tree_hash() {
+path_identity() {
   local logical="$1"
-  local source manifest file relative mode_value
+  local source
   source="$(root_path "${logical}")"
-  if [[ ! -e "${source}" ]]; then
-    printf 'absent:%s\n' "${logical}" | hash_stream
+  if [[ -L "${source}" ]]; then
+    printf 'symlink:%s' "$(readlink "${source}")"
     return
   fi
-  manifest="$(mktemp)"
-  while IFS= read -r file; do
-    [[ -n "${file}" ]] || continue
-    relative="${file#"${source}"/}"
-    case "${logical}:${relative}" in
-      /home/g7devops/public_html:storage/*|/home/g7devops/public_html:bootstrap/cache/*|/home/g7devops/public_html:.git/*)
-        continue
-        ;;
-    esac
-    if [[ -L "${file}" ]]; then
-      printf 'link|%s|%s\n' "${relative}" "$(readlink "${file}")" >>"${manifest}"
-    elif [[ -f "${file}" ]]; then
-      mode_value="$(file_mode "${file}")"
-      printf 'file|%s|%s|%s\n' "${relative}" "${mode_value}" "$(hash_file "${file}")" >>"${manifest}"
+  if [[ -d "${source}" ]]; then
+    if stat -c 'directory:%d:%i:%a:%u:%g' "${source}" >/dev/null 2>&1; then
+      stat -c 'directory:%d:%i:%a:%u:%g' "${source}"
+    else
+      stat -f 'directory:%d:%i:%Lp:%u:%g' "${source}"
     fi
-  done < <(find "${source}" \( -type f -o -type l \) -print | LC_ALL=C sort)
-  hash_file "${manifest}"
-  rm -f "${manifest}"
+    return
+  fi
+  if [[ -f "${source}" ]]; then
+    printf 'file:%s:%s' "$(file_mode "${source}")" "$(hash_file "${source}")"
+    return
+  fi
+  printf 'absent:%s' "${logical}"
 }
 
 write_protected_state() {
   local output="$1"
   local unit
   {
-    printf 'ssh|/etc/ssh|%s\n' "$(tree_hash /etc/ssh)"
-    printf 'nginx|/etc/nginx|%s\n' "$(tree_hash /etc/nginx)"
-    printf 'certificates|/etc/letsencrypt|%s\n' "$(tree_hash /etc/letsencrypt)"
-    printf 'site|/home/g7devops/public_html|%s\n' "$(tree_hash /home/g7devops/public_html)"
+    printf 'ssh-boundary|/etc/ssh|%s\n' "$(path_identity /etc/ssh)"
+    printf 'nginx-boundary|/etc/nginx|%s\n' "$(path_identity /etc/nginx)"
+    printf 'certificate-boundary|/etc/letsencrypt|%s\n' "$(path_identity /etc/letsencrypt)"
+    printf 'site-boundary|/home/g7devops/public_html|%s\n' "$(path_identity /home/g7devops/public_html)"
     for unit in "${protected_services[@]}"; do
       printf 'service:%s|enabled=%s|activity=%s\n' \
         "${unit}" \
@@ -313,7 +312,8 @@ verify_protected() {
   current="$(mktemp)"
   write_protected_state "${current}"
   if ! cmp -s "${snapshot}/protected.tsv" "${current}"; then
-    echo "protected SSH, Nginx, certificate, site or service state drifted" >&2
+    echo "protected directory identity or service state drifted" >&2
+    diff -u "${snapshot}/protected.tsv" "${current}" >&2 || true
     rm -f "${current}"
     exit 1
   fi
@@ -330,7 +330,7 @@ verify_protected() {
 }
 
 create_snapshot() {
-  local timestamp snapshot logical source destination unit directory state checksums
+  local timestamp snapshot logical source destination unit directory state checksums target
   require_runtime_authority
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   snapshot="${snapshot_root}/deploy-${timestamp}-$$"
@@ -347,13 +347,17 @@ create_snapshot() {
     fi
   } >"${snapshot}/manifest.tsv"
   : >"${snapshot}/absent-paths.txt"
+  : >"${snapshot}/symlink-state.tsv"
   for logical in "${owned_files[@]}"; do
     source="$(root_path "${logical}")"
     if [[ -L "${source}" ]]; then
-      echo "owned path must not be a symlink: ${logical}" >&2
-      exit 1
-    fi
-    if [[ -f "${source}" ]]; then
+      target="$(readlink "${source}")"
+      [[ "${target}" != *'|'* && "${target}" != *$'\n'* && ${#target} -le 4096 ]] || {
+        echo "owned symlink target is not representable: ${logical}" >&2
+        exit 1
+      }
+      printf '%s|%s\n' "${logical}" "${target}" >>"${snapshot}/symlink-state.tsv"
+    elif [[ -f "${source}" ]]; then
       destination="${snapshot}/payload/${logical#/}"
       mkdir -p "$(dirname "${destination}")"
       cp -p "${source}" "${destination}"
@@ -403,7 +407,7 @@ create_snapshot() {
 
 restore_snapshot() {
   local snapshot="$1"
-  local logical source destination unit enabled active account_state directory state
+  local logical source destination unit enabled active account_state directory state target
   require_runtime_authority
   validate_snapshot_path "${snapshot}"
   [[ "${VPS_GUARD_RESTORE_CONFIRM:-}" == "restore-deployment-snapshot" ]] || {
@@ -426,6 +430,18 @@ restore_snapshot() {
     [[ -n "${logical}" ]] || continue
     rm -f "$(root_path "${logical}")"
   done <"${snapshot}/absent-paths.txt"
+
+  while IFS='|' read -r logical target; do
+    [[ -n "${logical}" ]] || continue
+    destination="$(root_path "${logical}")"
+    if [[ -L "$(dirname "${destination}")" ]]; then
+      echo "refusing to restore a symlink through a symlink parent: ${logical}" >&2
+      exit 1
+    fi
+    mkdir -p "$(dirname "${destination}")"
+    rm -f "${destination}"
+    ln -s "${target}" "${destination}"
+  done <"${snapshot}/symlink-state.tsv"
 
   while IFS= read -r source; do
     [[ -n "${source}" ]] || continue

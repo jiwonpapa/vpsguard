@@ -34,6 +34,7 @@ for required in \
   BUILD-INFO.txt \
   SHA256SUMS \
   ingress-transaction.sh \
+  operation-lock.sh \
   vps-guard.shadow.toml \
   vps-guard.ingress.toml \
   g7devops-edge.conf \
@@ -43,6 +44,8 @@ for required in \
     exit 2
   }
 done
+# shellcheck source=operation-lock.sh
+source "${stage}/operation-lock.sh"
 
 release_commit="$(tail -1 "${stage}/BUILD-INFO.txt")"
 [[ "${release_commit}" == "${expected_commit}" ]] || {
@@ -119,6 +122,8 @@ fi
   echo "VPS_GUARD_CUTOVER_CONFIRM=g7devops:${direction#--}:${expected_commit} is required" >&2
   exit 2
 }
+operation_lock_acquire "ingress-${direction#--}-$$"
+operation_progress preflight completed
 
 snapshot_output="$(/usr/local/libexec/vps-guard/deployment-state --snapshot)"
 snapshot="${snapshot_output#snapshot=}"
@@ -146,6 +151,7 @@ rollback() {
   [[ -z "${headers}" ]] || rm -f "${headers}"
   [[ -z "${nginx_test_config}" ]] || rm -f "${nginx_test_config}"
   echo "g7devops cutover failed; restoring active Nginx and VPSGuard config" >&2
+  operation_progress rollback started
   install -m 0644 -o root -g root "${backup}/g7.conf" "${active_nginx}"
   install -m 0640 -o root -g vps-guard "${backup}/config.toml" "${active_config}"
   /usr/local/bin/vps-guard check-config --config "${active_config}" || true
@@ -156,6 +162,8 @@ rollback() {
   else
     systemctl stop vps-guard-edge.service || true
   fi
+  operation_progress rollback completed
+  operation_lock_release
   echo "rollback snapshot=$(basename "${snapshot}")" >&2
   exit "${rc}"
 }
@@ -212,6 +220,8 @@ rm -f "${headers}"
 headers=""
 nginx -t >/dev/null
 systemctl is-active --quiet nginx.service
+operation_progress verify completed
+operation_lock_release
 trap - EXIT
 echo "g7devops ingress transaction: PASS"
 echo "direction=${direction#--}"

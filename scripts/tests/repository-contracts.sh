@@ -11,6 +11,9 @@ bash scripts/requirements-gate.sh
 bash scripts/docs-gate.sh
 bash scripts/tests/g7devops-ingress-contract.sh
 bash scripts/tests/ingress-transaction-harness.sh
+bash scripts/tests/direct-state-harness.sh
+bash scripts/tests/operation-harness.sh
+bash scripts/tests/operation-lock-harness.sh
 
 release_output="$(mktemp)"
 trap 'rm -f "${release_output}"' EXIT
@@ -52,9 +55,19 @@ grep -Fq 'scripts/cutover-g7devops-direct-remote.sh' scripts/build-release.sh
 grep -Fq 'configs/vps-guard.g7devops.direct.toml' scripts/build-release.sh
 grep -Fq 'configs/nginx/g7devops-origin-only.conf' scripts/build-release.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
+grep -Fq '/usr/local/lib/vps-guard/current' packaging/ownership-manifest.txt
+grep -Fq '/usr/local/lib/vps-guard/releases' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
 grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/update-release.sh
+stop_line="$(grep -nF 'systemctl stop vps-guard-edge.service vps-guard-control.service' scripts/update-release.sh | cut -d: -f1)"
+stage_line="$(grep -nF 'mv "${stage_dir}" "${release_dir}"' scripts/update-release.sh | cut -d: -f1)"
+switch_line="$(grep -nF 'atomic_symlink "${release_dir}" /usr/local/lib/vps-guard/current' scripts/update-release.sh | cut -d: -f1)"
+control_start_line="$(grep -nF 'systemctl start vps-guard-control.service' scripts/update-release.sh | cut -d: -f1)"
+edge_start_line="$(grep -nF 'systemctl start vps-guard-edge.service' scripts/update-release.sh | cut -d: -f1)"
+[[ -n "${stage_line}" && -n "${stop_line}" && -n "${switch_line}" && -n "${control_start_line}" && -n "${edge_start_line}" ]]
+(( stage_line < stop_line && stop_line < switch_line && switch_line < control_start_line && control_start_line < edge_start_line ))
+grep -Fq 'public edge update is blocked until Nginx bypass owns 443' scripts/update-release.sh
 grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/deploy-g7devops.sh
 grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
 

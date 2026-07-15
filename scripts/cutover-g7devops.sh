@@ -47,6 +47,7 @@ for required in \
   "${bundle}/BUILD-INFO.txt" \
   "${bundle}/SHA256SUMS" \
   "${bundle}/scripts/ingress-transaction.sh" \
+  "${bundle}/scripts/operation-lock.sh" \
   "${bundle}/scripts/cutover-g7devops-remote.sh" \
   "${bundle}/g7devops/vps-guard.shadow.toml" \
   "${bundle}/g7devops/vps-guard.ingress.toml" \
@@ -80,6 +81,7 @@ scp -q \
   "${bundle}/BUILD-INFO.txt" \
   "${bundle}/SHA256SUMS" \
   "${bundle}/scripts/ingress-transaction.sh" \
+  "${bundle}/scripts/operation-lock.sh" \
   "${bundle}/scripts/cutover-g7devops-remote.sh" \
   "${target}:${remote_stage}/"
 scp -q "${bundle}/g7devops/vps-guard.shadow.toml" \

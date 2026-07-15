@@ -51,6 +51,7 @@ verify_local_bundle() {
   done
   for required in \
     "${bundle}/scripts/deployment-state.sh" \
+    "${bundle}/scripts/operation-lock.sh" \
     "${bundle}/scripts/update-release.sh" \
     "${bundle}/systemd/vps-guard-control.service" \
     "${bundle}/systemd/vps-guard-edge.service" \

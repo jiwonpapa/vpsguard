@@ -7,12 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use guard_core::{
     ADMIN_PROTOCOL_VERSION, AdminCommand, AdminRequest, AdminResponse, GuardConfig, GuardState,
     PolicySnapshot,
 };
-use guard_system::{AtomicJsonStore, MutationPlan, PlannedChange};
+use guard_system::{
+    AtomicJsonStore, IngressTopology, MutationPlan, OperationKind, OperationPlan, OperationState,
+    PlannedChange, SnapshotResource,
+};
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -58,6 +61,88 @@ enum Command {
         #[arg(long, default_value_t = 300)]
         ttl_seconds: u64,
     },
+    /// 짧은 순단 apply·restore transaction plan과 상태를 관리합니다.
+    Ops {
+        /// 운영 transaction 하위 명령입니다.
+        #[command(subcommand)]
+        command: OpsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum OpsCommand {
+    /// 변경하지 않고 bounded snapshot 범위와 시간 예산 plan을 생성합니다.
+    Plan {
+        /// 재개와 중복 실행 보고에 사용할 식별자입니다.
+        #[arg(long)]
+        operation_id: String,
+        /// 수행할 작업 종류입니다.
+        #[arg(long, value_enum)]
+        kind: OpsKindArg,
+        /// release commit 또는 snapshot 식별자입니다.
+        #[arg(long)]
+        release_id: String,
+        /// 현재 public ingress topology입니다.
+        #[arg(long, value_enum)]
+        source: TopologyArg,
+        /// 완료 후 public ingress topology입니다.
+        #[arg(long, value_enum)]
+        target: TopologyArg,
+        /// 정확히 snapshot할 Nginx ingress 파일입니다.
+        #[arg(long, required = true)]
+        ingress_file: Vec<PathBuf>,
+        /// fingerprint만 보존할 공개 인증서 파일입니다.
+        #[arg(long)]
+        certificate: PathBuf,
+        /// plan을 원자 저장할 선택 경로입니다.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// 원자 저장된 operation ledger를 출력합니다.
+    Status {
+        /// transaction state JSON 경로입니다.
+        #[arg(
+            long,
+            default_value = "/var/backups/vps-guard/transactions/active/state.json"
+        )]
+        state: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OpsKindArg {
+    Apply,
+    Restore,
+    Update,
+    BypassEnable,
+    BypassDisable,
+}
+
+impl From<OpsKindArg> for OperationKind {
+    fn from(value: OpsKindArg) -> Self {
+        match value {
+            OpsKindArg::Apply => Self::Apply,
+            OpsKindArg::Restore => Self::Restore,
+            OpsKindArg::Update => Self::Update,
+            OpsKindArg::BypassEnable => Self::BypassEnable,
+            OpsKindArg::BypassDisable => Self::BypassDisable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TopologyArg {
+    NginxPublic,
+    VpsGuardPublic,
+}
+
+impl From<TopologyArg> for IngressTopology {
+    fn from(value: TopologyArg) -> Self {
+        match value {
+            TopologyArg::NginxPublic => Self::NginxPublic,
+            TopologyArg::VpsGuardPublic => Self::VpsGuardPublic,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -77,6 +162,8 @@ enum CliError {
     Policy(#[from] guard_core::PolicyError),
     #[error(transparent)]
     Plan(#[from] guard_system::PlanError),
+    #[error(transparent)]
+    OperationContract(#[from] guard_system::OperationContractError),
     #[error(transparent)]
     State(#[from] guard_core::StateError),
     #[error("관리 socket 요청 실패: operation={operation}, path={path}, cause={source}")]
@@ -155,7 +242,86 @@ fn execute(cli: Cli) -> Result<String, CliError> {
             socket,
             ttl_seconds,
         } => issue_login_code(&socket, ttl_seconds),
+        Command::Ops { command } => execute_ops(command),
     }
+}
+
+fn execute_ops(command: OpsCommand) -> Result<String, CliError> {
+    match command {
+        OpsCommand::Plan {
+            operation_id,
+            kind,
+            release_id,
+            source,
+            target,
+            ingress_file,
+            certificate,
+            output,
+        } => {
+            let mut resources = default_operation_resources();
+            resources.extend(
+                ingress_file
+                    .into_iter()
+                    .map(|path| SnapshotResource::IngressFile { path }),
+            );
+            resources.push(SnapshotResource::CertificateFingerprint { path: certificate });
+            resources.push(SnapshotResource::ListenerInventory);
+            let plan = OperationPlan::new(
+                operation_id,
+                kind.into(),
+                release_id,
+                source.into(),
+                target.into(),
+                resources,
+            );
+            plan.validate()?;
+            let plan_sha256 = plan.sha256()?;
+            if let Some(path) = output {
+                AtomicJsonStore::<OperationPlan>::new(&path).write(&plan)?;
+                Ok(format!(
+                    "operation plan saved: path={} sha256={plan_sha256}",
+                    path.display()
+                ))
+            } else {
+                Ok(format!(
+                    "plan_sha256={plan_sha256}\n{}",
+                    serde_json::to_string_pretty(&plan)?
+                ))
+            }
+        }
+        OpsCommand::Status { state } => {
+            let state = AtomicJsonStore::<OperationState>::new(state).read()?;
+            Ok(serde_json::to_string_pretty(&state)?)
+        }
+    }
+}
+
+fn default_operation_resources() -> Vec<SnapshotResource> {
+    [
+        "/usr/local/bin/vps-guard",
+        "/usr/local/bin/vps-guard-control",
+        "/usr/local/bin/vps-guard-edge",
+        "/usr/local/lib/vps-guard/current",
+        "/etc/vps-guard/config.toml",
+        "/etc/systemd/system/vps-guard-control.service",
+        "/etc/systemd/system/vps-guard-edge.service",
+    ]
+    .into_iter()
+    .map(|path| SnapshotResource::OwnedPath {
+        path: PathBuf::from(path),
+    })
+    .chain(
+        [
+            "nginx.service",
+            "vps-guard-control.service",
+            "vps-guard-edge.service",
+        ]
+        .into_iter()
+        .map(|unit| SnapshotResource::Service {
+            unit: unit.to_owned(),
+        }),
+    )
+    .collect()
 }
 
 fn issue_login_code(socket: &Path, ttl_seconds: u64) -> Result<String, CliError> {
