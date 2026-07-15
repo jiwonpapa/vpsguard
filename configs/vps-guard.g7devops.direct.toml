@@ -1,0 +1,77 @@
+schema_version = 1
+
+[edge]
+http_bind = "0.0.0.0:80"
+https_bind = "0.0.0.0:443"
+allowed_hosts = ["g7devops.com", "www.g7devops.com"]
+canonical_host = "www.g7devops.com"
+trusted_proxy_cidrs = []
+max_body_bytes = 92274688
+upload_max_body_bytes = 92274688
+upload_path_prefixes = ["/api", "/upload"]
+strict_path_prefixes = ["/api/auth", "/api/admin", "/api/search"]
+upstream_connect_timeout_ms = 3000
+upstream_read_timeout_ms = 30000
+upload_upstream_read_timeout_ms = 60000
+max_tracked_clients = 10000
+strict_rate_limit_rpm = 60
+upload_rate_limit_rpm = 30
+telemetry_socket = "/run/vps-guard/telemetry.sock"
+policy_path = "/var/lib/vps-guard/policy.json"
+policy_reload_interval_ms = 1000
+clearance_ttl_seconds = 600
+
+[origin]
+address = "127.0.0.1:18081"
+protocol = "http"
+
+[tls]
+management = "external_managed"
+
+[[tls.certificates]]
+domains = ["g7devops.com", "www.g7devops.com"]
+cert_file = "tls-cert.pem"
+key_file = "tls-key.pem"
+certbot_lineage = "g7devops.com"
+
+[ui]
+bind = "127.0.0.1:7727"
+admin_socket = "/run/vps-guard/admin.sock"
+login_rate_limit_rpm = 10
+language = "ko"
+
+[detection]
+profile = "gnuboard7"
+inspection = "profiled"
+mode = "observe"
+
+[security]
+baseline_response_headers = true
+strip_origin_headers = true
+csp_mode = "report_only"
+hsts_max_age_seconds = 0
+auth_rate_limit_rpm = 10
+
+[cloudflare]
+enabled = false
+zone_id = ""
+records = []
+token_file = "cloudflare-token"
+ip_networks = []
+
+[retention]
+live_seconds = 900
+detail_hours = 24
+aggregate_days = 30
+incident_days = 90
+audit_days = 365
+raw_ip_days = 7
+
+[storage]
+database_path = "/var/lib/vps-guard/control.sqlite3"
+events_directory = "/var/lib/vps-guard/events"
+max_database_bytes = 536870912
+min_disk_free_bytes = 268435456
+
+[collectors]
+timeout_ms = 500

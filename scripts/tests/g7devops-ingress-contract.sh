@@ -10,6 +10,8 @@ cd "${repo_root}"
 edge="configs/nginx/g7devops-edge.conf"
 bypass="configs/nginx/g7devops-bypass.conf"
 config="configs/vps-guard.g7devops.ingress.toml"
+direct_config="configs/vps-guard.g7devops.direct.toml"
+origin_only="configs/nginx/g7devops-origin-only.conf"
 
 grep -Fq 'proxy_pass http://127.0.0.1:18080;' "${edge}"
 grep -Fq 'listen 127.0.0.1:18081;' "${edge}"
@@ -36,5 +38,27 @@ grep -Fq "x-vps-guard" scripts/cutover-g7devops-remote.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state --snapshot' scripts/cutover-g7devops-remote.sh
 grep -Fq 'VPS_GUARD_INGRESS_CONFIRM' scripts/cutover-g7devops-remote.sh
 grep -Fq -- "-H 'Host: www.g7devops.com'" scripts/cutover-g7devops-remote.sh
+
+grep -Fq 'http_bind = "0.0.0.0:80"' "${direct_config}"
+grep -Fq 'https_bind = "0.0.0.0:443"' "${direct_config}"
+grep -Fq 'cert_file = "tls-cert.pem"' "${direct_config}"
+grep -Fq 'key_file = "tls-key.pem"' "${direct_config}"
+grep -Fq 'trusted_proxy_cidrs = []' "${direct_config}"
+grep -Fq 'listen 127.0.0.1:18081;' "${origin_only}"
+if grep -Eq 'listen .*(:|[[:space:]])(80|443)([[:space:];]|$)' "${origin_only}"; then
+  echo "direct origin candidate must not own public 80/443" >&2
+  exit 1
+fi
+grep -Fq 'LoadCredential=tls-key.pem:/etc/letsencrypt/live/g7devops.com/privkey.pem' \
+  configs/systemd/g7devops-edge-tls.conf
+grep -Fq 'KillSignal=SIGINT' configs/systemd/g7devops-edge-tls.conf
+grep -Fq 'topology=VPSGuard:80/443->Nginx:127.0.0.1:18081->PHP-FPM' \
+  scripts/cutover-g7devops-direct-remote.sh
+direct_plan="$(bash scripts/cutover-g7devops-direct.sh --plan)"
+grep -Fq 'VPSGuard public 80/443 -> Nginx 127.0.0.1:18081' <<<"${direct_plan}"
+grep -Fq 'existing Certbot lineage via systemd credentials' <<<"${direct_plan}"
+grep -Fq -- '--retry-connrefused' packaging/certbot/vps-guard-deploy-hook
+grep -Fq 'VPS_GUARD_EDGE_HEALTH_HOST=www.g7devops.com' \
+  configs/certbot/g7devops-deploy-hook
 
 echo "g7devops ingress contract: PASS"

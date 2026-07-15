@@ -1,10 +1,10 @@
 # requirement_id|status|implementation|automated_evidence|operational_evidence
 # status: PLANNED < CODE_ONLY < AUTO_PASS < VPS_PASS
-EDGE-001|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
-EDGE-002|PLANNED|-|-|-
+EDGE-001|VPS_PASS|crates/guard-edge/src/startup.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
+EDGE-002|VPS_PASS|crates/guard-edge/src/tls.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
 EDGE-003|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 EDGE-004|AUTO_PASS|crates/guard-edge/src/policy.rs|crates/guard-edge/src/policy/tests.rs|-
-EDGE-005|PLANNED|-|-|-
+EDGE-005|VPS_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
 EDGE-006|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 EDGE-007|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 EDGE-008|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/policy_runtime/tests.rs|-
@@ -50,9 +50,9 @@ ACT-011|CODE_ONLY|crates/guard-control/src/runtime.rs|-|-
 ACT-012|AUTO_PASS|crates/guard-control/src/api.rs|crates/guard-control/src/api/tests.rs|-
 TLS-001|AUTO_PASS|crates/guard-edge/src/tls.rs|crates/guard-edge/src/tls/tests.rs|-
 TLS-002|CODE_ONLY|packaging/certbot/vps-guard-deploy-hook|-|-
-TLS-003|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
+TLS-003|VPS_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
 TLS-004|PLANNED|-|-|-
-TLS-005|CODE_ONLY|scripts/update-release.sh|-|-
+TLS-005|VPS_PASS|scripts/update-release.sh|scripts/tests/ingress-transaction-harness.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
 TLS-006|CODE_ONLY|crates/guard-system/src/tls.rs|crates/guard-system/src/tls.rs|-
 UI-001|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 UI-002|AUTO_PASS|web/src/pages/overview.tsx|web/tests/console.e2e.ts|-
@@ -68,10 +68,10 @@ UI-011|CODE_ONLY|web/src/app-shell.tsx|-|-
 UI-012|PLANNED|-|-|-
 UI-013|CODE_ONLY|web/src/components/query-state.tsx|-|-
 UI-014|CODE_ONLY|web/src/router.tsx|-|-
-OPS-001|CODE_ONLY|scripts/deploy-g7devops.sh|-|-
+OPS-001|VPS_PASS|scripts/deploy-g7devops.sh|scripts/tests/deployment-restore-harness.sh|specs/product/evidence/g7devops-shadow-roundtrip-20260715.md
 OPS-002|CODE_ONLY|crates/guard-system/src/plan.rs|-|-
-OPS-003|AUTO_PASS|scripts/cutover-g7devops-remote.sh|scripts/tests/ingress-transaction-harness.sh|-
-OPS-004|AUTO_PASS|scripts/ingress-transaction.sh|scripts/tests/ingress-transaction-harness.sh|-
+OPS-003|VPS_PASS|scripts/cutover-g7devops-direct-remote.sh|scripts/tests/ingress-transaction-harness.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
+OPS-004|VPS_PASS|scripts/ingress-transaction.sh|scripts/tests/ingress-transaction-harness.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
 OPS-005|CODE_ONLY|scripts/update-release.sh|-|-
 OPS-006|CODE_ONLY|scripts/uninstall.sh|-|-
 OPS-007|CODE_ONLY|.github/workflows/release.yml|-|-

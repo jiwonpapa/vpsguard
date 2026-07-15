@@ -18,7 +18,8 @@ mkdir -p "${bundle}/bin" \
   "${bundle}/systemd/vps-guard-control.service.d" \
   "${bundle}/systemd-examples" \
   "${bundle}/tmpfiles" "${bundle}/certbot" "${bundle}/scripts" "${bundle}/sbom" \
-  "${bundle}/g7devops/nginx"
+  "${bundle}/g7devops/nginx" "${bundle}/g7devops/systemd" \
+  "${bundle}/g7devops/certbot"
 install -m 0755 "target/${target}/release/vps-guard" "${bundle}/bin/"
 install -m 0755 "target/${target}/release/vps-guard-control" "${bundle}/bin/"
 install -m 0755 "target/${target}/release/vps-guard-edge" "${bundle}/bin/"
@@ -32,7 +33,9 @@ install -m 0644 packaging/ownership-manifest.txt "${bundle}/"
 install -m 0755 packaging/certbot/vps-guard-deploy-hook "${bundle}/certbot/"
 install -m 0755 \
   scripts/deployment-state.sh \
+  scripts/cutover-g7devops-direct.sh \
   scripts/cutover-g7devops-remote.sh \
+  scripts/cutover-g7devops-direct-remote.sh \
   scripts/ingress-transaction.sh \
   scripts/update-release.sh \
   scripts/uninstall.sh \
@@ -42,10 +45,18 @@ install -m 0644 configs/vps-guard.g7devops.shadow.toml \
   "${bundle}/g7devops/vps-guard.shadow.toml"
 install -m 0644 configs/vps-guard.g7devops.ingress.toml \
   "${bundle}/g7devops/vps-guard.ingress.toml"
+install -m 0644 configs/vps-guard.g7devops.direct.toml \
+  "${bundle}/g7devops/vps-guard.direct.toml"
 install -m 0644 configs/nginx/g7devops-edge.conf \
   "${bundle}/g7devops/nginx/edge.conf"
 install -m 0644 configs/nginx/g7devops-bypass.conf \
   "${bundle}/g7devops/nginx/bypass.conf"
+install -m 0644 configs/nginx/g7devops-origin-only.conf \
+  "${bundle}/g7devops/nginx/origin-only.conf"
+install -m 0644 configs/systemd/g7devops-edge-tls.conf \
+  "${bundle}/g7devops/systemd/edge-tls.conf"
+install -m 0755 configs/certbot/g7devops-deploy-hook \
+  "${bundle}/g7devops/certbot/deploy-hook"
 install -m 0644 docs/OPERATIONS.md "${bundle}/"
 
 if command -v cargo-cyclonedx >/dev/null 2>&1; then

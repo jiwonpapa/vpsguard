@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
+export VPS_GUARD_EDGE_HEALTH_URL=http://127.0.0.1/health/live
+export VPS_GUARD_EDGE_HEALTH_HOST=www.g7devops.com
+exec /usr/local/libexec/vps-guard/certbot-deploy-hook

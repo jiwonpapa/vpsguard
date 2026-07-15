@@ -3,6 +3,7 @@ set -euo pipefail
 
 config="${VPS_GUARD_CONFIG:-/etc/vps-guard/config.toml}"
 health_url="${VPS_GUARD_EDGE_HEALTH_URL:-http://127.0.0.1:8080/health/live}"
+health_host="${VPS_GUARD_EDGE_HEALTH_HOST:-}"
 lineage="${RENEWED_LINEAGE:-}"
 [[ -n "${lineage}" ]] || { echo "RENEWED_LINEAGE is required" >&2; exit 2; }
 cert="${lineage}/fullchain.pem"
@@ -15,5 +16,9 @@ key_pub="$(openssl pkey -in "${key}" -pubout -outform DER | sha256sum | cut -d' 
 openssl x509 -checkend 86400 -noout -in "${cert}"
 /usr/local/bin/vps-guard check-config --config "${config}"
 systemctl restart vps-guard-edge.service
-curl --fail --silent "${health_url}" >/dev/null
+curl_args=(--fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0)
+if [[ -n "${health_host}" ]]; then
+  curl_args+=(-H "Host: ${health_host}")
+fi
+curl "${curl_args[@]}" "${health_url}" >/dev/null
 echo "VPSGuard certificate deploy verified"

@@ -47,6 +47,10 @@ grep -Fq 'systemd/vps-guard-control.service.d/20-cloudflare-credential.conf' scr
 grep -Fq 'systemd-examples' scripts/build-release.sh
 grep -Fq 'g7devops/nginx' scripts/build-release.sh
 grep -Fq 'scripts/cutover-g7devops-remote.sh' scripts/build-release.sh
+grep -Fq 'scripts/cutover-g7devops-direct.sh' scripts/build-release.sh
+grep -Fq 'scripts/cutover-g7devops-direct-remote.sh' scripts/build-release.sh
+grep -Fq 'configs/vps-guard.g7devops.direct.toml' scripts/build-release.sh
+grep -Fq 'configs/nginx/g7devops-origin-only.conf' scripts/build-release.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
