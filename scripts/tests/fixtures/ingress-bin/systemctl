@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${VPS_GUARD_FAKE_STATE_DIR:?}"
+command_name="${1:-}"
+shift || true
+
+case "${command_name}" in
+  is-active)
+    [[ "${1:-}" == "--quiet" ]] && shift
+    unit="${1:?}"
+    [[ "$(sed -n '1p' "${state_dir}/${unit}" 2>/dev/null || true)" == "active" ]]
+    ;;
+  start)
+    printf 'active\n' >"${state_dir}/${1:?}"
+    ;;
+  stop)
+    printf 'inactive\n' >"${state_dir}/${1:?}"
+    ;;
+  reload)
+    [[ "${VPS_GUARD_FAKE_RELOAD_FAIL:-0}" != "1" ]]
+    ;;
+  *)
+    echo "unsupported fake systemctl command: ${command_name}" >&2
+    exit 2
+    ;;
+esac

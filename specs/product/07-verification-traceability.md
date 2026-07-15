@@ -93,8 +93,9 @@ last_reviewed: 2026-07-15
 | `TLS-002`, `TLS-003`, `TLS-006` | `tests/e2e/certbot_renew.rs` | staging webroot issuance·systemd timer·renew·deploy hook report |
 | `TLS-004` | `crates/guard-agent/tests/served_certificate.rs` | file/served cert comparison |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | update·bypass 전후 fingerprint |
-| `OPS-001`, `OPS-002`, `OPS-003` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
-| `OPS-004` | `tests/e2e/bypass_roundtrip.rs` | edge -> Nginx -> edge smoke |
+| `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
+| `OPS-003` | `scripts/tests/ingress-transaction-harness.sh` | 실패 rollback과 실제 public ingress 전환 timeline |
+| `OPS-004` | `scripts/tests/ingress-transaction-harness.sh` | edge -> Nginx -> edge smoke |
 | `OPS-005`, `OPS-006` | `tests/e2e/update_uninstall.rs` | rollback·소유 파일 manifest |
 | `OPS-007` | release workflow | arch별 hash·SBOM·smoke artifact |
 | `OPS-008` | `crates/guard-system/tests/command_audit.rs` | masked command log |

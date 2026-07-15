@@ -70,8 +70,8 @@ UI-013|CODE_ONLY|web/src/components/query-state.tsx|-|-
 UI-014|CODE_ONLY|web/src/router.tsx|-|-
 OPS-001|CODE_ONLY|scripts/deploy-g7devops.sh|-|-
 OPS-002|CODE_ONLY|crates/guard-system/src/plan.rs|-|-
-OPS-003|CODE_ONLY|scripts/ingress-transaction.sh|-|-
-OPS-004|CODE_ONLY|scripts/ingress-transaction.sh|-|-
+OPS-003|AUTO_PASS|scripts/cutover-g7devops-remote.sh|scripts/tests/ingress-transaction-harness.sh|-
+OPS-004|AUTO_PASS|scripts/ingress-transaction.sh|scripts/tests/ingress-transaction-harness.sh|-
 OPS-005|CODE_ONLY|scripts/update-release.sh|-|-
 OPS-006|CODE_ONLY|scripts/uninstall.sh|-|-
 OPS-007|CODE_ONLY|.github/workflows/release.yml|-|-

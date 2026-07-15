@@ -13,7 +13,7 @@ last_reviewed: 2026-07-15
 
 현재 상태는 **pre-MVP 개발용 수직 슬라이스**입니다. 기본 Rust 단위 테스트와 loopback smoke는 재현되지만, 요구사항별 자동 증거·실제 VPS 장애 주입·Cloudflare test zone·public 80/443·rollback 인증이 남아 있습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 96개 중 `PLANNED` 12개, `CODE_ONLY` 41개, `AUTO_PASS` 42개, `VPS_PASS` 1개입니다. 즉 84개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 43개이고, 그중 실제 VPS 운영 수용 기준까지 완료한 항목은 `OPS-009` 1개입니다.
+현재 요구사항 96개 중 `PLANNED` 12개, `CODE_ONLY` 39개, `AUTO_PASS` 44개, `VPS_PASS` 1개입니다. 즉 84개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 45개이고, 그중 실제 VPS 운영 수용 기준까지 완료한 항목은 `OPS-009` 1개입니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -33,7 +33,7 @@ last_reviewed: 2026-07-15
 | `TLS-001` 일부 | 단일 certificate chain의 key·유효기간·SAN 검사 | TLS unit tests |
 | `TLS-002`, `TLS-005`, `TLS-006` 하네스 | startup cert/key·SAN·유효기간 preflight, 6시간 공개 cert·Certbot renewal/timer 관측, external/assisted/manual 소유권, systemd credential 경계, 승인 전 HTTP-01 plan, deploy hook과 보존 | typed unit/API/UI tests; 실제 staging 발급·renew·served cert 비교와 graceful reload 증거는 미수집 |
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | 별도 HTTPS 관리 Host→loopback Control 분리, CSR SPA, 인증된 SSE·조회, client 검색·필터·정렬·페이지, 운영 명령 확인, light/dark, stale/error | local TLS integration·Bun·Playwright·control tests |
-| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, ingress rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | plan test와 release workflow; 실제 VPS apply 증거 없음 |
+| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS shim 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | ingress 양방향·probe 실패 exact rollback fixture와 release workflow; 실제 public ingress·bypass VPS 증거는 미수집 |
 | `OPS-009` | first install·shadow 배포 전 checksum snapshot, commit-bound apply, stdin root-only token 전달, 실패·수동 원상복귀와 protected SSH·Nginx·인증서·G7·listener 경계 read-back | fixture exact restore·corrupt snapshot·protected drift 자동 테스트와 [`g7devops` 실패 자동 복구·수동 restore·재설치 운영 증거](evidence/g7devops-shadow-roundtrip-20260715.md) |
 | 회귀 차단 코드 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 merge gate로 연결 | GitHub branch protection 적용 전에는 강제되지 않음 |
 | `SEC-003`, `SEC-006`, `SEC-007` | peer-credential local socket의 단회 code, client별 시도 제한·knockout 방지·재사용 거부, Host·Origin 고정, Secure·HttpOnly session, 인증된 읽기·SSE, CSRF·idempotency 변경 | admin socket·API auth tests, local TLS integration |

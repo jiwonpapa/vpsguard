@@ -9,6 +9,8 @@ cd "${repo_root}"
 
 bash scripts/requirements-gate.sh
 bash scripts/docs-gate.sh
+bash scripts/tests/g7devops-ingress-contract.sh
+bash scripts/tests/ingress-transaction-harness.sh
 
 release_output="$(mktemp)"
 trap 'rm -f "${release_output}"' EXIT
@@ -43,6 +45,8 @@ grep -Fq 'deployment-state.sh" --snapshot' scripts/update-release.sh
 grep -Fq 'VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot' scripts/update-release.sh
 grep -Fq 'systemd/vps-guard-control.service.d/20-cloudflare-credential.conf' scripts/build-release.sh
 grep -Fq 'systemd-examples' scripts/build-release.sh
+grep -Fq 'g7devops/nginx' scripts/build-release.sh
+grep -Fq 'scripts/cutover-g7devops-remote.sh' scripts/build-release.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
