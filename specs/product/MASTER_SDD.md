@@ -152,6 +152,14 @@ VPSGuard의 공개 protocol 범위는 HTTP/1.1, HTTP/2와 HTTP Upgrade로 시작
 
 VPSGuard는 소유한 TCP 80/443 외 listener와 firewall rule을 가로채지 않습니다. SSH, DB, mail, game server와 사용자 정의 port의 트래픽은 VPSGuard를 통과시키는 것이 아니라 기존 kernel·service 경로를 그대로 유지합니다. 반대로 VPSGuard가 소유한 80/443에 들어온 비HTTP protocol을 HTTP origin으로 무조건 전달하면 protocol confusion과 우회가 생기므로 거부합니다. 동일 443에서 별도 raw TLS service를 multiplex해야 하는 요구는 명시적 SNI/ALPN L4 listener와 별도 요구사항 없이는 지원하지 않습니다.
 
+### 7.1 애플리케이션 보안 계층
+
+범용 core는 위험한 HTTP method 거부, Host·forwarded header 경계, body·timeout 상한, response version header 제거와 보안 header 적용을 소유합니다. `profiled+enforce`에서는 app profile이 인증으로 분류한 경로에 별도 bounded client 한도를 적용합니다. G7 overlay는 Laravel API·SPA의 실제 인증 경로와 기본 CSP를 소유하고 범용·G5 규칙과 섞지 않습니다.
+
+CSP는 기본 report-only로 관찰한 뒤 site 호환성을 확인해 enforce합니다. HSTS는 HTTPS 운영·bypass 경로가 확인된 site에서만 명시적으로 켭니다. `protocol_only`는 app CSP overlay와 인증 행동 판정을 생략하지만 protocol 안전 method와 비밀값 미저장 불변조건은 유지합니다.
+
+VPSGuard는 query나 request body의 공격 문자열을 정규식으로 찾았다는 이유만으로 SQL injection·XSS 방어 완료를 선언하지 않습니다. parameterized query, schema validation, context-aware output escaping, CSRF·session·계정별 로그인 제한은 origin 애플리케이션 책임이며 CSP와 client별 edge rate limit은 보조 방어입니다.
+
 ## 8. 클라이언트 식별 계약
 
 단일 IP를 사람 한 명으로 간주하지 않습니다. client identity는 다음 자료를 조합한 단기 식별자입니다.

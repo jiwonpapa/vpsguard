@@ -69,6 +69,7 @@ last_reviewed: 2026-07-15
 | `DET-009` | `crates/guard-core/tests/shared_ip.rs` | NAT browser scenario |
 | `DET-010` | `tests/fault/collector_missing.rs` | degraded-confidence incident |
 | `DET-011` | `crates/guard-edge/src/runtime/tests.rs` | app profile·site override·incident policy 합성 replay |
+| `DET-012` | `crates/guard-profiles/src/tests.rs` | generic core와 G7 auth·CSP overlay 교차 profile fixture |
 
 ### 3.4 Action
 
@@ -110,6 +111,7 @@ last_reviewed: 2026-07-15
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |
 | `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
+| `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |
 | `NFR-001`, `NFR-002` | Criterion + k6 regression | 2GB VPS perf artifact |
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |

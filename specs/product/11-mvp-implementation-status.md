@@ -13,7 +13,7 @@ last_reviewed: 2026-07-15
 
 현재 상태는 **pre-MVP 개발용 수직 슬라이스**입니다. 기본 Rust 단위 테스트와 loopback smoke는 재현되지만, 요구사항별 자동 증거·실제 VPS 장애 주입·Cloudflare test zone·public 80/443·rollback 인증이 남아 있습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 90개 중 `PLANNED` 12개, `CODE_ONLY` 43개, `AUTO_PASS` 35개, `VPS_PASS` 0개입니다. 즉 78개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 35개이고, 실제 VPS 운영 수용 기준을 완료한 항목은 아직 없습니다.
+현재 요구사항 95개 중 `PLANNED` 17개, `CODE_ONLY` 43개, `AUTO_PASS` 35개, `VPS_PASS` 0개입니다. 즉 78개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 35개이고, 실제 VPS 운영 수용 기준을 완료한 항목은 아직 없습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -48,7 +48,7 @@ last_reviewed: 2026-07-15
 - `OBS-003`~`OBS-006`, `OBS-010`, `OBS-011`: semantic·cgroup 수집 코드는 구현됐으나 실제 MySQL/Redis 최소 권한 smoke, cgroup/systemd 값 대조, busy·disk-full 장애와 2GB VPS 정확도·route-resource 상관 검증이 남음
 - `UI-001`: 실제 public 443 관리 Host의 인증서·접속·복구와 앱 origin 비혼선 VPS 증거
 - `UI-005`, `UI-006`, `UI-008`, `UI-010`, `UI-012`: client 상세 score/action, 동일축 상관 그래프, TLS 실제 read-back, 용어집, read/export 세부 역할 분리
-- 애플리케이션 보안 계층: 현재 G5·G7 route 분류와 route/client 한도까지만 구현됐으며, origin 응답 CSP·보안 header 정책, XSS·SQL injection 판별, 계정·session 단위 무차별 대입 방어는 별도 요구사항 정의부터 필요
+- `DET-012`, `SEC-008`~`SEC-011`: 범용·G7 보안 계층의 method·response header·client별 auth 한도와 XSS/SQLi origin 책임 계약은 정의됐으나 구현·자동 증거는 미완료. 계정·session 단위 무차별 대입 방어는 계속 origin 책임
 - `ACT-006`~`ACT-010`: User token과 record ID·type preflight는 fake API까지 구현됐으며, Cloudflare test zone 전환·복구와 실제 kernel/SSH·non-web port diff 증거가 남음. Account API Token onboarding은 zone-scoped DNS Write 재현 전까지 제외
 - `TLS-002`~`TLS-006`: 기존 manager·timer 감지와 승인 전 plan은 구현됐으며, plan hash 기반 apply, Certbot staging HTTP-01·systemd timer renew, 실제 served certificate 비교와 bypass 후 fingerprint 증거가 남음
 - `OPS-003`~`OPS-007`: public cutover·bypass 왕복, update/uninstall 실증, x86_64/aarch64 artifact 실행 smoke

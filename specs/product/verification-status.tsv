@@ -35,6 +35,7 @@ DET-008|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/
 DET-009|PLANNED|-|-|-
 DET-010|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-011|AUTO_PASS|crates/guard-edge/src/runtime.rs|crates/guard-edge/src/runtime/tests.rs|-
+DET-012|PLANNED|-|-|-
 ACT-001|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 ACT-002|CODE_ONLY|crates/guard-edge/src/response.rs|-|-
 ACT-003|AUTO_PASS|crates/guard-edge/src/challenge.rs|crates/guard-edge/src/challenge.rs|-
@@ -82,6 +83,10 @@ SEC-004|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
 SEC-005|CODE_ONLY|crates/guard-edge/src/telemetry.rs|-|-
 SEC-006|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/api/tests.rs|-
 SEC-007|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
+SEC-008|PLANNED|-|-|-
+SEC-009|PLANNED|-|-|-
+SEC-010|PLANNED|-|-|-
+SEC-011|PLANNED|-|-|-
 NFR-001|PLANNED|-|-|-
 NFR-002|CODE_ONLY|crates/guard-edge/src/rate_limit.rs|-|-
 NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
