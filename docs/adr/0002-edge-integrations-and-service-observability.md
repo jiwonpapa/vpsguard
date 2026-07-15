@@ -70,6 +70,7 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 - Cloudflare fake API 실패·rollback 검증에만 dev dependency `mockito 1.7.2`를 기본 feature 없이 사용합니다. production binary에는 포함되지 않습니다.
 - `vps-guard-control` macOS release binary는 적용 전 7,207,616 bytes에서 적용 후 7,240,848 bytes로 33,232 bytes(0.46%) 증가했습니다. 2GB Linux VPS RSS 차이는 release gate에 남깁니다.
 - 공통 TLS lifecycle 관측은 이미 workspace에 있던 `rustls`, `rustls-pemfile`, `x509-parser`를 `guard-system` adapter로 이동해 재사용하며 새 runtime crate version을 추가하지 않습니다. Control release binary는 Cloudflare 배치 기준 7,240,848 bytes에서 7,460,784 bytes로 219,936 bytes(3.04%) 증가했습니다. 2GB Linux VPS RSS와 systemd credential 실증은 release gate에 남깁니다.
+- filesystem 여유는 OS별 `statvfs` ABI를 직접 구현하지 않고 `rustix 1.1.4`의 safe API를 사용합니다. MIT/Apache-2.0, MSRV 1.63이며 이미 lockfile에 있던 version을 직접 의존성으로 승격해 전이 crate는 늘지 않았습니다. 저장 배치 후 Control release binary는 7,460,784 bytes에서 7,527,824 bytes로 67,040 bytes(0.90%) 증가했고 SHA-256은 `d44a2a9805610192705a34ec132109115549801361af693572bf7bcfc3e8fafb`입니다. 2GB Linux VPS RSS와 disk-full fault는 release gate에 남깁니다.
 - `cargo audit`: 허용되지 않은 알려진 취약점은 없고 Pingora 경로의 unmaintained `daemonize`, `derivative`, `rustls-pemfile` 경고 3건이 예외 문서로 추적됩니다.
 - `rustls-pemfile`은 VPSGuard도 직접 사용하므로 유지보수되는 rustls pki type 경로로 교체 가능한지 우선 확인합니다. Pingora 전이 의존성 제거는 upstream 갱신과 별도입니다.
 - `cargo deny check`: 통과했으며 Pingora 중심의 중복 version은 계속 측정합니다.

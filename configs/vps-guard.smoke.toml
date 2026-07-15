@@ -46,11 +46,14 @@ live_seconds = 900
 detail_hours = 24
 aggregate_days = 30
 incident_days = 90
+audit_days = 365
 raw_ip_days = 7
 
 [storage]
 database_path = "/tmp/vps-guard-smoke/control.sqlite3"
 events_directory = "/tmp/vps-guard-smoke/events"
+max_database_bytes = 536870912
+min_disk_free_bytes = 67108864
 
 [collectors]
 timeout_ms = 100

@@ -418,3 +418,77 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn resources_exposes_bounded_storage_health_to_authenticated_session()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    state.storage.note_queue_send_started();
+    state.storage.note_queue_send_failed();
+    let issued = state.sessions.issue(false);
+    let response = router(state)
+        .oneshot(
+            Request::get("/api/v1/resources")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 16_384).await?;
+    let value = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(value["storage"]["queue_capacity"], 4_096);
+    assert_eq!(value["storage"]["queue_dropped_samples"], 1);
+    assert_eq!(value["storage"]["condition"], "degraded");
+    Ok(())
+}
+
+#[tokio::test]
+async fn traffic_series_selects_one_second_ten_second_and_minute_layers()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    let telemetry = TelemetryEnvelope {
+        schema_version: 1,
+        request_id: "request-series".to_owned(),
+        method: "GET".to_owned(),
+        route_class: "general".to_owned(),
+        normalized_route: "/health".to_owned(),
+        route_cost: 1,
+        status: 200,
+        latency_micros: 50,
+        client_ip: None,
+        request_body_bytes: 0,
+        response_body_bytes: 4,
+        upstream_connection_reused: Some(true),
+        decision: "allow".to_owned(),
+        policy_version: 1,
+        occurred_at_unix_ms: 61_234,
+    };
+    state
+        .traffic
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .ingest(&telemetry);
+    state.storage.record_traffic(&telemetry)?;
+    let issued = state.sessions.issue(false);
+
+    for (resolution, expected_bucket) in [("1s", 61_000), ("10s", 60_000), ("1m", 60_000)] {
+        let response = router(Arc::clone(&state))
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/traffic/series?resolution={resolution}&since_unix_ms=0"
+                ))
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 16_384).await?;
+        let value = serde_json::from_slice::<serde_json::Value>(&body)?;
+        assert_eq!(value["items"][0]["bucket_unix_ms"], expected_bucket);
+    }
+    Ok(())
+}

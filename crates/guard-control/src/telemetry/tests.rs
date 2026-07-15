@@ -60,3 +60,36 @@ fn creates_and_resets_detection_window() {
     }));
     assert!(aggregate.take_detection_input(true).is_none());
 }
+
+#[test]
+fn bounds_and_aggregates_one_second_live_ring() {
+    let mut aggregate = TrafficAggregator::with_live_window(10, 2);
+    let mut first = telemetry(1, 200, 100);
+    first.occurred_at_unix_ms = 1_100;
+    let mut same_second = telemetry(2, 503, 300);
+    same_second.occurred_at_unix_ms = 1_900;
+    same_second.decision = "throttle".to_owned();
+    let mut second = telemetry(3, 200, 200);
+    second.occurred_at_unix_ms = 2_000;
+    let mut third = telemetry(4, 200, 400);
+    third.occurred_at_unix_ms = 3_000;
+
+    aggregate.ingest(&first);
+    aggregate.ingest(&same_second);
+    aggregate.ingest(&second);
+    aggregate.ingest(&third);
+
+    let series = aggregate.live_series(0);
+    assert_eq!(series.len(), 2);
+    assert_eq!(series[0].bucket_unix_ms, 2_000);
+    assert_eq!(series[1].bucket_unix_ms, 3_000);
+
+    let mut current = TrafficAggregator::with_live_window(10, 2);
+    current.ingest(&first);
+    current.ingest(&same_second);
+    let point = &current.live_series(0)[0];
+    assert_eq!(point.requests, 2);
+    assert_eq!(point.errors, 1);
+    assert_eq!(point.throttled, 1);
+    assert_eq!(point.latency_avg_micros, 200);
+}

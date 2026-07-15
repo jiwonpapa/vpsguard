@@ -53,6 +53,46 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.tls.management, TlsManagementMode::Auto);
     assert!(!config.cloudflare.enabled);
     assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
+    assert_eq!(config.retention.audit_days, 365);
+    assert_eq!(config.storage.max_database_bytes, 512 * 1_024 * 1_024);
+    assert_eq!(config.storage.min_disk_free_bytes, 256 * 1_024 * 1_024);
+}
+
+#[test]
+fn rejects_relative_storage_paths_and_unbounded_budget() {
+    let relative = format!(
+        "{VALID_CONFIG}\n[storage]\ndatabase_path = \"control.sqlite3\"\nevents_directory = \"/tmp/events\"\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&relative),
+        Err(ConfigError::Invalid {
+            field: "storage",
+            ..
+        })
+    ));
+
+    let oversized = format!(
+        "{VALID_CONFIG}\n[storage]\ndatabase_path = \"/tmp/control.sqlite3\"\nevents_directory = \"/tmp/events\"\nmax_database_bytes = 17179869185\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&oversized),
+        Err(ConfigError::Invalid {
+            field: "storage.max_database_bytes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn rejects_unbounded_live_retention_ring() {
+    let input = VALID_CONFIG.replace("live_seconds = 900", "live_seconds = 86401");
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "retention.live_seconds",
+            ..
+        })
+    ));
 }
 
 #[test]

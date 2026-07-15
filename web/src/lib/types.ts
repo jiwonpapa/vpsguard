@@ -68,10 +68,36 @@ export interface CollectorHealth {
   error_code: string | null;
 }
 
+export interface StorageHealth {
+  condition: "healthy" | "degraded" | "critical";
+  queue_depth: number;
+  queue_capacity: number;
+  queue_dropped_samples: number;
+  write_dropped_samples: number;
+  persisted_samples: number;
+  persisted_batches: number;
+  write_failures: number;
+  database_bytes: number;
+  database_used_bytes: number;
+  reclaimable_bytes: number;
+  wal_bytes: number;
+  disk_available_bytes: number | null;
+  max_database_bytes: number;
+  min_disk_free_bytes: number;
+  database_budget_exceeded: boolean;
+  disk_space_low: boolean;
+  last_batch_at_unix_ms: number | null;
+  last_rollup_at_unix_ms: number | null;
+  last_retention_at_unix_ms: number | null;
+  last_write_error_at_unix_ms: number | null;
+  retention_deleted_rows: number;
+}
+
 export interface ResourcesResponse {
   state: string;
   os: OsSnapshot | null;
   services: CollectorHealth[];
+  storage: StorageHealth;
 }
 
 export interface ClientRow {

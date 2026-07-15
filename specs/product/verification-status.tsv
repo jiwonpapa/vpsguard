@@ -19,7 +19,7 @@ OBS-003|CODE_ONLY|crates/guard-agent/src/os.rs|-|-
 OBS-004|PLANNED|-|-|-
 OBS-005|CODE_ONLY|crates/guard-agent/src/services.rs|-|-
 OBS-006|CODE_ONLY|crates/guard-agent/src/services.rs|-|-
-OBS-007|PLANNED|-|-|-
+OBS-007|AUTO_PASS|crates/guard-control/src/telemetry.rs|crates/guard-control/src/telemetry/tests.rs|-
 OBS-008|AUTO_PASS|crates/guard-edge/src/telemetry.rs|crates/guard-edge/src/telemetry/tests.rs|-
 OBS-009|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 OBS-010|PLANNED|-|-|-

@@ -27,7 +27,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::provider::ProviderController;
-use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore};
+use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore, StorageHealthSnapshot};
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
 
 const INDEX_HTML: &str = include_str!("../../../web/dist/index.html");
@@ -77,6 +77,7 @@ struct ResourcesResponse {
     state: CollectorState,
     os: Option<OsSnapshot>,
     services: Vec<CollectorHealth>,
+    storage: StorageHealthSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,6 +109,19 @@ struct ListQuery {
 #[derive(Debug, Deserialize)]
 struct SeriesQuery {
     since_unix_ms: Option<u64>,
+    #[serde(default)]
+    resolution: SeriesResolution,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+enum SeriesResolution {
+    #[serde(rename = "1s")]
+    OneSecond,
+    #[serde(rename = "10s")]
+    TenSeconds,
+    #[default]
+    #[serde(rename = "1m")]
+    OneMinute,
 }
 
 #[derive(Debug, Serialize)]
@@ -326,6 +340,7 @@ async fn resources(State(app): State<Arc<AppState>>) -> Json<ResourcesResponse> 
         },
         os,
         services,
+        storage: app.storage.health(),
     })
 }
 
@@ -370,7 +385,14 @@ async fn traffic_series(
     let since = query.since_unix_ms.unwrap_or_else(|| {
         unix_millis().saturating_sub(24_u64.saturating_mul(60).saturating_mul(60_000))
     });
-    storage_list(app.storage.series(since))
+    match query.resolution {
+        SeriesResolution::OneSecond => Json(ListResponse {
+            items: lock_traffic(&app).live_series(since),
+        })
+        .into_response(),
+        SeriesResolution::TenSeconds => storage_list(app.storage.ten_second_series(since)),
+        SeriesResolution::OneMinute => storage_list(app.storage.series(since)),
+    }
 }
 
 async fn clients(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {

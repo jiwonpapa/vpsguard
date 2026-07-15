@@ -7,6 +7,19 @@ use guard_core::DetectionInput;
 use serde::{Deserialize, Serialize};
 
 const LATENCY_WINDOW: usize = 2_048;
+const DEFAULT_LIVE_SECONDS: usize = 900;
+
+/// 1초·10초·1분 traffic 시계열 bucket입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SeriesPoint {
+    pub(crate) bucket_unix_ms: u64,
+    pub(crate) requests: u64,
+    pub(crate) errors: u64,
+    pub(crate) throttled: u64,
+    pub(crate) latency_avg_micros: u64,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
+}
 
 /// edge telemetry decode 계약입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -97,6 +110,8 @@ pub struct TrafficAggregator {
     clients: HashMap<IpAddr, u64>,
     dropped_clients: u64,
     window: DetectionWindow,
+    live_seconds: usize,
+    live_buckets: VecDeque<LiveSecondBucket>,
 }
 
 #[derive(Debug, Default)]
@@ -108,10 +123,63 @@ struct DetectionWindow {
     max_latency_micros: u64,
 }
 
+#[derive(Debug, Default)]
+struct LiveSecondBucket {
+    bucket_unix_ms: u64,
+    requests: u64,
+    errors: u64,
+    throttled: u64,
+    latency_sum_micros: u64,
+    request_body_bytes: u64,
+    response_body_bytes: u64,
+}
+
+impl LiveSecondBucket {
+    fn ingest(&mut self, telemetry: &TelemetryEnvelope) {
+        self.requests = self.requests.saturating_add(1);
+        self.errors = self
+            .errors
+            .saturating_add(u64::from(telemetry.status >= 500));
+        self.throttled = self
+            .throttled
+            .saturating_add(u64::from(telemetry.decision == "throttle"));
+        self.latency_sum_micros = self
+            .latency_sum_micros
+            .saturating_add(telemetry.latency_micros);
+        self.request_body_bytes = self
+            .request_body_bytes
+            .saturating_add(telemetry.request_body_bytes);
+        self.response_body_bytes = self
+            .response_body_bytes
+            .saturating_add(telemetry.response_body_bytes);
+    }
+
+    fn point(&self) -> SeriesPoint {
+        SeriesPoint {
+            bucket_unix_ms: self.bucket_unix_ms,
+            requests: self.requests,
+            errors: self.errors,
+            throttled: self.throttled,
+            latency_avg_micros: self
+                .latency_sum_micros
+                .checked_div(self.requests)
+                .unwrap_or_default(),
+            request_body_bytes: self.request_body_bytes,
+            response_body_bytes: self.response_body_bytes,
+        }
+    }
+}
+
 impl TrafficAggregator {
     /// unique client 상한을 고정합니다.
     #[must_use]
     pub fn new(max_clients: usize) -> Self {
+        Self::with_live_window(max_clients, DEFAULT_LIVE_SECONDS)
+    }
+
+    /// unique client와 1초 live ring의 상한을 고정합니다.
+    #[must_use]
+    pub fn with_live_window(max_clients: usize, live_seconds: usize) -> Self {
         Self {
             max_clients,
             requests: 0,
@@ -127,6 +195,8 @@ impl TrafficAggregator {
             clients: HashMap::with_capacity(max_clients.min(10_000)),
             dropped_clients: 0,
             window: DetectionWindow::default(),
+            live_seconds,
+            live_buckets: VecDeque::with_capacity(live_seconds),
         }
     }
 
@@ -135,6 +205,7 @@ impl TrafficAggregator {
         if telemetry.schema_version != 1 {
             return;
         }
+        self.ingest_live(telemetry);
         self.requests = self.requests.saturating_add(1);
         let bucket = match telemetry.status {
             200..=299 => Some(0),
@@ -225,6 +296,15 @@ impl TrafficAggregator {
         }
     }
 
+    /// 지정 시각 이후 bounded 1초 live bucket을 반환합니다.
+    pub(crate) fn live_series(&self, since_unix_ms: u64) -> Vec<SeriesPoint> {
+        self.live_buckets
+            .iter()
+            .filter(|bucket| bucket.bucket_unix_ms >= since_unix_ms)
+            .map(LiveSecondBucket::point)
+            .collect()
+    }
+
     /// 현재 detection window를 입력으로 변환하고 새 window를 시작합니다.
     pub fn take_detection_input(
         &mut self,
@@ -271,6 +351,40 @@ impl TrafficAggregator {
             session_continuity: false,
             crawler_verified: false,
         })
+    }
+
+    fn ingest_live(&mut self, telemetry: &TelemetryEnvelope) {
+        if self.live_seconds == 0 {
+            return;
+        }
+        let bucket_unix_ms = telemetry
+            .occurred_at_unix_ms
+            .saturating_sub(telemetry.occurred_at_unix_ms % 1_000);
+        if let Some(bucket) = self
+            .live_buckets
+            .iter_mut()
+            .rev()
+            .find(|bucket| bucket.bucket_unix_ms == bucket_unix_ms)
+        {
+            bucket.ingest(telemetry);
+            return;
+        }
+        if self
+            .live_buckets
+            .back()
+            .is_some_and(|bucket| bucket.bucket_unix_ms > bucket_unix_ms)
+        {
+            return;
+        }
+        let mut bucket = LiveSecondBucket {
+            bucket_unix_ms,
+            ..LiveSecondBucket::default()
+        };
+        bucket.ingest(telemetry);
+        self.live_buckets.push_back(bucket);
+        while self.live_buckets.len() > self.live_seconds {
+            self.live_buckets.pop_front();
+        }
     }
 }
 

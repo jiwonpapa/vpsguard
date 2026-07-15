@@ -109,8 +109,8 @@ export async function requestTlsAssistedPlan(email: string): Promise<CertbotAssi
 export const api = {
   status: () => getJson<StatusResponse>("/api/v1/status"),
   summary: () => getJson<TrafficSummary>("/api/v1/traffic/summary"),
-  series: () =>
-    getJson<ListResponse<SeriesPoint>>("/api/v1/traffic/series").then(
+  series: (resolution: "1s" | "10s" | "1m" = "1m") =>
+    getJson<ListResponse<SeriesPoint>>(`/api/v1/traffic/series?resolution=${resolution}`).then(
       (value) => value.items,
     ),
   clients: () =>

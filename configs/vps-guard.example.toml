@@ -69,11 +69,14 @@ live_seconds = 900
 detail_hours = 24
 aggregate_days = 30
 incident_days = 90
+audit_days = 365
 raw_ip_days = 7
 
 [storage]
 database_path = "/var/lib/vps-guard/control.sqlite3"
 events_directory = "/var/lib/vps-guard/events"
+max_database_bytes = 536870912
+min_disk_free_bytes = 268435456
 
 [collectors]
 timeout_ms = 500

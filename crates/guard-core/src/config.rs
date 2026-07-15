@@ -282,6 +282,9 @@ pub struct RetentionConfig {
     pub aggregate_days: u64,
     /// 사건 보존 일입니다.
     pub incident_days: u64,
+    /// 운영 감사 기록 보존 일입니다.
+    #[serde(default = "default_audit_retention_days")]
+    pub audit_days: u64,
     /// 원본 IP 보존 일입니다.
     pub raw_ip_days: u64,
 }
@@ -294,6 +297,12 @@ pub struct StorageConfig {
     pub database_path: PathBuf,
     /// 구조화 사건 JSONL directory입니다.
     pub events_directory: PathBuf,
+    /// SQLite 본체와 WAL의 사용량 경고·쓰기 제한 예산입니다.
+    #[serde(default = "default_storage_max_database_bytes")]
+    pub max_database_bytes: u64,
+    /// 새 traffic sample 저장을 중단할 최소 filesystem 여유입니다.
+    #[serde(default = "default_storage_min_disk_free_bytes")]
+    pub min_disk_free_bytes: u64,
 }
 
 impl Default for StorageConfig {
@@ -301,6 +310,8 @@ impl Default for StorageConfig {
         Self {
             database_path: PathBuf::from("/var/lib/vps-guard/control.sqlite3"),
             events_directory: PathBuf::from("/var/lib/vps-guard/events"),
+            max_database_bytes: default_storage_max_database_bytes(),
+            min_disk_free_bytes: default_storage_min_disk_free_bytes(),
         }
     }
 }
@@ -639,8 +650,15 @@ impl GuardConfig {
             || self.retention.detail_hours == 0
             || self.retention.aggregate_days == 0
             || self.retention.incident_days == 0
+            || self.retention.audit_days == 0
         {
             return invalid("retention", "보존기간은 0보다 커야 합니다");
+        }
+        if self.retention.live_seconds > 86_400 {
+            return invalid(
+                "retention.live_seconds",
+                "1초 live ring은 최대 86,400초여야 합니다",
+            );
         }
         if self.retention.raw_ip_days > self.retention.incident_days {
             return invalid("retention.raw_ip_days", "사건 보존기간보다 길 수 없습니다");
@@ -649,6 +667,26 @@ impl GuardConfig {
             || self.storage.events_directory.as_os_str().is_empty()
         {
             return invalid("storage", "database와 events 경로가 필요합니다");
+        }
+        if !self.storage.database_path.is_absolute() || !self.storage.events_directory.is_absolute()
+        {
+            return invalid("storage", "database와 events는 절대 경로여야 합니다");
+        }
+        if !(16 * 1_024 * 1_024..=16 * 1_024 * 1_024 * 1_024)
+            .contains(&self.storage.max_database_bytes)
+        {
+            return invalid(
+                "storage.max_database_bytes",
+                "16 MiB부터 16 GiB 사이여야 합니다",
+            );
+        }
+        if !(64 * 1_024 * 1_024..=64 * 1_024 * 1_024 * 1_024)
+            .contains(&self.storage.min_disk_free_bytes)
+        {
+            return invalid(
+                "storage.min_disk_free_bytes",
+                "64 MiB부터 64 GiB 사이여야 합니다",
+            );
         }
         if self.collectors.timeout_ms == 0 {
             return invalid("collectors.timeout_ms", "0보다 커야 합니다");
@@ -754,6 +792,18 @@ const fn default_clearance_ttl_seconds() -> u64 {
 
 const fn default_collector_timeout_ms() -> u64 {
     500
+}
+
+const fn default_audit_retention_days() -> u64 {
+    365
+}
+
+const fn default_storage_max_database_bytes() -> u64 {
+    512 * 1_024 * 1_024
+}
+
+const fn default_storage_min_disk_free_bytes() -> u64 {
+    256 * 1_024 * 1_024
 }
 
 #[cfg(test)]

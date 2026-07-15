@@ -257,7 +257,14 @@ live_seconds = 900
 detail_hours = 24
 aggregate_days = 30
 incident_days = 90
+audit_days = 365
 raw_ip_days = 7
+
+[storage]
+database_path = "/var/lib/vps-guard/control.sqlite3"
+events_directory = "/var/lib/vps-guard/events"
+max_database_bytes = 536870912
+min_disk_free_bytes = 268435456
 ```
 
 설정 검증:
@@ -271,6 +278,7 @@ raw_ip_days = 7
 - Cloudflare record는 32자리 ID·정확한 hostname·A/AAAA/CNAME type을 명시하고 한 transaction에서 같은 hostname만 허용합니다.
 - `ui.public_host`는 exact hostname이며 app canonical Host와 분리하고 TLS certificate domain에 포함해야 합니다.
 - `ui.bind`는 loopback, `ui.admin_socket`은 절대 경로, 로그인 시도 한도는 `1..=60`이어야 합니다.
+- 저장소 예산은 `16 MiB..=16 GiB`, 최소 disk 여유는 `64 MiB..=64 GiB`이며 raw IP 0일은 저장 자체를 비활성화합니다.
 - `detection.profile = "gnuboard"`는 기존 설정 호환을 위해 GnuBoard 5 alias로만 읽고 새 설정은 `php`, `gnuboard5`, `gnuboard7`, `wordpress`를 명시합니다.
 - 설정 적용 전 후보 parse, semantic validation, edge dry-load를 통과해야 합니다.
 

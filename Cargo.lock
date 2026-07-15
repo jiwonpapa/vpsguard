@@ -1003,6 +1003,7 @@ dependencies = [
  "guard-system",
  "hmac",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

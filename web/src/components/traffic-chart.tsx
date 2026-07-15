@@ -1,7 +1,13 @@
 import type { SeriesPoint } from "../lib/types";
 import { formatTime } from "../lib/utils";
 
-export function TrafficChart({ points }: { points: SeriesPoint[] }) {
+export function TrafficChart({
+  points,
+  resolution,
+}: {
+  points: SeriesPoint[];
+  resolution: "1s" | "10s" | "1m";
+}) {
   if (points.length === 0) {
     return <div className="grid h-64 place-items-center border-y border-zinc-800 text-xs text-zinc-600">시계열 표본 대기 중</div>;
   }
@@ -17,7 +23,7 @@ export function TrafficChart({ points }: { points: SeriesPoint[] }) {
     .join(" ");
   return (
     <figure className="border-y border-zinc-800 py-5">
-      <svg className="h-64 w-full" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="분당 요청 추이">
+      <svg className="h-64 w-full" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${resolution} 요청 추이`}>
         {[0.25, 0.5, 0.75].map((ratio) => (
           <line key={ratio} x1="0" x2={width} y1={height * ratio} y2={height * ratio} stroke="currentColor" className="text-zinc-800" />
         ))}
@@ -30,7 +36,7 @@ export function TrafficChart({ points }: { points: SeriesPoint[] }) {
       </svg>
       <figcaption className="mt-2 flex justify-between font-mono text-[10px] text-zinc-600">
         <span>{formatTime(points[0].bucket_unix_ms)}</span>
-        <span>최대 {max.toLocaleString()} req/min</span>
+        <span>최대 {max.toLocaleString()} req/{resolution}</span>
         <span>{formatTime(points.at(-1)?.bucket_unix_ms ?? 0)}</span>
       </figcaption>
     </figure>

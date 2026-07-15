@@ -67,11 +67,47 @@ async function mockApi(page: Page) {
           uptime_seconds: 7200,
         },
         services: [],
+        storage: {
+          condition: "healthy",
+          queue_depth: 0,
+          queue_capacity: 4096,
+          queue_dropped_samples: 0,
+          write_dropped_samples: 0,
+          persisted_samples: 1200,
+          persisted_batches: 12,
+          write_failures: 0,
+          database_bytes: 1048576,
+          database_used_bytes: 786432,
+          reclaimable_bytes: 262144,
+          wal_bytes: 65536,
+          disk_available_bytes: 10737418240,
+          max_database_bytes: 536870912,
+          min_disk_free_bytes: 268435456,
+          database_budget_exceeded: false,
+          disk_space_low: false,
+          last_batch_at_unix_ms: 1784000000000,
+          last_rollup_at_unix_ms: 1784000000000,
+          last_retention_at_unix_ms: 1783999900000,
+          last_write_error_at_unix_ms: null,
+          retention_deleted_rows: 37,
+        },
       },
       "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, request_body_bytes: 2048, response_body_bytes: 16384, last_seen_unix_ms: 1784000000000 }] },
       "/api/v1/routes": { items: [] },
       "/api/v1/incidents": { items: [] },
-      "/api/v1/traffic/series": { items: [] },
+      "/api/v1/traffic/series": {
+        items: [
+          {
+            bucket_unix_ms: 1784000000000,
+            requests: 12,
+            errors: 1,
+            throttled: 2,
+            latency_avg_micros: 900,
+            request_body_bytes: 128,
+            response_body_bytes: 4096,
+          },
+        ],
+      },
     };
     await route.fulfill({
       status: 200,
@@ -95,6 +131,21 @@ test("renders protection posture and client drill-down", async ({ page }) => {
   await expect(page.getByText("아직 수집된 항목이 없습니다.")).toBeVisible();
   await page.getByLabel("Client 검색").fill("203.0");
   await expect(page.getByText("18.0 KiB")).toBeVisible();
+});
+
+test("renders bounded storage health and retention state", async ({ page }) => {
+  await page.goto("/resources");
+  await expect(page.getByRole("heading", { name: "서버 자원과 서비스" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "저장 계층 상태" })).toContainText("healthy");
+  await expect(page.getByText("1.1 MiB")).toBeVisible();
+  await expect(page.getByText("10.0 GiB")).toBeVisible();
+});
+
+test("switches between live and persisted traffic resolutions", async ({ page }) => {
+  await page.goto("/traffic");
+  await expect(page.getByRole("img", { name: "1m 요청 추이" })).toBeVisible();
+  await page.getByLabel("시계열 해상도").selectOption("1s");
+  await expect(page.getByRole("img", { name: "1s 요청 추이" })).toBeVisible();
 });
 
 test("mutation opens bootstrap session dialog", async ({ page }) => {

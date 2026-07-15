@@ -26,11 +26,15 @@ use crate::admin_socket::spawn_admin_socket;
 use crate::api::{AppState, router};
 use crate::auth::{BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::provider::{ProviderController, ProviderControllerError};
-use crate::storage::{SqliteStore, StorageError};
+use crate::storage::{RetentionCutoffs, SqliteStore, StorageError, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
 const POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const TLS_INSPECTION_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const STORAGE_BATCH_SIZE: usize = 256;
+const STORAGE_BATCH_WAIT: Duration = Duration::from_millis(25);
+const STORAGE_HEALTH_INTERVAL: Duration = Duration::from_secs(30);
+const STORAGE_RETENTION_INTERVAL: Duration = Duration::from_secs(60);
 
 /// control startup·serve 실패입니다.
 #[derive(Debug, Error)]
@@ -78,7 +82,12 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     initial_state
         .validate()
         .map_err(|error| ControlError::Serve(error.to_string()))?;
-    let storage = Arc::new(SqliteStore::open(&config.storage.database_path)?);
+    let storage = Arc::new(SqliteStore::open(
+        &config.storage.database_path,
+        config.storage.max_database_bytes,
+        config.storage.min_disk_free_bytes,
+        config.retention.raw_ip_days > 0,
+    )?);
     let provider = Arc::new(Mutex::new(ProviderController::from_config(&config)?));
     let initial_tls = {
         let tls = config.tls.clone();
@@ -90,7 +99,10 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     let app = Arc::new(AppState {
         state: RwLock::new(initial_state),
         state_store: store,
-        traffic: Mutex::new(TrafficAggregator::new(config.edge.max_tracked_clients)),
+        traffic: Mutex::new(TrafficAggregator::with_live_window(
+            config.edge.max_tracked_clients,
+            usize::try_from(config.retention.live_seconds).unwrap_or(86_400),
+        )),
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
         tls_management: RwLock::new(initial_tls),
@@ -110,8 +122,10 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     spawn_os_collector(Arc::clone(&app));
     spawn_service_collectors(Arc::clone(&app), &config);
     spawn_tls_inspection(Arc::clone(&app), config.tls.clone());
-    let (storage_tx, storage_rx) = mpsc::channel(4_096);
-    spawn_storage_writer(Arc::clone(&storage), storage_rx);
+    let (storage_tx, storage_rx) = mpsc::channel(TRAFFIC_QUEUE_CAPACITY);
+    spawn_storage_writer(Arc::clone(&storage), storage_rx)
+        .map_err(|error| ControlError::Serve(format!("storage writer thread 실패: {error}")))?;
+    spawn_storage_health(Arc::clone(&storage));
     spawn_telemetry_receiver(
         Arc::clone(&app),
         config.edge.telemetry_socket.clone(),
@@ -217,7 +231,9 @@ fn spawn_telemetry_receiver(
                     match serde_json::from_slice::<TelemetryEnvelope>(&buffer[..length]) {
                         Ok(telemetry) => {
                             lock_traffic(&app).ingest(&telemetry);
+                            app.storage.note_queue_send_started();
                             if storage_tx.try_send(telemetry).is_err() {
+                                app.storage.note_queue_send_failed();
                                 warn!("traffic persistence queue full; sample dropped");
                             }
                         }
@@ -234,11 +250,62 @@ fn spawn_telemetry_receiver(
 fn spawn_storage_writer(
     storage: Arc<SqliteStore>,
     mut receiver: mpsc::Receiver<TelemetryEnvelope>,
+) -> Result<(), std::io::Error> {
+    let _handle = std::thread::Builder::new()
+        .name("vpsguard-storage".to_owned())
+        .spawn(move || storage_writer_loop(storage, &mut receiver))?;
+    Ok(())
+}
+
+fn storage_writer_loop(
+    storage: Arc<SqliteStore>,
+    receiver: &mut mpsc::Receiver<TelemetryEnvelope>,
 ) {
+    let mut budget_warning_emitted = false;
+    while let Some(telemetry) = receiver.blocking_recv() {
+        storage.note_queue_dequeued();
+        let mut batch = Vec::with_capacity(STORAGE_BATCH_SIZE);
+        batch.push(telemetry);
+        std::thread::sleep(STORAGE_BATCH_WAIT);
+        while batch.len() < STORAGE_BATCH_SIZE {
+            let Ok(telemetry) = receiver.try_recv() else {
+                break;
+            };
+            storage.note_queue_dequeued();
+            batch.push(telemetry);
+        }
+        if let Err(error) = storage.refresh_health() {
+            warn!(error = %error, "storage health refresh failed");
+        }
+        if !storage.accepts_traffic_writes() {
+            storage.note_write_rejected(batch.len());
+            if !budget_warning_emitted {
+                warn!(
+                    samples = batch.len(),
+                    "traffic persistence paused by database or disk budget"
+                );
+                budget_warning_emitted = true;
+            }
+            continue;
+        }
+        budget_warning_emitted = false;
+        if let Err(error) = storage.record_traffic_batch(&batch) {
+            storage.note_write_failure(batch.len());
+            warn!(error = %error, samples = batch.len(), "traffic batch persistence failed");
+        }
+    }
+}
+
+fn spawn_storage_health(storage: Arc<SqliteStore>) {
     tokio::spawn(async move {
-        while let Some(telemetry) = receiver.recv().await {
-            if let Err(error) = storage.record_traffic(&telemetry) {
-                warn!(error = %error, "traffic sample persistence failed");
+        let mut interval = tokio::time::interval(STORAGE_HEALTH_INTERVAL);
+        loop {
+            interval.tick().await;
+            let storage = Arc::clone(&storage);
+            match tokio::task::spawn_blocking(move || storage.refresh_health()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => warn!(error = %error, "storage health refresh failed"),
+                Err(error) => warn!(error = %error, "storage health task failed"),
             }
         }
     });
@@ -590,26 +657,17 @@ fn transition_event(
 }
 
 fn spawn_retention(storage: Arc<SqliteStore>, config: &GuardConfig) {
-    let detail_ms = config
-        .retention
-        .detail_hours
-        .saturating_mul(60)
-        .saturating_mul(60_000);
-    let raw_ip_ms = config
-        .retention
-        .raw_ip_days
-        .saturating_mul(24)
-        .saturating_mul(60)
-        .saturating_mul(60_000);
+    let retention = config.retention.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+        let mut interval = tokio::time::interval(STORAGE_RETENTION_INTERVAL);
         loop {
             interval.tick().await;
-            let now = unix_millis();
-            if let Err(error) =
-                storage.retain_since(now.saturating_sub(detail_ms), now.saturating_sub(raw_ip_ms))
-            {
-                warn!(error = %error, "retention maintenance failed");
+            let cutoffs = RetentionCutoffs::from_config(&retention, unix_millis());
+            let storage = Arc::clone(&storage);
+            match tokio::task::spawn_blocking(move || storage.retain(&cutoffs)).await {
+                Ok(Ok(_deleted)) => {}
+                Ok(Err(error)) => warn!(error = %error, "retention maintenance failed"),
+                Err(error) => warn!(error = %error, "retention maintenance task failed"),
             }
         }
     });
