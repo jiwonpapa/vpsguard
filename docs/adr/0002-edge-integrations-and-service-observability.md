@@ -53,6 +53,9 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 | Cloudflare | 현재 필요한 DNS list/PATCH가 작고 공식 `cloudflare-rs`도 WIP를 명시하므로 우선 typed `reqwest` adapter를 유지. SDK는 권한·API coverage·dependency fanout spike가 우월할 때만 교체 |
 | Nginx/PHP status text | HTTP transport는 crate를 쓰고 작고 bounded된 domain parser만 직접 유지 |
 | rate limit·policy·atomic state·owned nftables | VPSGuard 고유 bounded·read-back·ownership 불변조건이므로 직접 typed model 유지 |
+| 관리자 비밀번호 | PHC·salt·Argon2id 구현은 `argon2` crate를 사용하고 password hash/KDF를 직접 구현하지 않음 |
+| 관리자 TOTP | RFC 호환 code·`otpauth` URI는 `totp-rs`를 사용하고 QR dependency는 추가하지 않음 |
+| TOTP seed 봉인 | password 유래 key와 `XChaCha20Poly1305` AEAD는 RustCrypto `chacha20poly1305`를 사용하고 암호 primitive를 직접 구현하지 않음 |
 
 새 crate를 고르는 것 자체가 목적은 아닙니다. protocol·crypto·database driver처럼 재구현 위험이 큰 곳은 외부 구현을 우선하고, 작은 고정 형식과 제품 고유 상태 전이는 의존성 fanout·RSS·공격면을 비교해 결정합니다.
 
@@ -76,7 +79,8 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 - 두 driver와 공통 `url` 검증을 추가하면서 lockfile production package가 10개 늘었습니다. Control macOS release binary는 7,527,824 bytes에서 9,343,696 bytes로 1,815,872 bytes(24.12%) 증가했고 SHA-256은 `661bf6347c430a39acb47dd65905a73e2682a87d8606f870221900eabf5f842c`입니다. wire protocol·인증을 직접 구현하지 않는 안전성과 교환한 증가이며 9.34MB absolute 크기는 유지하되, 2GB Linux RSS·5초 probe 비용이 256MB 합산 상한을 넘으면 collector 별도 프로세스 또는 feature 분리를 재검토합니다.
 - `protocol_only`는 새 dependency 없이 typed config와 기존 edge 분기만 사용합니다. inspection status를 포함한 Control macOS release binary는 9,343,696 bytes에서 9,343,712 bytes로 16 bytes 증가했고 SHA-256은 `1f364592cbbda38eb7411878c1785aae9d5cc0d1cc3a13bff5b5cd3a167b8826`입니다.
 - 범용 HTTP 보안 코어와 G7 overlay는 새 dependency 없이 기존 typed config, profile과 Pingora header API로 구현했습니다. Control macOS release binary는 9,343,712 bytes에서 9,360,256 bytes로 16,544 bytes(0.18%) 증가했고 SHA-256은 `49a99b8dddce8fe7aa1cf7d6db6caf5b66a0db6a7ca225b80651f662de740e9d`입니다. 실제 G7 CSP 호환성과 shared-IP 인증 한도는 release pilot에 남깁니다.
-- `cargo audit`: 허용되지 않은 알려진 취약점은 없고 Pingora 경로의 unmaintained `daemonize`, `derivative`, `rustls-pemfile` 경고 3건이 예외 문서로 추적됩니다.
+- VPSGuard 전용 관리자 인증은 `argon2 0.5.3`(MIT/Apache-2.0, MSRV 1.65), `totp-rs 5.7.2`(MIT, MSRV 1.66, `otpauth`·`zeroize`만 활성화)와 `chacha20poly1305 0.10.1`(MIT/Apache-2.0, crate metadata MSRV 미표기)을 사용합니다. 직접 crate source 기준 `totp-rs`와 `chacha20poly1305`에는 `unsafe` block이 없고 `argon2`에는 AVX2 구현의 2개 `unsafe` block이 있어 safe API로만 격리합니다. production lockfile package는 15개 늘었고 최종 관리 UI를 포함한 macOS release binary는 9,360,256 bytes에서 9,661,152 bytes로 300,896 bytes(3.21%) 증가했으며 SHA-256은 `709744900a59551ef799574c9b9a2a9735c8746792557d25afa9fafc59b33e3a`입니다. workspace Rust 1.96 build·clippy·audit·deny와 2GB Linux RSS를 release gate로 유지합니다.
+- `cargo audit --ignore RUSTSEC-2024-0437`: 허용되지 않은 알려진 취약점은 없습니다. Pingora metric encode 전이 경로의 `protobuf 2.28.0` 취약점 1건과 unmaintained `daemonize`, `derivative`, `rustls-pemfile` 경고 3건은 [기한부 예외](../security/advisory-exceptions.md)로 추적하며 public protobuf decode 경로를 금지합니다.
 - `rustls-pemfile`은 VPSGuard도 직접 사용하므로 유지보수되는 rustls pki type 경로로 교체 가능한지 우선 확인합니다. Pingora 전이 의존성 제거는 upstream 갱신과 별도입니다.
 - `cargo deny check`: 통과했으며 Pingora 중심의 중복 version은 계속 측정합니다.
 - `cargo machete`: 사용하지 않는 workspace 직접 의존성이 없습니다.

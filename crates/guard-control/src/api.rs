@@ -22,12 +22,16 @@ use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
 use guard_system::{
     AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, build_certbot_assisted_plan,
 };
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::auth::{BootstrapStore, SessionStore, UiAccessPolicy};
+use crate::auth::{
+    AuthError, BootstrapStore, IssuedSession, LoginSecondFactor, SessionStore, UiAccessPolicy,
+    unix_seconds,
+};
 use crate::provider::ProviderController;
 use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore, StorageHealthSnapshot};
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
@@ -53,7 +57,7 @@ pub(crate) struct AppState {
     pub(crate) completed_actions: Mutex<VecDeque<(String, String, GuardMode)>>,
     pub(crate) storage: Arc<SqliteStore>,
     pub(crate) events: broadcast::Sender<GuardEvent>,
-    pub(crate) sessions: SessionStore,
+    pub(crate) sessions: Arc<SessionStore>,
     pub(crate) access: UiAccessPolicy,
     pub(crate) provider: Arc<Mutex<Option<ProviderController>>>,
     pub(crate) provider_action_active: Arc<AtomicBool>,
@@ -150,12 +154,73 @@ struct ListResponse<T> {
 struct SessionResponse {
     csrf_token: String,
     expires_in_seconds: u64,
+    actor: String,
+    authentication_method: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum LoginRequest {
+    Account(AccountLoginRequest),
+    BreakGlass(BreakGlassLoginRequest),
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LoginRequest {
+struct BreakGlassLoginRequest {
     login_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountLoginRequest {
+    username: String,
+    password: String,
+    totp_code: Option<String>,
+    recovery_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnrollmentStartRequest {
+    login_code: String,
+    username: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnrollmentConfirmRequest {
+    enrollment_id: String,
+    totp_code: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthStatusResponse {
+    setup_required: bool,
+    password_login_enabled: bool,
+    totp_required: bool,
+    break_glass_available: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct EnrollmentStartResponse {
+    enrollment_id: String,
+    secret_base32: String,
+    otpauth_uri: String,
+    expires_in_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct EnrollmentCompleteResponse {
+    recovery_codes: Vec<String>,
+    session: SessionResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionMutationResponse {
+    logged_out: bool,
+    revoked_sessions: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +244,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/actions/resume-auto", post(resume_auto))
         .route("/api/v1/actions/emergency-proxy", post(emergency_proxy))
         .route("/api/v1/actions/provider-restore", post(provider_restore))
+        .route("/api/v1/sessions/revoke-all", post(revoke_all_sessions))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             require_session,
@@ -188,7 +254,15 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/assets/app.css", get(styles))
         .route("/assets/app.js", get(script))
         .route("/health/live", get(live))
-        .route("/api/v1/session", get(current_session).post(create_session))
+        .route("/api/v1/auth/status", get(auth_status))
+        .route("/api/v1/auth/enrollment", post(start_enrollment))
+        .route("/api/v1/auth/enrollment/confirm", post(confirm_enrollment))
+        .route(
+            "/api/v1/session",
+            get(current_session)
+                .post(create_session)
+                .delete(delete_session),
+        )
         .merge(protected)
         .fallback(index)
         .layer(DefaultBodyLimit::max(16 * 1_024))
@@ -249,13 +323,21 @@ async fn require_session(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    if !app.sessions.authenticate(request.headers()) {
+    let sessions = Arc::clone(&app.sessions);
+    let headers = request.headers().clone();
+    let authenticated = tokio::task::spawn_blocking(move || sessions.authenticate(&headers))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+        .is_some();
+    if !authenticated {
         return api_error(
             StatusCode::UNAUTHORIZED,
             "SESSION_AUTH_REQUIRED",
             "유효한 운영 session이 필요합니다.",
             "관리 데이터와 운영 명령을 제공하지 않았습니다.",
-            "local 단회 로그인 코드로 session을 발급하십시오.",
+            "관리자 계정과 2단계 인증으로 로그인하십시오.",
         );
     }
     next.run(request).await
@@ -384,7 +466,7 @@ async fn tls_assisted_plan(
     headers: HeaderMap,
     Json(request): Json<TlsPlanRequest>,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app) {
+    if let Some(error) = mutation_authorization_error(&headers, &app).await {
         return error;
     }
     match build_certbot_assisted_plan(app.tls_plan_mode, &app.tls_plan_domains, &request.email) {
@@ -463,20 +545,122 @@ async fn event_stream(
 }
 
 async fn current_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some((csrf_token, expires_in_seconds)) = app.sessions.resume(&headers) else {
+    let sessions = Arc::clone(&app.sessions);
+    let result = tokio::task::spawn_blocking(move || sessions.resume(&headers)).await;
+    let Ok(Ok(Some((csrf_token, identity)))) = result else {
         return api_error(
             StatusCode::UNAUTHORIZED,
             "SESSION_AUTH_REQUIRED",
             "유효한 운영 session이 없습니다.",
             "CSRF token을 복원하지 않았습니다.",
-            "local 단회 로그인 코드로 session을 발급하십시오.",
+            "관리자 계정과 2단계 인증으로 로그인하십시오.",
         );
     };
     Json(SessionResponse {
         csrf_token,
-        expires_in_seconds,
+        expires_in_seconds: identity.expires_in_seconds,
+        actor: identity.actor,
+        authentication_method: identity.authentication_method,
     })
     .into_response()
+}
+
+async fn auth_status(State(app): State<Arc<AppState>>) -> Response {
+    let sessions = Arc::clone(&app.sessions);
+    match tokio::task::spawn_blocking(move || sessions.setup_required()).await {
+        Ok(Ok(setup_required)) => Json(AuthStatusResponse {
+            setup_required,
+            password_login_enabled: !setup_required,
+            totp_required: !setup_required,
+            break_glass_available: true,
+        })
+        .into_response(),
+        _ => auth_error_response(AuthError::Crypto),
+    }
+}
+
+async fn start_enrollment(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<EnrollmentStartRequest>,
+) -> Response {
+    if let Some(error) = invalid_origin_error(&headers, &app) {
+        return error;
+    }
+    if let Err(error) = app.sessions.allow_login_attempt() {
+        return auth_error_response(error);
+    }
+    if let Err(error) = SessionStore::validate_new_credentials(&request.username, &request.password)
+    {
+        return auth_error_response(error);
+    }
+    let sessions = Arc::clone(&app.sessions);
+    match tokio::task::spawn_blocking(move || sessions.setup_required()).await {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => return auth_error_response(AuthError::AlreadyConfigured),
+        Ok(Err(error)) => return auth_error_response(error),
+        Err(_) => return auth_error_response(AuthError::Crypto),
+    }
+    if !valid_bootstrap_code(&request.login_code) || !app.bootstrap.consume(&request.login_code) {
+        return login_code_error();
+    }
+    let sessions = Arc::clone(&app.sessions);
+    let username = request.username;
+    let password = SecretString::from(request.password);
+    match tokio::task::spawn_blocking(move || {
+        sessions.start_enrollment(username, password, unix_seconds()?)
+    })
+    .await
+    {
+        Ok(Ok(enrollment)) => Json(EnrollmentStartResponse {
+            enrollment_id: enrollment.enrollment_id,
+            secret_base32: enrollment.secret_base32,
+            otpauth_uri: enrollment.otpauth_uri,
+            expires_in_seconds: enrollment.expires_in_seconds,
+        })
+        .into_response(),
+        Ok(Err(error)) => auth_error_response(error),
+        Err(_) => auth_error_response(AuthError::Crypto),
+    }
+}
+
+async fn confirm_enrollment(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<EnrollmentConfirmRequest>,
+) -> Response {
+    if let Some(error) = invalid_origin_error(&headers, &app) {
+        return error;
+    }
+    if let Err(error) = app.sessions.allow_login_attempt() {
+        return auth_error_response(error);
+    }
+    let sessions = Arc::clone(&app.sessions);
+    let secure_cookie = app.access.secure_cookie();
+    let result = tokio::task::spawn_blocking(move || {
+        sessions.confirm_enrollment(
+            &request.enrollment_id,
+            &request.totp_code,
+            secure_cookie,
+            unix_seconds()?,
+        )
+    })
+    .await;
+    match result {
+        Ok(Ok(complete)) => {
+            let cookie = complete.session.set_cookie.clone();
+            (
+                [(header::SET_COOKIE, cookie)],
+                Json(EnrollmentCompleteResponse {
+                    recovery_codes: complete.recovery_codes,
+                    session: session_response(complete.session),
+                }),
+            )
+                .into_response()
+        }
+        Ok(Err(error)) => auth_error_response(error),
+        Err(_) => auth_error_response(AuthError::Crypto),
+    }
 }
 
 async fn create_session(
@@ -484,38 +668,98 @@ async fn create_session(
     headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> Response {
-    if !app.access.accepts_origin(&headers) {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "MANAGEMENT_ORIGIN_INVALID",
-            "요청 Origin이 관리 주소와 일치하지 않습니다.",
-            "운영 session을 생성하지 않았습니다.",
-            "설정된 HTTPS 관리 주소에서 다시 시도하십시오.",
-        );
+    if let Some(error) = invalid_origin_error(&headers, &app) {
+        return error;
     }
-    let valid_shape = request.login_code.len() == 64
-        && request
-            .login_code
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit());
-    if !valid_shape || !app.bootstrap.consume(&request.login_code) {
-        return api_error(
-            StatusCode::UNAUTHORIZED,
-            "LOGIN_CODE_REJECTED",
-            "로그인 code가 유효하지 않습니다.",
-            "운영 session을 생성하지 않았습니다.",
-            "root에서 새 단회 code를 발급한 뒤 만료 전에 다시 시도하십시오.",
-        );
+    if let Err(error) = app.sessions.allow_login_attempt() {
+        return auth_error_response(error);
     }
-    let issued = app.sessions.issue(app.access.secure_cookie());
-    (
-        [(header::SET_COOKIE, issued.set_cookie)],
-        Json(SessionResponse {
-            csrf_token: issued.csrf_token,
-            expires_in_seconds: app.sessions.ttl_seconds(),
-        }),
-    )
-        .into_response()
+    let sessions = Arc::clone(&app.sessions);
+    let secure_cookie = app.access.secure_cookie();
+    let result = match request {
+        LoginRequest::Account(request) => {
+            let second_factor = match (request.totp_code, request.recovery_code) {
+                (Some(code), None) => LoginSecondFactor::Totp(code),
+                (None, Some(code)) => LoginSecondFactor::RecoveryCode(code),
+                _ => return invalid_login_error(),
+            };
+            tokio::task::spawn_blocking(move || {
+                sessions.login(
+                    request.username,
+                    SecretString::from(request.password),
+                    second_factor,
+                    secure_cookie,
+                    unix_seconds()?,
+                )
+            })
+            .await
+        }
+        LoginRequest::BreakGlass(request) => {
+            if !valid_bootstrap_code(&request.login_code)
+                || !app.bootstrap.consume(&request.login_code)
+            {
+                return login_code_error();
+            }
+            tokio::task::spawn_blocking(move || {
+                sessions.issue_break_glass(secure_cookie, unix_seconds()?)
+            })
+            .await
+        }
+    };
+    match result {
+        Ok(Ok(issued)) => {
+            let cookie = issued.set_cookie.clone();
+            (
+                [(header::SET_COOKIE, cookie)],
+                Json(session_response(issued)),
+            )
+                .into_response()
+        }
+        Ok(Err(AuthError::RateLimited)) => auth_error_response(AuthError::RateLimited),
+        Ok(Err(_)) => invalid_login_error(),
+        Err(_) => auth_error_response(AuthError::Crypto),
+    }
+}
+
+async fn delete_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+        return error;
+    }
+    let sessions = Arc::clone(&app.sessions);
+    let secure_cookie = app.access.secure_cookie();
+    match tokio::task::spawn_blocking(move || sessions.logout(&headers, secure_cookie)).await {
+        Ok(Ok(Some(cookie))) => (
+            [(header::SET_COOKIE, cookie)],
+            Json(SessionMutationResponse {
+                logged_out: true,
+                revoked_sessions: 1,
+            }),
+        )
+            .into_response(),
+        Ok(Ok(None)) => invalid_login_error(),
+        _ => auth_error_response(AuthError::Crypto),
+    }
+}
+
+async fn revoke_all_sessions(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+        return error;
+    }
+    let sessions = Arc::clone(&app.sessions);
+    let auth_headers = headers.clone();
+    let secure_cookie = app.access.secure_cookie();
+    match tokio::task::spawn_blocking(move || sessions.revoke_all(&auth_headers)).await {
+        Ok(Ok(Some(count))) => (
+            [(header::SET_COOKIE, expired_session_cookie(secure_cookie))],
+            Json(SessionMutationResponse {
+                logged_out: true,
+                revoked_sessions: count,
+            }),
+        )
+            .into_response(),
+        Ok(Ok(None)) => invalid_login_error(),
+        _ => auth_error_response(AuthError::Crypto),
+    }
 }
 
 async fn manual_hold(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -539,7 +783,7 @@ async fn apply_provider_action(
     headers: &HeaderMap,
     restore: bool,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(headers, app) {
+    if let Some(error) = mutation_authorization_error(headers, app).await {
         return error;
     }
     let Some(operation_id) = headers
@@ -690,7 +934,7 @@ async fn apply_provider_action(
 }
 
 async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> Response {
-    if let Some(error) = mutation_authorization_error(headers, app) {
+    if let Some(error) = mutation_authorization_error(headers, app).await {
         return error;
     }
     let Some(operation_id) = headers
@@ -764,7 +1008,7 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
     .into_response()
 }
 
-fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Option<Response> {
+async fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Option<Response> {
     if !app.access.accepts_origin(headers) {
         return Some(api_error(
             StatusCode::FORBIDDEN,
@@ -774,7 +1018,15 @@ fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Option<R
             "설정된 HTTPS 관리 주소에서 다시 시도하십시오.",
         ));
     }
-    if !app.sessions.authorize(headers) {
+    let sessions = Arc::clone(&app.sessions);
+    let headers = headers.clone();
+    let authorized = tokio::task::spawn_blocking(move || sessions.authorize(&headers))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+        .is_some();
+    if !authorized {
         return Some(api_error(
             StatusCode::FORBIDDEN,
             "CSRF_AUTH_REQUIRED",
@@ -784,6 +1036,122 @@ fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Option<R
         ));
     }
     None
+}
+
+fn invalid_origin_error(headers: &HeaderMap, app: &AppState) -> Option<Response> {
+    (!app.access.accepts_origin(headers)).then(|| {
+        api_error(
+            StatusCode::FORBIDDEN,
+            "MANAGEMENT_ORIGIN_INVALID",
+            "요청 Origin이 관리 주소와 일치하지 않습니다.",
+            "인증 상태를 변경하지 않았습니다.",
+            "설정된 HTTPS 관리 주소에서 다시 시도하십시오.",
+        )
+    })
+}
+
+fn session_response(issued: IssuedSession) -> SessionResponse {
+    SessionResponse {
+        csrf_token: issued.csrf_token,
+        expires_in_seconds: issued.expires_in_seconds,
+        actor: issued.actor,
+        authentication_method: issued.authentication_method.as_str().to_owned(),
+    }
+}
+
+fn valid_bootstrap_code(code: &str) -> bool {
+    code.len() == 64 && code.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn login_code_error() -> Response {
+    api_error(
+        StatusCode::UNAUTHORIZED,
+        "LOGIN_CODE_REJECTED",
+        "단회 설정·복구 code가 유효하지 않습니다.",
+        "관리자 등록 또는 break-glass session을 생성하지 않았습니다.",
+        "서버에서 새 단회 code를 발급한 뒤 만료 전에 다시 시도하십시오.",
+    )
+}
+
+fn invalid_login_error() -> Response {
+    api_error(
+        StatusCode::UNAUTHORIZED,
+        "ADMIN_AUTH_REJECTED",
+        "관리자 인증 정보가 올바르지 않습니다.",
+        "운영 session을 생성하지 않았습니다.",
+        "관리자 ID, 비밀번호와 2단계 인증값을 확인하십시오.",
+    )
+}
+
+fn auth_error_response(error: AuthError) -> Response {
+    match error {
+        AuthError::InvalidUsername => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "ADMIN_USERNAME_INVALID",
+            "관리자 ID 형식이 올바르지 않습니다.",
+            "관리자 등록을 진행하지 않았습니다.",
+            "영문·숫자로 시작하는 3~32자의 영문·숫자·점·밑줄·하이픈을 사용하십시오.",
+        ),
+        AuthError::WeakPassword => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "ADMIN_PASSWORD_WEAK",
+            "비밀번호 길이 정책을 충족하지 못했습니다.",
+            "관리자 등록을 진행하지 않았습니다.",
+            "12자 이상 1,024 byte 이하의 비밀번호를 사용하십시오.",
+        ),
+        AuthError::AlreadyConfigured => api_error(
+            StatusCode::CONFLICT,
+            "ADMIN_ALREADY_CONFIGURED",
+            "최초 관리자 계정이 이미 등록됐습니다.",
+            "기존 계정과 TOTP 설정을 변경하지 않았습니다.",
+            "기존 관리자 계정으로 로그인하거나 서버에서 break-glass code를 발급하십시오.",
+        ),
+        AuthError::EnrollmentUnavailable => api_error(
+            StatusCode::GONE,
+            "ADMIN_ENROLLMENT_UNAVAILABLE",
+            "관리자 등록 session이 없거나 만료됐습니다.",
+            "관리자 계정과 TOTP를 저장하지 않았습니다.",
+            "새 단회 설정 code로 등록을 다시 시작하십시오.",
+        ),
+        AuthError::InvalidTotp => api_error(
+            StatusCode::UNAUTHORIZED,
+            "ADMIN_TOTP_REJECTED",
+            "2단계 인증 code가 올바르지 않습니다.",
+            "관리자 등록을 완료하지 않았습니다.",
+            "인증기 시간과 6자리 code를 확인하십시오.",
+        ),
+        AuthError::RateLimited => {
+            let mut response = api_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "ADMIN_LOGIN_RATE_LIMITED",
+                "관리자 인증 시도 한도를 초과했습니다.",
+                "추가 인증 시도를 잠시 받지 않습니다.",
+                "60초 후 다시 시도하십시오.",
+            );
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+            response
+        }
+        AuthError::InvalidCredentials => invalid_login_error(),
+        AuthError::Store(_) | AuthError::Crypto | AuthError::Clock => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ADMIN_AUTH_UNAVAILABLE",
+            "관리자 인증 service가 요청을 완료하지 못했습니다.",
+            "인증 정보와 운영 상태를 변경하지 않았습니다.",
+            "VPSGuard control 로그와 인증 database 상태를 확인하십시오.",
+        ),
+    }
+}
+
+fn expired_session_cookie(secure: bool) -> String {
+    let name = if secure {
+        "__Host-vps_guard_session"
+    } else {
+        "vps_guard_session"
+    };
+    let secure_attribute = if secure { "; Secure" } else { "" };
+    format!("{name}=; Path=/; HttpOnly; SameSite=Strict{secure_attribute}; Max-Age=0")
 }
 
 fn api_error(

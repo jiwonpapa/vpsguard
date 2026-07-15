@@ -7,10 +7,12 @@ import {
   CircleDot,
   Cpu,
   KeyRound,
+  LogOut,
   Moon,
   Network,
   Route,
   ShieldCheck,
+  ShieldX,
   Sun,
   Users,
 } from "lucide-react";
@@ -31,7 +33,7 @@ const navigation = [
 
 export function AppShell() {
   const queryClient = useQueryClient();
-  const { openLogin } = useAuth();
+  const { authenticated, actor, logout, openLogin, revokeAll } = useAuth();
   const [connected, setConnected] = useState(false);
   const [dark, setDark] = useState(true);
 
@@ -64,9 +66,19 @@ export function AppShell() {
             <CircleDot className={cn("size-3", connected ? "text-emerald-400" : "text-amber-400")} />
             {connected ? "SSE 연결됨" : "재연결 중"}
           </div>
-          <Button variant="ghost" size="icon" onClick={openLogin} aria-label="운영 session 로그인">
-            <KeyRound className="size-4" />
-          </Button>
+          {authenticated ? (
+            <>
+              <span className="hidden font-mono text-[10px] text-zinc-500 lg:inline">{actor}</span>
+              <Button variant="ghost" size="icon" onClick={revokeAll} aria-label="모든 관리자 session 로그아웃" title="모든 관리자 session 로그아웃"><ShieldX className="size-4" /></Button>
+              <Button variant="ghost" size="icon" onClick={() => void logout()} aria-label={`${actor ?? "관리자"} 로그아웃`} title={`${actor ?? "관리자"} 로그아웃`}>
+                <LogOut className="size-4" />
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="icon" onClick={openLogin} aria-label="VPSGuard 관리자 로그인">
+              <KeyRound className="size-4" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="테마 전환">
             {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </Button>

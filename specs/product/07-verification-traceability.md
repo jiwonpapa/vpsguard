@@ -112,9 +112,11 @@ last_reviewed: 2026-07-15
 | `UI-012` | `web/tests/permissions.spec.ts` | role별 IP·export·action matrix |
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |
+| `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 계정·TOTP 로그인과 terminal 없는 일상 접속 browser report |
 | `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |
+| `SEC-012`, `SEC-013`, `SEC-014` | `crates/guard-control/src/auth/tests.rs`, `crates/guard-control/src/api/tests.rs` | 2GB VPS 재시작 session, TOTP·복구 코드와 auth DB secret scan report |
 | `NFR-001`, `NFR-002` | Criterion + k6 regression | 2GB VPS perf artifact |
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |

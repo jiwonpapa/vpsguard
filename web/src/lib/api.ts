@@ -13,6 +13,32 @@ import type {
 
 let csrfToken = "";
 
+export interface AuthStatus {
+  setup_required: boolean;
+  password_login_enabled: boolean;
+  totp_required: boolean;
+  break_glass_available: boolean;
+}
+
+export interface SessionInfo {
+  csrf_token: string;
+  expires_in_seconds: number;
+  actor: string;
+  authentication_method: string;
+}
+
+export interface EnrollmentStart {
+  enrollment_id: string;
+  secret_base32: string;
+  otpauth_uri: string;
+  expires_in_seconds: number;
+}
+
+export interface EnrollmentComplete {
+  recovery_codes: string[];
+  session: SessionInfo;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -43,29 +69,108 @@ export async function getJson<T>(path: string): Promise<T> {
   return parseResponse<T>(response);
 }
 
-export async function createSession(token: string): Promise<void> {
+async function sessionRequest(body: Record<string, string>): Promise<SessionInfo> {
   const response = await fetch("/api/v1/session", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ login_code: token }),
+    body: JSON.stringify(body),
   });
-  const body = await parseResponse<{ csrf_token: string }>(response);
-  csrfToken = body.csrf_token;
+  const session = await parseResponse<SessionInfo>(response);
+  csrfToken = session.csrf_token;
+  return session;
 }
 
-export async function restoreSession(): Promise<boolean> {
+export function getAuthStatus(): Promise<AuthStatus> {
+  return getJson<AuthStatus>("/api/v1/auth/status");
+}
+
+export function loginWithTotp(
+  username: string,
+  password: string,
+  totpCode: string,
+): Promise<SessionInfo> {
+  return sessionRequest({ username, password, totp_code: totpCode });
+}
+
+export function loginWithRecoveryCode(
+  username: string,
+  password: string,
+  recoveryCode: string,
+): Promise<SessionInfo> {
+  return sessionRequest({ username, password, recovery_code: recoveryCode });
+}
+
+export function createBreakGlassSession(token: string): Promise<SessionInfo> {
+  return sessionRequest({ login_code: token });
+}
+
+export async function startEnrollment(
+  loginCode: string,
+  username: string,
+  password: string,
+): Promise<EnrollmentStart> {
+  const response = await fetch("/api/v1/auth/enrollment", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_code: loginCode, username, password }),
+  });
+  return parseResponse<EnrollmentStart>(response);
+}
+
+export async function confirmEnrollment(
+  enrollmentId: string,
+  totpCode: string,
+): Promise<EnrollmentComplete> {
+  const response = await fetch("/api/v1/auth/enrollment/confirm", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enrollment_id: enrollmentId, totp_code: totpCode }),
+  });
+  const complete = await parseResponse<EnrollmentComplete>(response);
+  csrfToken = complete.session.csrf_token;
+  return complete;
+}
+
+export async function restoreSession(): Promise<SessionInfo | null> {
   const response = await fetch("/api/v1/session", {
     cache: "no-store",
     credentials: "same-origin",
   });
   if (response.status === 401) {
     csrfToken = "";
-    return false;
+    return null;
   }
-  const body = await parseResponse<{ csrf_token: string }>(response);
+  const body = await parseResponse<SessionInfo>(response);
   csrfToken = body.csrf_token;
-  return true;
+  return body;
+}
+
+export async function logoutSession(): Promise<void> {
+  if (!csrfToken) return;
+  const response = await fetch("/api/v1/session", {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+  await parseResponse(response);
+  csrfToken = "";
+}
+
+export async function revokeAllSessions(): Promise<number> {
+  if (!csrfToken) {
+    throw new ApiError("관리자 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
+  }
+  const response = await fetch("/api/v1/sessions/revoke-all", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+  const body = await parseResponse<{ revoked_sessions: number }>(response);
+  csrfToken = "";
+  return body.revoked_sessions;
 }
 
 export async function performAction(path: string): Promise<ActionResponse> {

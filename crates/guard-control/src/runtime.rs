@@ -27,7 +27,8 @@ use uuid::Uuid;
 
 use crate::admin_socket::spawn_admin_socket;
 use crate::api::{AppState, router};
-use crate::auth::{BootstrapStore, SessionStore, UiAccessPolicy};
+use crate::auth::{AuthError, BootstrapStore, SessionStore, UiAccessPolicy};
+use crate::auth_store::{AuthRepository, AuthStoreError};
 use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{RetentionCutoffs, SqliteStore, StorageError, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
@@ -54,6 +55,12 @@ pub enum ControlError {
     /// SQLite 저장소 초기화 실패입니다.
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// 관리자 인증 저장소 초기화 실패입니다.
+    #[error(transparent)]
+    AuthStore(#[from] AuthStoreError),
+    /// 관리자 인증 service 초기화 실패입니다.
+    #[error(transparent)]
+    Auth(#[from] AuthError),
     /// Provider adapter 초기화 실패입니다.
     #[error(transparent)]
     Provider(#[from] ProviderControllerError),
@@ -94,6 +101,8 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         config.storage.min_disk_free_bytes,
         config.retention.raw_ip_days > 0,
     )?);
+    let auth_repository = Arc::new(AuthRepository::open(&config.storage.database_path)?);
+    let sessions = SessionStore::new(auth_repository, config.ui.login_rate_limit_rpm)?;
     let provider = Arc::new(Mutex::new(ProviderController::from_config(&config)?));
     let initial_tls = {
         let tls = config.tls.clone();
@@ -121,7 +130,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         completed_actions: Mutex::new(VecDeque::with_capacity(1_024)),
         storage: Arc::clone(&storage),
         events,
-        sessions: SessionStore::new(),
+        sessions: Arc::new(sessions),
         access: UiAccessPolicy::from_config(&config.ui),
         provider,
         provider_action_active: Arc::new(AtomicBool::new(false)),

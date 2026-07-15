@@ -117,6 +117,8 @@
 - Control UI는 loopback에 bind하고 public 접속은 edge의 별도 HTTPS 관리 Host로만 제공합니다.
 - Control 포트를 public에 열거나 관리 Host 요청을 애플리케이션 origin으로 fallback하지 않습니다.
 - SSH는 초기 단회 로그인 코드 발급과 복구 경로로 유지하며 일상 UI 접속에 tunnel을 요구하지 않습니다.
+- 일상 인증은 Linux·SSH 계정과 분리된 VPSGuard 관리자 ID·비밀번호와 TOTP를 사용하고 복구 코드는 일회용으로 소비합니다.
+- 비밀번호, TOTP seed, 복구 코드와 session 원문을 평문 저장하거나 로그·API에 다시 노출하지 않습니다.
 - 실시간 트래픽, 외부 IP, route, server resource, provider, TLS와 사건 상태를 표시합니다.
 - `주의`, `대기`, `실패`만 표시하지 않고 원인, 영향, 조치와 복구 조건을 설명합니다.
 - stale, delayed, unavailable과 error를 정상값과 명확히 구분합니다.

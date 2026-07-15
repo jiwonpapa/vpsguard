@@ -46,6 +46,19 @@ async function mockApi(page: Page) {
       });
       return;
     }
+    if (path === "/api/v1/auth/status") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          setup_required: false,
+          password_login_enabled: true,
+          totp_required: true,
+          break_glass_available: true,
+        }),
+      });
+      return;
+    }
     const data: Record<string, unknown> = {
       "/api/v1/status": status,
       "/api/v1/traffic/summary": {
@@ -205,10 +218,43 @@ test("switches between live and persisted traffic resolutions", async ({ page })
   await expect(page.getByRole("img", { name: "1s 요청 추이" })).toBeVisible();
 });
 
-test("mutation opens bootstrap session dialog", async ({ page }) => {
+test("mutation opens administrator two-factor login dialog", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "자동 대응 중지" }).click();
   await expect(page.getByRole("dialog", { name: "운영 명령 확인" })).toBeVisible();
   await page.getByRole("button", { name: "확인 후 실행" }).click();
-  await expect(page.getByRole("dialog", { name: "운영 session 시작" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "VPSGuard 관리자 로그인" })).toBeVisible();
+  await expect(page.getByLabel("관리자 ID")).toBeVisible();
+  await expect(page.getByLabel("인증기 6자리 코드")).toBeVisible();
+});
+
+test("authenticated administrator can revoke every session with confirmation", async ({ page }) => {
+  await page.route("**/api/v1/session", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          csrf_token: "csrf-fixture",
+          expires_in_seconds: 3600,
+          actor: "guard.admin",
+          authentication_method: "password_totp",
+        }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.route("**/api/v1/sessions/revoke-all", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ logged_out: true, revoked_sessions: 2 }),
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "모든 관리자 session 로그아웃" }).click();
+  await expect(page.getByRole("dialog", { name: "모든 관리자 session 폐기" })).toBeVisible();
+  await page.getByRole("button", { name: "모두 로그아웃" }).click();
+  await expect(page.getByRole("button", { name: "VPSGuard 관리자 로그인" })).toBeVisible();
 });

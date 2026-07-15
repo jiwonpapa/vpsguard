@@ -68,6 +68,7 @@ UI-011|CODE_ONLY|web/src/app-shell.tsx|-|-
 UI-012|PLANNED|-|-|-
 UI-013|CODE_ONLY|web/src/components/query-state.tsx|-|-
 UI-014|CODE_ONLY|web/src/router.tsx|-|-
+UI-015|AUTO_PASS|web/src/auth.tsx|web/tests/console.e2e.ts|-
 OPS-001|VPS_PASS|scripts/deploy-g7devops.sh|scripts/tests/deployment-restore-harness.sh|specs/product/evidence/g7devops-shadow-roundtrip-20260715.md
 OPS-002|CODE_ONLY|crates/guard-system/src/plan.rs|-|-
 OPS-003|VPS_PASS|scripts/cutover-g7devops-direct-remote.sh|scripts/tests/ingress-transaction-harness.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
@@ -89,6 +90,9 @@ SEC-008|AUTO_PASS|crates/guard-edge/src/security.rs|scripts/integration-gate.sh|
 SEC-009|AUTO_PASS|crates/guard-edge/src/security.rs|scripts/integration-gate.sh|-
 SEC-010|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 SEC-011|AUTO_PASS|docs/APP_SECURITY.md|scripts/integration-gate.sh|-
+SEC-012|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
+SEC-013|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
+SEC-014|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
 NFR-001|PLANNED|-|-|-
 NFR-002|CODE_ONLY|crates/guard-edge/src/rate_limit.rs|-|-
 NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-

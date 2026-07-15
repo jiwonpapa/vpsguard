@@ -15,10 +15,13 @@ use guard_core::config::{DetectionMode, InspectionMode, SecurityConfig, UiConfig
 use guard_core::{GuardMode, GuardState};
 use guard_system::{AtomicJsonStore, inspect_tls_management};
 use tokio::sync::{RwLock, broadcast};
+use totp_rs::{Algorithm, Secret, TOTP};
 use tower::ServiceExt;
 
 use super::{AppState, ProviderActionLease, router};
-use crate::auth::{BootstrapStore, IssuedSession, SessionStore, UiAccessPolicy};
+use crate::auth::{
+    AuthError, BootstrapStore, IssuedSession, SessionStore, UiAccessPolicy, unix_seconds,
+};
 use crate::storage::SqliteStore;
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
@@ -71,7 +74,7 @@ fn app_with_options(
         completed_actions: Mutex::new(VecDeque::new()),
         storage: Arc::new(SqliteStore::in_memory()?),
         events,
-        sessions: SessionStore::new(),
+        sessions: Arc::new(SessionStore::in_memory(10)?),
         access: UiAccessPolicy::from_config(&ui),
         provider: Arc::new(Mutex::new(None)),
         provider_action_active: Arc::new(AtomicBool::new(false)),
@@ -84,6 +87,27 @@ fn session_cookie(issued: &IssuedSession) -> &str {
         .split(';')
         .next()
         .unwrap_or(issued.set_cookie.as_str())
+}
+
+fn issue_session(state: &AppState) -> Result<IssuedSession, AuthError> {
+    state.sessions.issue_break_glass(false, unix_seconds()?)
+}
+
+fn enrollment_totp(
+    secret_base32: &str,
+    username: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let secret = Secret::Encoded(secret_base32.to_owned()).to_bytes()?;
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        secret,
+        Some("VPSGuard".to_owned()),
+        username.to_owned(),
+    )?;
+    Ok(totp.generate(u64::try_from(unix_seconds()?)?))
 }
 
 fn action_request(
@@ -232,7 +256,7 @@ async fn existing_cookie_restores_csrf_without_a_new_login_code()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let state = app(&directory.path().join("state.json"))?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(state)
         .oneshot(
             Request::get("/api/v1/session")
@@ -257,7 +281,7 @@ async fn status_exposes_the_active_inspection_mode() -> Result<(), Box<dyn std::
     Arc::get_mut(&mut state)
         .ok_or("exclusive app state unavailable")?
         .inspection_mode = InspectionMode::ProtocolOnly;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(state)
         .oneshot(
             Request::get("/api/v1/status")
@@ -289,7 +313,7 @@ async fn status_exposes_effective_application_security_posture()
     mutable.security.csp_mode = guard_core::config::CspMode::Enforce;
     mutable.security.hsts_max_age_seconds = 86_400;
     mutable.security.auth_rate_limit_rpm = 6;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(state)
         .oneshot(
             Request::get("/api/v1/status")
@@ -312,7 +336,7 @@ async fn csrf_and_origin_are_required_after_session_authentication()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let state = app(&directory.path().join("state.json"))?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(state)
         .oneshot(
             Request::post("/api/v1/actions/manual-hold")
@@ -335,7 +359,7 @@ async fn tls_assisted_plan_requires_mode_and_returns_no_apply_command()
         None,
         guard_core::config::TlsManagementMode::VpsguardAssisted,
     )?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(state)
         .oneshot(
             Request::post("/api/v1/tls/assisted-plan")
@@ -360,7 +384,7 @@ async fn tls_assisted_plan_requires_mode_and_returns_no_apply_command()
 async fn duplicate_action_is_not_applied_twice() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let state = app(&directory.path().join("state.json"))?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let first = router(Arc::clone(&state))
         .oneshot(action_request(
             "/api/v1/actions/manual-hold",
@@ -393,7 +417,7 @@ async fn duplicate_action_is_not_applied_twice() -> Result<(), Box<dyn std::erro
 async fn reused_key_for_different_action_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let state = app(&directory.path().join("state.json"))?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let first = router(Arc::clone(&state))
         .oneshot(action_request(
             "/api/v1/actions/manual-hold",
@@ -418,7 +442,7 @@ async fn unconfigured_provider_fails_without_changing_mode()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let state = app(&directory.path().join("state.json"))?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(Arc::clone(&state))
         .oneshot(action_request(
             "/api/v1/actions/emergency-proxy",
@@ -465,7 +489,7 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
         .await?;
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let authenticated = router(state)
         .oneshot(
             Request::get("/api/v1/clients")
@@ -532,7 +556,7 @@ async fn resources_exposes_bounded_storage_health_to_authenticated_session()
             slow_requests: 0,
         }),
     });
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
     let response = router(state)
         .oneshot(
             Request::get("/api/v1/resources")
@@ -584,7 +608,7 @@ async fn traffic_series_selects_one_second_ten_second_and_minute_layers()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .ingest(&telemetry);
     state.storage.record_traffic(&telemetry)?;
-    let issued = state.sessions.issue(false);
+    let issued = issue_session(&state)?;
 
     for (resolution, expected_bucket) in [("1s", 61_000), ("10s", 60_000), ("1m", 60_000)] {
         let response = router(Arc::clone(&state))
@@ -602,5 +626,136 @@ async fn traffic_series_selects_one_second_ten_second_and_minute_layers()
         let value = serde_json::from_slice::<serde_json::Value>(&body)?;
         assert_eq!(value["items"][0]["bucket_unix_ms"], expected_bucket);
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn account_enrollment_totp_recovery_and_logout_work_through_api()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    let bootstrap = state
+        .bootstrap
+        .issue(Duration::from_secs(300))
+        .ok_or("bootstrap issue failed")?;
+
+    let setup = router(Arc::clone(&state))
+        .oneshot(
+            Request::post("/api/v1/auth/enrollment")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "login_code": bootstrap.code,
+                        "username": "guard.admin",
+                        "password": "correct horse battery staple"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(setup.status(), StatusCode::OK);
+    let setup_body = to_bytes(setup.into_body(), 16_384).await?;
+    let setup_json = serde_json::from_slice::<serde_json::Value>(&setup_body)?;
+    let enrollment_id = setup_json["enrollment_id"]
+        .as_str()
+        .ok_or("enrollment id missing")?;
+    let secret = setup_json["secret_base32"]
+        .as_str()
+        .ok_or("secret missing")?;
+    let code = enrollment_totp(secret, "guard.admin")?;
+
+    let confirmed = router(Arc::clone(&state))
+        .oneshot(
+            Request::post("/api/v1/auth/enrollment/confirm")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "enrollment_id": enrollment_id,
+                        "totp_code": code
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(confirmed.status(), StatusCode::OK);
+    let cookie = confirmed
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .ok_or("session cookie missing")?
+        .to_owned();
+    let confirmed_body = to_bytes(confirmed.into_body(), 16_384).await?;
+    let confirmed_json = serde_json::from_slice::<serde_json::Value>(&confirmed_body)?;
+    assert_eq!(confirmed_json["session"]["actor"], "guard.admin");
+    assert_eq!(
+        confirmed_json["recovery_codes"].as_array().map(Vec::len),
+        Some(10)
+    );
+    let csrf = confirmed_json["session"]["csrf_token"]
+        .as_str()
+        .ok_or("csrf missing")?;
+    let recovery = confirmed_json["recovery_codes"][0]
+        .as_str()
+        .ok_or("recovery code missing")?
+        .to_owned();
+
+    let logout = router(Arc::clone(&state))
+        .oneshot(
+            Request::delete("/api/v1/session")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("cookie", cookie)
+                .header("x-csrf-token", csrf)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(logout.status(), StatusCode::OK);
+    assert!(
+        logout
+            .headers()
+            .get("set-cookie")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("Max-Age=0"))
+    );
+
+    let recovery_body = serde_json::json!({
+        "username": "guard.admin",
+        "password": "correct horse battery staple",
+        "recovery_code": recovery
+    })
+    .to_string();
+    let recovery_login = router(Arc::clone(&state))
+        .oneshot(
+            Request::post("/api/v1/session")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("content-type", "application/json")
+                .body(Body::from(recovery_body.clone()))?,
+        )
+        .await?;
+    assert_eq!(recovery_login.status(), StatusCode::OK);
+    let recovery_json = serde_json::from_slice::<serde_json::Value>(
+        &to_bytes(recovery_login.into_body(), 4_096).await?,
+    )?;
+    assert_eq!(recovery_json["authentication_method"], "password_recovery");
+
+    let reused = router(state)
+        .oneshot(
+            Request::post("/api/v1/session")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("content-type", "application/json")
+                .body(Body::from(recovery_body))?,
+        )
+        .await?;
+    assert_eq!(reused.status(), StatusCode::UNAUTHORIZED);
+    let reused_json =
+        serde_json::from_slice::<serde_json::Value>(&to_bytes(reused.into_body(), 4_096).await?)?;
+    assert_eq!(reused_json["error"]["code"], "ADMIN_AUTH_REJECTED");
     Ok(())
 }

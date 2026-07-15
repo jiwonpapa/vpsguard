@@ -3,6 +3,7 @@
 mod admin_socket;
 mod api;
 mod auth;
+mod auth_store;
 mod provider;
 mod runtime;
 mod storage;
