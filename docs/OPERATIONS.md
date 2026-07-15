@@ -12,13 +12,35 @@
 ```bash
 CARGO_BUILD_TOOL=cross cargo xtask release x86_64-unknown-linux-gnu
 bash scripts/deploy-g7devops.sh --plan
-VPS_GUARD_DEPLOY_CONFIRM=g7devops-shadow \
+bash scripts/deploy-g7devops.sh --preflight \
+  target/release-bundle/x86_64-unknown-linux-gnu/vpsguard-<version> \
+  configs/vps-guard.g7devops.shadow.toml
+
+VPS_GUARD_DEPLOY_CONFIRM=g7devops-shadow:<BUILD-INFO의-git-commit> \
   bash scripts/deploy-g7devops.sh --apply \
   target/release-bundle/x86_64-unknown-linux-gnu/vpsguard-<version> \
-  /path/to/g7devops-shadow.toml
+  configs/vps-guard.g7devops.shadow.toml
 ```
 
-이 단계는 public Nginx와 80/443을 변경하지 않습니다. release checksum·target, 원격 architecture와 config를 먼저 검증합니다. 기존 `/etc/vps-guard/config.toml`은 후보와 byte 단위로 같을 때만 유지하며 자동 덮어쓰지 않습니다. 원격 smoke는 loopback edge/control health, origin ready와 systemd 상태를 확인합니다.
+`--preflight`는 Ubuntu 24.04·x86_64·2GB, Nginx·PHP 8.5·MySQL·Redis·G7 service, `/home/g7devops/public_html/public`, loopback origin 8080과 public listener를 읽기 전용으로 검증합니다. `--apply`는 `BUILD-INFO.txt`의 정확한 commit 확인값을 요구합니다.
+
+apply 직전에 root-only deployment snapshot을 만들고 binary·unit·drop-in·config·Cloudflare token·service enable/active와 first-install directory의 기존/부재 상태를 기록합니다. 실패하면 자동 복구하고, 성공 뒤에도 snapshot ID를 출력합니다. SSH·Nginx·인증서·G7 site source와 non-VPSGuard listener는 복구 대상으로 덮어쓰지 않고 전후 hash·상태가 같아야만 성공합니다.
+
+Cloudflare token은 로컬 `secrets/cloudflare-token`에서 SSH stdin으로만 전달해 `/etc/vps-guard/secrets/cloudflare-token`의 `root:root 0600` 파일로 설치합니다. bundle, remote user staging file, argv, log와 evidence에는 넣지 않습니다. 기존 원격 token이나 `/etc/vps-guard/config.toml`이 후보와 byte 단위로 다르면 덮어쓰지 않고 배포 전체를 복구합니다.
+
+이 단계는 public Nginx와 80/443, Cloudflare DNS mode를 변경하지 않습니다. 원격 smoke는 loopback edge/control health, origin ready, Nginx config와 보호 경계를 확인합니다.
+
+## g7devops 배포 원상복귀
+
+```bash
+bash scripts/restore-g7devops.sh --list
+bash scripts/restore-g7devops.sh --verify deploy-<timestamp>-<pid>
+
+VPS_GUARD_RESTORE_CONFIRM=g7devops:deploy-<timestamp>-<pid> \
+  bash scripts/restore-g7devops.sh --apply deploy-<timestamp>-<pid>
+```
+
+복구는 snapshot checksum과 server machine ID를 먼저 확인합니다. VPSGuard가 원래 없던 first install이면 새 binary·unit·drop-in·config·token·state directory와 전용 system account를 제거하고 service 상태를 원래대로 돌립니다. 기존 설치 update라면 snapshot에 있던 파일과 enable/active 상태를 복구하되 runtime data는 보존합니다. 마지막에 Nginx 문법·80/443과 보호 hash를 다시 확인합니다. snapshot 자체는 root-only 운영 증거로 남깁니다.
 
 ## Public ingress와 bypass
 

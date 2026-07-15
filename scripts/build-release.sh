@@ -14,17 +14,27 @@ cd "${repo_root}"
   -p guard-cli -p guard-control -p guard-edge
 
 rm -rf "${bundle}"
-mkdir -p "${bundle}/bin" "${bundle}/systemd" "${bundle}/tmpfiles" \
-  "${bundle}/certbot" "${bundle}/scripts" "${bundle}/sbom"
+mkdir -p "${bundle}/bin" \
+  "${bundle}/systemd/vps-guard-control.service.d" \
+  "${bundle}/systemd-examples" \
+  "${bundle}/tmpfiles" "${bundle}/certbot" "${bundle}/scripts" "${bundle}/sbom"
 install -m 0755 "target/${target}/release/vps-guard" "${bundle}/bin/"
 install -m 0755 "target/${target}/release/vps-guard-control" "${bundle}/bin/"
 install -m 0755 "target/${target}/release/vps-guard-edge" "${bundle}/bin/"
 install -m 0644 packaging/systemd/*.service "${bundle}/systemd/"
-install -m 0644 packaging/systemd/*.conf.example "${bundle}/systemd/"
+install -m 0644 \
+  packaging/systemd/vps-guard-control-cloudflare-credential.conf \
+  "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf"
+install -m 0644 packaging/systemd/*.conf.example "${bundle}/systemd-examples/"
 install -m 0644 packaging/tmpfiles/vps-guard.conf "${bundle}/tmpfiles/"
 install -m 0644 packaging/ownership-manifest.txt "${bundle}/"
 install -m 0755 packaging/certbot/vps-guard-deploy-hook "${bundle}/certbot/"
-install -m 0755 scripts/ingress-transaction.sh scripts/update-release.sh scripts/uninstall.sh "${bundle}/scripts/"
+install -m 0755 \
+  scripts/deployment-state.sh \
+  scripts/ingress-transaction.sh \
+  scripts/update-release.sh \
+  scripts/uninstall.sh \
+  "${bundle}/scripts/"
 install -m 0644 configs/vps-guard.example.toml "${bundle}/"
 install -m 0644 docs/OPERATIONS.md "${bundle}/"
 

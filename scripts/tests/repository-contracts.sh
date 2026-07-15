@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # repository contracts intentionally search literal shell expressions
 set -euo pipefail
 
 # OPS-007, NFR-005, NFR-007: 저장소 게이트는 CI 기본 이미지에서 재현되고 미수집 증거를
@@ -31,6 +32,19 @@ if grep -Fq 'vpsguard-0.1.0' .github/workflows/release.yml; then
   exit 1
 fi
 grep -Fq 'SHA256SUMS' scripts/deploy-g7devops.sh
+grep -Fq 'g7devops-shadow:${git_commit}' scripts/deploy-g7devops.sh
+grep -Fq 'scripts/deployment-state.sh' scripts/deploy-g7devops.sh
+grep -Fq '<"${token_file}"' scripts/deploy-g7devops.sh
+if grep -Eq 'scp[^\n]*(cloudflare|token)' scripts/deploy-g7devops.sh; then
+  echo "Cloudflare token must not be copied as a staging artifact" >&2
+  exit 1
+fi
+grep -Fq 'deployment-state.sh" --snapshot' scripts/update-release.sh
+grep -Fq 'VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot' scripts/update-release.sh
+grep -Fq 'systemd/vps-guard-control.service.d/20-cloudflare-credential.conf' scripts/build-release.sh
+grep -Fq 'systemd-examples' scripts/build-release.sh
+grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
+grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
 grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
 
