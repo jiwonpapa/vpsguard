@@ -2,7 +2,7 @@
 
 use super::{
     ProviderBackend, ProviderError, ProviderRecordSnapshot, ProviderSnapshot, ProviderStage,
-    ProviderTransaction, provider_error_code,
+    ProviderTransaction,
 };
 use guard_core::config::DnsRecordType;
 
@@ -256,24 +256,42 @@ fn restore_rejects_missing_or_incomplete_snapshot() -> Result<(), ProviderError>
 
 #[test]
 fn provider_errors_have_stable_codes() {
-    assert_eq!(
-        provider_error_code(&ProviderError::RecordNotAllowed("record".to_owned())),
-        "RECORD_NOT_ALLOWED"
-    );
-    assert_eq!(
-        provider_error_code(&ProviderError::ProxyNotVerified),
-        "PROXY_NOT_VERIFIED"
-    );
-    assert_eq!(
-        provider_error_code(&ProviderError::OriginLockNotVerified),
-        "ORIGIN_LOCK_NOT_VERIFIED"
-    );
-    assert_eq!(
-        provider_error_code(&ProviderError::Backend("backend".to_owned())),
-        "PROVIDER_BACKEND_FAILED"
-    );
-    assert_eq!(
-        provider_error_code(&ProviderError::MissingSnapshot),
-        "MISSING_SNAPSHOT"
-    );
+    let cases = [
+        (
+            ProviderError::RecordNotAllowed("record".to_owned()),
+            "RECORD_NOT_ALLOWED",
+        ),
+        (ProviderError::SecretFile("mode"), "SECRET_FILE_INVALID"),
+        (
+            ProviderError::Configuration("zone"),
+            "CONFIGURATION_INVALID",
+        ),
+        (ProviderError::AuthenticationFailed, "AUTHENTICATION_FAILED"),
+        (ProviderError::PermissionDenied, "PERMISSION_DENIED"),
+        (ProviderError::RateLimited, "RATE_LIMITED"),
+        (ProviderError::Unavailable, "PROVIDER_UNAVAILABLE"),
+        (ProviderError::TokenInactive, "TOKEN_INACTIVE"),
+        (
+            ProviderError::RecordMismatch("record".to_owned()),
+            "RECORD_MISMATCH",
+        ),
+        (
+            ProviderError::PartialRollbackFailed,
+            "PARTIAL_ROLLBACK_FAILED",
+        ),
+        (ProviderError::ProxyNotVerified, "PROXY_NOT_VERIFIED"),
+        (
+            ProviderError::OriginLockNotVerified,
+            "ORIGIN_LOCK_NOT_VERIFIED",
+        ),
+        (
+            ProviderError::Backend("backend".to_owned()),
+            "PROVIDER_BACKEND_FAILED",
+        ),
+        (ProviderError::MissingSnapshot, "MISSING_SNAPSHOT"),
+    ];
+
+    for (error, expected) in cases {
+        assert_eq!(error.code(), expected);
+    }
 }

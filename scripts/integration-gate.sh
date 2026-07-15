@@ -150,6 +150,10 @@ protocol_edge_pid=$!
 curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   -H 'Host: example.test' http://127.0.0.1:28082/health/live \
   >"${evidence_dir}/protocol-only-live.txt"
+# health listener가 먼저 준비될 수 있으므로 TLS listener도 별도로 대기합니다.
+protocol_tls_request /health/live \
+  --retry 40 --retry-connrefused --retry-delay 0 \
+  --output "${evidence_dir}/protocol-only-tls-live.txt"
 for _request in 1 2 3 4; do
   [[ "$(protocol_request /api/auth/login --output /dev/null --write-out '%{http_code}')" == "200" ]]
 done
