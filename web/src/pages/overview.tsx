@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { CloudCog, Pause, Play, RotateCcw, ShieldAlert } from "lucide-react";
+import { useState } from "react";
 
 import { useAuth } from "../auth";
 import { ErrorState, LoadingState } from "../components/query-state";
@@ -7,10 +8,14 @@ import { SectionHeading } from "../components/section-heading";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { api } from "../lib/api";
+import type { CertbotAssistedPlan } from "../lib/types";
 import { formatBytes, formatLatency, formatTime, MODE_LABELS, percent } from "../lib/utils";
 
 export function OverviewPage() {
   const { runAction } = useAuth();
+  const [tlsEmail, setTlsEmail] = useState("");
+  const [tlsPlan, setTlsPlan] = useState<CertbotAssistedPlan | null>(null);
+  const [tlsPlanError, setTlsPlanError] = useState("");
   const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 5_000 });
   const summary = useQuery({ queryKey: ["summary"], queryFn: api.summary, refetchInterval: 5_000 });
   const resources = useQuery({ queryKey: ["resources"], queryFn: api.resources, refetchInterval: 5_000 });
@@ -73,6 +78,61 @@ export function OverviewPage() {
           </div>
         ))}
       </section>
+
+      {state.tls_management.health !== "disabled" ? (
+        <section className="mb-10 border-b border-zinc-800 pb-5" aria-label="TLS 관리 상태">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+            <div>
+              <div className="text-sm font-semibold">TLS certificate lifecycle</div>
+              <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
+                owner {state.tls_management.ownership} · renewal {state.tls_management.renewal}
+                {state.tls_management.manager ? ` · ${state.tls_management.manager}` : ""}
+              </div>
+              <p className="mt-3 max-w-3xl text-xs leading-5 text-zinc-400">{state.tls_management.next_action}</p>
+              {state.tls_management.ownership === "vpsguard_assisted" &&
+              state.tls_management.renewal !== "healthy" ? (
+                <div className="mt-4 max-w-xl">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="email"
+                      autoComplete="email"
+                      value={tlsEmail}
+                      onChange={(event) => setTlsEmail(event.target.value)}
+                      placeholder="ACME 연락처 email"
+                      className="min-w-0 flex-1 border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 outline-none focus:border-orange-500"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setTlsPlanError("");
+                        void api
+                          .tlsAssistedPlan(tlsEmail)
+                          .then(setTlsPlan)
+                          .catch((error: Error) => setTlsPlanError(error.message));
+                      }}
+                    >
+                      Certbot 계획 보기
+                    </Button>
+                  </div>
+                  {tlsPlanError ? <p className="mt-2 text-xs text-red-400">{tlsPlanError}</p> : null}
+                  {tlsPlan ? (
+                    <ol className="mt-3 list-decimal space-y-1 pl-5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                      {tlsPlan.steps.map((step) => (
+                        <li key={step}>{step.replaceAll("_", " ")}</li>
+                      ))}
+                    </ol>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+              {state.tls_management.earliest_expiry
+                ? `expires ${formatTime(state.tls_management.earliest_expiry)}`
+                : "expiry unavailable"}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {state.provider !== "unavailable" ? (
         <section className="mb-10 flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">

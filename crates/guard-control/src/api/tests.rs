@@ -10,7 +10,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use guard_core::config::UiConfig;
 use guard_core::{GuardMode, GuardState};
-use guard_system::AtomicJsonStore;
+use guard_system::{AtomicJsonStore, inspect_tls_management};
 use tokio::sync::{RwLock, broadcast};
 use tower::ServiceExt;
 
@@ -30,6 +30,18 @@ fn app_with_public_host(
     path: &std::path::Path,
     public_host: Option<&str>,
 ) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
+    app_with_options(
+        path,
+        public_host,
+        guard_core::config::TlsManagementMode::Auto,
+    )
+}
+
+fn app_with_options(
+    path: &std::path::Path,
+    public_host: Option<&str>,
+    tls_plan_mode: guard_core::config::TlsManagementMode,
+) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
     let (events, _) = broadcast::channel(32);
     let ui = UiConfig {
         bind: LOOPBACK_HOST.parse()?,
@@ -44,6 +56,11 @@ fn app_with_public_host(
         traffic: Mutex::new(TrafficAggregator::new(10)),
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
+        tls_management: RwLock::new(inspect_tls_management(
+            &guard_core::config::TlsConfig::default(),
+        )),
+        tls_plan_mode,
+        tls_plan_domains: vec!["example.test".to_owned()],
         bootstrap: BootstrapStore::new(),
         completed_actions: Mutex::new(VecDeque::new()),
         storage: Arc::new(SqliteStore::in_memory()?),
@@ -243,6 +260,36 @@ async fn csrf_and_origin_are_required_after_session_authentication()
         )
         .await?;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[tokio::test]
+async fn tls_assisted_plan_requires_mode_and_returns_no_apply_command()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app_with_options(
+        &directory.path().join("state.json"),
+        None,
+        guard_core::config::TlsManagementMode::VpsguardAssisted,
+    )?;
+    let issued = state.sessions.issue(false);
+    let response = router(state)
+        .oneshot(
+            Request::post("/api/v1/tls/assisted-plan")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("cookie", session_cookie(&issued))
+                .header("x-csrf-token", &issued.csrf_token)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"email":"admin@example.test"}"#))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 8_192).await?;
+    let json = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(json["requires_explicit_approval"], true);
+    assert!(json.get("command").is_none());
+    assert_eq!(json["steps"][0], "verify_dns");
     Ok(())
 }
 

@@ -10,6 +10,28 @@ export interface StatusResponse {
   agent: string;
   provider: string;
   tls: string;
+  tls_management: TlsManagementSnapshot;
+}
+
+export interface TlsManagementSnapshot {
+  health: string;
+  ownership: string;
+  renewal: string;
+  manager: string | null;
+  certificate_count: number;
+  earliest_expiry: string | null;
+  error_code: string | null;
+  next_action: string;
+}
+
+export interface CertbotAssistedPlan {
+  schema_version: number;
+  domains: string[];
+  email: string;
+  webroot: string;
+  steps: string[];
+  requires_explicit_approval: boolean;
+  preserves_existing_manager: boolean;
 }
 
 export interface TrafficSummary {

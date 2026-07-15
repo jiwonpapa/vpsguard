@@ -131,9 +131,27 @@ pub enum OriginProtocol {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
+    /// 기존 갱신 소유권을 유지할 TLS 관리 정책입니다.
+    #[serde(default)]
+    pub management: TlsManagementMode,
     /// SNI 인증서 목록입니다.
     #[serde(default)]
     pub certificates: Vec<CertificateConfig>,
+}
+
+/// 인증서 갱신을 누가 소유하는지 결정하는 정책입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TlsManagementMode {
+    /// Certbot renewal과 timer를 읽기 전용으로 감지하고, 없으면 수동으로 판정합니다.
+    #[default]
+    Auto,
+    /// 서버에 이미 존재하는 외부 갱신 수단을 그대로 사용합니다.
+    ExternalManaged,
+    /// 명시적 plan·승인 뒤 VPSGuard가 Certbot 구성을 보조합니다.
+    VpsguardAssisted,
+    /// 자동 갱신 없이 관리자가 인증서 교체를 소유합니다.
+    Manual,
 }
 
 /// 한 인증서가 제공할 domain과 PEM 경로입니다.
@@ -146,6 +164,9 @@ pub struct CertificateConfig {
     pub cert_file: PathBuf,
     /// PEM private key 경로입니다.
     pub key_file: PathBuf,
+    /// systemd credential을 써도 기존 renewal을 찾을 수 있는 Certbot lineage 이름입니다.
+    #[serde(default)]
+    pub certbot_lineage: Option<String>,
 }
 
 /// loopback 관리 UI 설정입니다.
@@ -449,6 +470,40 @@ impl GuardConfig {
                 || certificate.key_file.as_os_str().is_empty()
             {
                 return invalid("tls.certificates", "domain과 PEM 경로가 필요합니다");
+            }
+            for (field, path) in [
+                ("tls.certificates.cert_file", &certificate.cert_file),
+                ("tls.certificates.key_file", &certificate.key_file),
+            ] {
+                if !path.is_absolute() && !is_systemd_credential_name(path) {
+                    return invalid(
+                        field,
+                        "절대 경로 또는 단일 systemd credential 이름이 필요합니다",
+                    );
+                }
+            }
+            if certificate.cert_file == certificate.key_file {
+                return invalid(
+                    "tls.certificates",
+                    "certificate와 private key 경로는 달라야 합니다",
+                );
+            }
+            if certificate
+                .certbot_lineage
+                .as_deref()
+                .is_some_and(|lineage| {
+                    lineage.is_empty()
+                        || lineage.len() > 128
+                        || !lineage.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                        })
+                        || matches!(lineage, "." | "..")
+                })
+            {
+                return invalid(
+                    "tls.certificates.certbot_lineage",
+                    "Certbot lineage는 안전한 단일 이름이어야 합니다",
+                );
             }
             for domain in &certificate.domains {
                 validate_host_rule(domain, "tls.certificates.domains")?;

@@ -14,6 +14,16 @@ const status = {
   agent: "live",
   provider: "unavailable",
   tls: "valid",
+  tls_management: {
+    health: "valid",
+    ownership: "external_managed",
+    renewal: "healthy",
+    manager: "certbot.timer",
+    certificate_count: 1,
+    earliest_expiry: "2026-09-01T00:00:00Z",
+    error_code: null,
+    next_action: "현재 인증서 관리 설정을 유지하십시오.",
+  },
 };
 
 async function mockApi(page: Page) {

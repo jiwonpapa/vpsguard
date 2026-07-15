@@ -58,13 +58,24 @@ Update는 binary/unit/tmpfiles snapshot을 만든 뒤 control과 Host-safe edge 
 
 `packaging/certbot/vps-guard-deploy-hook`를 Certbot deploy hook으로 설치합니다. hook은 certificate/key public key 일치, 24시간 이상 유효기간, VPSGuard config를 검사한 뒤 edge를 재시작하고 health를 read-back합니다.
 
-기존 서버에서는 먼저 인증서 경로, `certbot.timer` 활성·다음 실행 시각, Certbot renewal 설정과 기존 deploy hook을 읽기 전용으로 확인합니다. 정상 자동 갱신이 있으면 그대로 사용하고 VPSGuard가 timer나 renewal 설정을 다시 만들지 않습니다. edge service startup은 TLS 파일을 검사할 뿐 package 설치·발급·timer 변경을 하지 않습니다.
+`tls.management`은 `auto`, `external_managed`, `vpsguard_assisted`, `manual` 중 하나입니다. 기본 `auto`는 `/etc/letsencrypt/live` lineage, renewal 설정, `certbot.timer`·Snap timer 또는 기존 Certbot cron을 읽기 전용으로 확인합니다. 정상 자동 갱신이 있으면 `external_managed`로 표시하고 VPSGuard가 timer나 renewal 설정을 다시 만들지 않습니다. edge service startup은 cert/key·SAN·현재 유효기간만 검사하며 package 설치·발급·timer 변경을 하지 않습니다.
 
-자동 갱신 수단이 없을 때 관리자 UI·CLI는 `외부 관리 유지`, `Certbot 구성 보조`, `수동 인증서` 중 하나를 선택하게 합니다. `Certbot 구성 보조`를 사용자가 승인한 경우에만 public 80의 `/.well-known/acme-challenge/` 전용 webroot, 발급, systemd timer와 deploy hook을 구성합니다. 발급 전 DNS·port 80·Host·webroot plan을 표시하고 발급 뒤 cert/key/SAN·만료와 실제 제공 인증서를 확인합니다.
+Control은 6시간마다 공개 certificate의 SAN·만료와 갱신 상태를 갱신하고 인증된 status API·관리 화면에 소유자, manager, 만료와 다음 조치를 표시합니다. Edge는 startup마다 공개 certificate와 private key 일치를 추가 검사합니다. 실제 제공 중인 certificate fingerprint 비교는 아직 release gate입니다.
+
+Certbot private key 원본을 `vps-guard` 계정에 직접 공개하지 않습니다. 설정에는 `cert_file = "tls-cert.pem"`, `key_file = "tls-key.pem"`처럼 service credential 이름을 사용하고, 설치 도구는 다음 template의 placeholder를 검증된 절대 경로로 치환합니다.
+
+- Control: [`vps-guard-control-tls-certificate.conf.example`](../packaging/systemd/vps-guard-control-tls-certificate.conf.example) — 공개 certificate만 전달
+- Edge: [`vps-guard-edge-tls-credentials.conf.example`](../packaging/systemd/vps-guard-edge-tls-credentials.conf.example) — certificate와 private key 전달
+
+생성된 drop-in은 각각 `vps-guard-control.service.d/30-tls-certificate.conf`, `vps-guard-edge.service.d/30-tls-credentials.conf`에 설치합니다. 상대 TLS 경로는 `$CREDENTIALS_DIRECTORY` 밖으로 해석하지 않습니다. 기존 Certbot을 `auto`로 관측할 때는 certificate 설정에 비밀값이 아닌 `certbot_lineage = "example.com"`도 넣습니다. 로컬 개발에서만 직접 읽을 수 있는 절대 경로를 사용할 수 있습니다.
+
+자동 갱신 수단이 없을 때 관리자는 `external_managed`, `vpsguard_assisted`, `manual`을 명시합니다. `vpsguard_assisted`에서만 관리 화면이 ACME email을 받아 DNS, 전용 webroot, origin challenge 연결, public 80, 발급, timer, deploy hook, served certificate 검증 순서의 typed plan을 만듭니다. 이 API는 plan만 반환하며 서버를 변경하지 않습니다. 실제 적용은 같은 plan hash를 다시 표시하고 별도 승인하는 후속 batch 전까지 실행하지 않습니다.
 
 wildcard 인증서처럼 DNS-01이 필요하면 provider plugin의 root-only 자격증명을 별도로 만듭니다. 이 token은 아래 Cloudflare 비상 전환 token과 파일·수명·권한을 공유하지 않습니다.
 
-근거: [Certbot webroot와 renewal hook 문서](https://eff-certbot.readthedocs.io/en/stable/using.html)
+현재 실제 Certbot staging 발급·renew·served certificate read-back은 release gate입니다.
+
+근거: [Certbot webroot와 renewal hook 문서](https://eff-certbot.readthedocs.io/en/stable/using.html), [systemd credentials](https://systemd.io/CREDENTIALS/)
 
 ## Cloudflare 비상 보호
 

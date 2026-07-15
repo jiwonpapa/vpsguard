@@ -1040,6 +1040,7 @@ dependencies = [
  "bytes",
  "guard-core",
  "guard-profiles",
+ "guard-system",
  "hmac",
  "ipnet",
  "pingora-core",
@@ -1048,7 +1049,6 @@ dependencies = [
  "pingora-proxy",
  "rcgen",
  "rustls",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2",
@@ -1057,7 +1057,6 @@ dependencies = [
  "time",
  "tracing",
  "tracing-subscriber",
- "x509-parser",
 ]
 
 [[package]]
@@ -1087,12 +1086,17 @@ dependencies = [
 name = "guard-system"
 version = "0.1.0"
 dependencies = [
+ "guard-core",
  "ipnet",
+ "rcgen",
+ "rustls",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "time",
+ "x509-parser",
 ]
 
 [[package]]

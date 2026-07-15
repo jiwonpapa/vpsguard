@@ -24,6 +24,18 @@ clearance_ttl_seconds = 600
 address = "127.0.0.1:18081"
 protocol = "http"
 
+[tls]
+# auto는 기존 Certbot renewal·timer를 읽기 전용으로 감지합니다.
+# external_managed, vpsguard_assisted, manual을 명시할 수도 있습니다.
+management = "auto"
+certificates = []
+# 운영 TLS에서는 systemd credential 이름을 사용합니다.
+# [[tls.certificates]]
+# domains = ["example.com", "www.example.com"]
+# cert_file = "tls-cert.pem"
+# key_file = "tls-key.pem"
+# certbot_lineage = "example.com" # 기존 Certbot을 auto 감지할 때만
+
 [ui]
 bind = "127.0.0.1:7727"
 # HTTPS listener와 관리 Host를 포함한 인증서를 설정한 뒤 활성화합니다.

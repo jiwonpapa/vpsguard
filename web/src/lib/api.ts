@@ -1,5 +1,6 @@
 import type {
   ActionResponse,
+  CertbotAssistedPlan,
   ClientRow,
   EventRow,
   ListResponse,
@@ -89,6 +90,22 @@ export async function performAction(path: string): Promise<ActionResponse> {
   }
 }
 
+export async function requestTlsAssistedPlan(email: string): Promise<CertbotAssistedPlan> {
+  if (!csrfToken) {
+    throw new ApiError("운영 session 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
+  }
+  const response = await fetch("/api/v1/tls/assisted-plan", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify({ email }),
+  });
+  return parseResponse<CertbotAssistedPlan>(response);
+}
+
 export const api = {
   status: () => getJson<StatusResponse>("/api/v1/status"),
   summary: () => getJson<TrafficSummary>("/api/v1/traffic/summary"),
@@ -109,4 +126,5 @@ export const api = {
       (value) => value.items,
     ),
   resources: () => getJson<ResourcesResponse>("/api/v1/resources"),
+  tlsAssistedPlan: requestTlsAssistedPlan,
 };

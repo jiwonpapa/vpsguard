@@ -61,8 +61,25 @@ fn rejects_mismatched_private_key() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn wildcard_certificate_only_matches_one_label() {
-    assert!(super::domain_matches("*.example.com", "www.example.com"));
-    assert!(!super::domain_matches("*.example.com", "a.b.example.com"));
-    assert!(!super::domain_matches("*.example.com", "example.com"));
+fn wildcard_certificate_only_matches_one_label() -> Result<(), Box<dyn std::error::Error>> {
+    let _provider = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let directory = tempfile::tempdir()?;
+    let generated = generate_simple_self_signed(vec!["*.example.com".to_owned()])?;
+    let cert_file = directory.path().join("cert.pem");
+    let key_file = directory.path().join("key.pem");
+    fs::write(&cert_file, generated.cert.pem())?;
+    fs::write(&key_file, generated.key_pair.serialize_pem())?;
+    let mut tls = RuntimeTlsConfig {
+        listen_addr: "127.0.0.1:18443".to_owned(),
+        cert_file,
+        key_file,
+        domains: vec!["www.example.com".to_owned()],
+    };
+    preflight(&tls)?;
+    tls.domains = vec!["a.b.example.com".to_owned()];
+    assert!(matches!(
+        preflight(&tls),
+        Err(TlsPreflightError::DomainMismatch(domain)) if domain == "a.b.example.com"
+    ));
+    Ok(())
 }

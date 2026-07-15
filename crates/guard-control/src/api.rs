@@ -15,8 +15,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use guard_agent::os::OsSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
+use guard_core::config::TlsManagementMode;
 use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
-use guard_system::AtomicJsonStore;
+use guard_system::{
+    AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, build_certbot_assisted_plan,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
@@ -38,6 +41,9 @@ pub(crate) struct AppState {
     pub(crate) traffic: Mutex<TrafficAggregator>,
     pub(crate) os_snapshot: RwLock<Option<OsSnapshot>>,
     pub(crate) service_health: RwLock<Vec<CollectorHealth>>,
+    pub(crate) tls_management: RwLock<TlsManagementSnapshot>,
+    pub(crate) tls_plan_mode: TlsManagementMode,
+    pub(crate) tls_plan_domains: Vec<String>,
     pub(crate) bootstrap: BootstrapStore,
     pub(crate) completed_actions: Mutex<VecDeque<(String, String, GuardMode)>>,
     pub(crate) storage: Arc<SqliteStore>,
@@ -61,7 +67,8 @@ struct StatusResponse {
     origin: &'static str,
     agent: CollectorState,
     provider: String,
-    tls: &'static str,
+    tls: String,
+    tls_management: TlsManagementSnapshot,
 }
 
 /// resource endpoint 응답입니다.
@@ -120,6 +127,12 @@ struct LoginRequest {
     login_code: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TlsPlanRequest {
+    email: String,
+}
+
 pub(crate) fn router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/api/v1/status", get(status))
@@ -130,6 +143,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/incidents", get(incidents))
         .route("/api/v1/events", get(event_stream))
         .route("/api/v1/resources", get(resources))
+        .route("/api/v1/tls/assisted-plan", post(tls_assisted_plan))
         .route("/api/v1/actions/manual-hold", post(manual_hold))
         .route("/api/v1/actions/resume-auto", post(resume_auto))
         .route("/api/v1/actions/emergency-proxy", post(emergency_proxy))
@@ -280,6 +294,7 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
             .as_ref()
             .map_or_else(|| "unavailable".to_owned(), ProviderController::status),
     };
+    let tls_management = app.tls_management.read().await.clone();
     Json(StatusResponse {
         schema_version: 1,
         mode: state.current_mode,
@@ -291,7 +306,8 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
         origin: "unknown",
         agent,
         provider,
-        tls: "unknown",
+        tls: tls_management.health.as_str().to_owned(),
+        tls_management,
     })
 }
 
@@ -311,6 +327,40 @@ async fn resources(State(app): State<Arc<AppState>>) -> Json<ResourcesResponse> 
         os,
         services,
     })
+}
+
+async fn tls_assisted_plan(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<TlsPlanRequest>,
+) -> Response {
+    if let Some(error) = mutation_authorization_error(&headers, &app) {
+        return error;
+    }
+    match build_certbot_assisted_plan(app.tls_plan_mode, &app.tls_plan_domains, &request.email) {
+        Ok(plan) => Json(plan).into_response(),
+        Err(CertbotPlanError::AssistedModeRequired) => api_error(
+            StatusCode::CONFLICT,
+            "TLS_ASSISTED_MODE_REQUIRED",
+            "VPSGuard Certbot 보조 mode가 선택되지 않았습니다.",
+            "인증서나 기존 갱신 설정을 변경하지 않았습니다.",
+            "기존 관리자를 유지하거나 tls.management을 vpsguard_assisted로 명시하십시오.",
+        ),
+        Err(CertbotPlanError::InvalidDomain) => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "TLS_HTTP01_DOMAIN_INVALID",
+            "HTTP-01에 사용할 exact domain이 없습니다.",
+            "발급 plan을 만들지 않았습니다.",
+            "wildcard를 제외한 실제 서비스 hostname과 DNS를 확인하십시오.",
+        ),
+        Err(CertbotPlanError::InvalidEmail) => api_error(
+            StatusCode::BAD_REQUEST,
+            "TLS_ACME_EMAIL_INVALID",
+            "ACME 연락처 email 형식이 잘못됐습니다.",
+            "발급 plan을 만들지 않았습니다.",
+            "공백 없는 실제 연락처 email을 입력하십시오.",
+        ),
+    }
 }
 
 async fn traffic_series(

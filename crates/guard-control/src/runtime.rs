@@ -15,7 +15,7 @@ use guard_core::{
     Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
     PolicySnapshot, Severity, TransitionInput,
 };
-use guard_system::{AtomicJsonStore, StoreError};
+use guard_system::{AtomicJsonStore, StoreError, inspect_tls_management};
 use thiserror::Error;
 use tokio::net::{TcpListener, UnixDatagram};
 use tokio::sync::{RwLock, broadcast, mpsc};
@@ -30,6 +30,7 @@ use crate::storage::{SqliteStore, StorageError};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
 const POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const TLS_INSPECTION_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// control startup·serve 실패입니다.
 #[derive(Debug, Error)]
@@ -79,6 +80,12 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         .map_err(|error| ControlError::Serve(error.to_string()))?;
     let storage = Arc::new(SqliteStore::open(&config.storage.database_path)?);
     let provider = Arc::new(Mutex::new(ProviderController::from_config(&config)?));
+    let initial_tls = {
+        let tls = config.tls.clone();
+        tokio::task::spawn_blocking(move || inspect_tls_management(&tls))
+            .await
+            .map_err(|error| ControlError::Serve(format!("TLS 검사 task 실패: {error}")))?
+    };
     let (events, _) = broadcast::channel(512);
     let app = Arc::new(AppState {
         state: RwLock::new(initial_state),
@@ -86,6 +93,9 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         traffic: Mutex::new(TrafficAggregator::new(config.edge.max_tracked_clients)),
         os_snapshot: RwLock::new(None),
         service_health: RwLock::new(Vec::new()),
+        tls_management: RwLock::new(initial_tls),
+        tls_plan_mode: config.tls.management,
+        tls_plan_domains: tls_plan_domains(&config),
         bootstrap: BootstrapStore::new(),
         completed_actions: Mutex::new(VecDeque::with_capacity(1_024)),
         storage: Arc::clone(&storage),
@@ -99,6 +109,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         .map_err(|error| ControlError::AdminSocket(error.to_string()))?;
     spawn_os_collector(Arc::clone(&app));
     spawn_service_collectors(Arc::clone(&app), &config);
+    spawn_tls_inspection(Arc::clone(&app), config.tls.clone());
     let (storage_tx, storage_rx) = mpsc::channel(4_096);
     spawn_storage_writer(Arc::clone(&storage), storage_rx);
     spawn_telemetry_receiver(
@@ -114,6 +125,44 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|error| ControlError::Serve(error.to_string()))
+}
+
+fn tls_plan_domains(config: &GuardConfig) -> Vec<String> {
+    let mut domains = config
+        .tls
+        .certificates
+        .iter()
+        .flat_map(|certificate| certificate.domains.iter().cloned())
+        .collect::<Vec<_>>();
+    if domains.is_empty() {
+        domains.extend(
+            config
+                .edge
+                .allowed_hosts
+                .iter()
+                .filter(|domain| !domain.starts_with("*."))
+                .cloned(),
+        );
+    }
+    domains.sort_unstable();
+    domains.dedup();
+    domains.truncate(16);
+    domains
+}
+
+fn spawn_tls_inspection(app: Arc<AppState>, tls: guard_core::config::TlsConfig) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(TLS_INSPECTION_INTERVAL);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let config = tls.clone();
+            match tokio::task::spawn_blocking(move || inspect_tls_management(&config)).await {
+                Ok(snapshot) => *app.tls_management.write().await = snapshot,
+                Err(error) => warn!(error = %error, "TLS inspection task failed"),
+            }
+        }
+    });
 }
 
 fn spawn_os_collector(app: Arc<AppState>) {

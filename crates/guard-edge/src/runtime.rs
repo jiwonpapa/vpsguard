@@ -105,6 +105,9 @@ pub enum RuntimeConfigError {
     /// multi-SNI listener는 후속 TLS batch에서 적용합니다.
     #[error("현재 listener는 인증서 한 개만 지원합니다: count={0}")]
     MultipleCertificates(usize),
+    /// systemd TLS credential 경로를 해석하지 못했습니다.
+    #[error(transparent)]
+    TlsCredential(#[from] guard_system::tls::CertificateValidationError),
 }
 
 impl EdgeRuntimeConfig {
@@ -126,8 +129,8 @@ impl EdgeRuntimeConfig {
                 let certificate = &config.tls.certificates[0];
                 Some(RuntimeTlsConfig {
                     listen_addr: listen_addr.to_string(),
-                    cert_file: certificate.cert_file.clone(),
-                    key_file: certificate.key_file.clone(),
+                    cert_file: guard_system::resolve_tls_credential_path(&certificate.cert_file)?,
+                    key_file: guard_system::resolve_tls_credential_path(&certificate.key_file)?,
                     domains: certificate.domains.clone(),
                 })
             }

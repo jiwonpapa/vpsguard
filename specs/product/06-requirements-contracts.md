@@ -223,10 +223,12 @@ address = "127.0.0.1:8080"
 protocol = "http"
 
 [tls]
+management = "auto"
 [[tls.certificates]]
 domains = ["example.com", "guard.example.com"]
-cert_file = "/etc/letsencrypt/live/example.com/fullchain.pem"
-key_file = "/etc/letsencrypt/live/example.com/privkey.pem"
+cert_file = "tls-cert.pem"
+key_file = "tls-key.pem"
+certbot_lineage = "example.com"
 
 [ui]
 bind = "127.0.0.1:7727"
@@ -263,6 +265,8 @@ raw_ip_days = 7
 - unknown key는 warning이 아니라 오류로 처리합니다.
 - port, path, CIDR, duration과 threshold 범위를 검증합니다.
 - token 본문을 TOML에 직접 넣는 것을 금지합니다.
+- `tls.management`은 기존 manager 자동 감지, 명시적 외부 관리, VPSGuard 보조와 수동 교체를 구분합니다. startup은 어떤 mode에서도 발급·timer 변경을 실행하지 않습니다.
+- 상대 TLS PEM 경로는 각 service의 systemd `$CREDENTIALS_DIRECTORY`에서만 해석합니다. Control에는 공개 certificate만, edge에는 certificate와 private key를 별도 credential로 전달합니다.
 - `cloudflare.token_file`의 상대값은 systemd `$CREDENTIALS_DIRECTORY`의 단일 credential 이름으로만 해석하고, 운영 token 원본은 root-only 파일로 유지합니다.
 - Cloudflare record는 32자리 ID·정확한 hostname·A/AAAA/CNAME type을 명시하고 한 transaction에서 같은 hostname만 허용합니다.
 - `ui.public_host`는 exact hostname이며 app canonical Host와 분리하고 TLS certificate domain에 포함해야 합니다.

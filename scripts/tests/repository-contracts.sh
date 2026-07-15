@@ -74,4 +74,15 @@ if grep -Rq --exclude-dir=target --exclude='repository-contracts.sh' 'record_nam
   exit 1
 fi
 
+# TLS-001, TLS-006, SEC-001: startup은 검증만 하고 private key는 edge
+# credential로만 전달하며 control에는 공개 certificate만 전달합니다.
+grep -Fq 'management = "auto"' configs/vps-guard.example.toml
+grep -Fq 'LoadCredential=tls-cert.pem:@CERT_FILE@' packaging/systemd/vps-guard-control-tls-certificate.conf.example
+if grep -Fq 'tls-key.pem' packaging/systemd/vps-guard-control-tls-certificate.conf.example; then
+  echo "control TLS credential must not receive the private key" >&2
+  exit 1
+fi
+grep -Fq 'LoadCredential=tls-key.pem:@KEY_FILE@' packaging/systemd/vps-guard-edge-tls-credentials.conf.example
+grep -Fq 'build_certbot_assisted_plan' crates/guard-control/src/api.rs
+
 echo "repository contract tests: PASS"

@@ -1,0 +1,4 @@
+# TLS를 활성화할 때 설치 도구가 @CERT_FILE@을 검증된 절대 경로로 치환합니다.
+# Control에는 공개 certificate만 전달하며 private key를 전달하지 않습니다.
+[Service]
+LoadCredential=tls-cert.pem:@CERT_FILE@

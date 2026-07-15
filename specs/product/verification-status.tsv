@@ -52,7 +52,7 @@ TLS-002|CODE_ONLY|packaging/certbot/vps-guard-deploy-hook|-|-
 TLS-003|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 TLS-004|PLANNED|-|-|-
 TLS-005|CODE_ONLY|scripts/update-release.sh|-|-
-TLS-006|PLANNED|-|-|-
+TLS-006|CODE_ONLY|crates/guard-system/src/tls.rs|crates/guard-system/src/tls.rs|-
 UI-001|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 UI-002|AUTO_PASS|web/src/pages/overview.tsx|web/tests/console.e2e.ts|-
 UI-003|CODE_ONLY|web/src/pages/traffic.tsx|-|-

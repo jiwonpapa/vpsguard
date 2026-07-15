@@ -4,7 +4,7 @@
 
 use std::net::IpAddr;
 
-use super::{ConfigError, DetectionProfile, GuardConfig};
+use super::{ConfigError, DetectionProfile, GuardConfig, TlsManagementMode};
 
 const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -50,6 +50,7 @@ fn parses_valid_observe_only_config() {
     let config = GuardConfig::from_toml(VALID_CONFIG).expect("valid config should parse");
     assert_eq!(config.edge.http_bind.to_string(), "127.0.0.1:18080");
     assert!(config.tls.certificates.is_empty());
+    assert_eq!(config.tls.management, TlsManagementMode::Auto);
     assert!(!config.cloudflare.enabled);
     assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
 }
@@ -173,6 +174,50 @@ fn accepts_separate_management_host_covered_by_wildcard_certificate() {
             "[tls]\n[[tls.certificates]]\ndomains = [\"*.g7devops.com\"]\ncert_file = \"/tmp/cert.pem\"\nkey_file = \"/tmp/key.pem\"\n\n[ui]",
         );
     assert!(GuardConfig::from_toml(&input).is_ok());
+}
+
+#[test]
+fn parses_external_tls_management_with_credential_names() {
+    let input = VALID_CONFIG.replace(
+        "[ui]",
+        "[tls]\nmanagement = \"external_managed\"\n[[tls.certificates]]\ndomains = [\"g7devops.com\"]\ncert_file = \"tls-cert.pem\"\nkey_file = \"tls-key.pem\"\n\n[ui]",
+    );
+    let config = GuardConfig::from_toml(&input).expect("external TLS management should parse");
+    assert_eq!(config.tls.management, TlsManagementMode::ExternalManaged);
+    assert_eq!(
+        config.tls.certificates[0].cert_file,
+        std::path::Path::new("tls-cert.pem")
+    );
+}
+
+#[test]
+fn rejects_tls_credential_path_traversal() {
+    let input = VALID_CONFIG.replace(
+        "[ui]",
+        "[tls]\n[[tls.certificates]]\ndomains = [\"g7devops.com\"]\ncert_file = \"../tls-cert.pem\"\nkey_file = \"tls-key.pem\"\n\n[ui]",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "tls.certificates.cert_file",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn rejects_certbot_lineage_path_traversal() {
+    let input = VALID_CONFIG.replace(
+        "[ui]",
+        "[tls]\n[[tls.certificates]]\ndomains = [\"g7devops.com\"]\ncert_file = \"tls-cert.pem\"\nkey_file = \"tls-key.pem\"\ncertbot_lineage = \"../example\"\n\n[ui]",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "tls.certificates.certbot_lineage",
+            ..
+        })
+    ));
 }
 
 #[test]
