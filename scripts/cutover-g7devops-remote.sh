@@ -171,6 +171,7 @@ if [[ "${direction}" == "--to-edge" ]]; then
   /usr/local/bin/vps-guard check-config --config "${active_config}" >/dev/null
   systemctl restart vps-guard-edge.service
   curl --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+    -H 'Host: www.g7devops.com' \
     http://127.0.0.1:18080/health/live >/dev/null
 fi
 

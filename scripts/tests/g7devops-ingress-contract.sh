@@ -35,5 +35,6 @@ grep -Fq 'exact active Nginx/config backup plus deployment snapshot' <<<"${plan}
 grep -Fq "x-vps-guard" scripts/cutover-g7devops-remote.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state --snapshot' scripts/cutover-g7devops-remote.sh
 grep -Fq 'VPS_GUARD_INGRESS_CONFIRM' scripts/cutover-g7devops-remote.sh
+grep -Fq -- "-H 'Host: www.g7devops.com'" scripts/cutover-g7devops-remote.sh
 
 echo "g7devops ingress contract: PASS"
