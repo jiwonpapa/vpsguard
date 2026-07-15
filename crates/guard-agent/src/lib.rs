@@ -5,6 +5,7 @@
 /// MVP agent가 control 프로세스에 포함되는 계약입니다.
 pub const EMBEDDED_IN_CONTROL: bool = true;
 
+pub mod cgroup;
 pub mod os;
 pub mod services;
 
@@ -38,4 +39,28 @@ pub struct CollectorHealth {
     pub last_success_at: Option<String>,
     /// 비밀값을 포함하지 않는 오류 코드입니다.
     pub error_code: Option<String>,
+    /// allowlist된 systemd unit입니다. legacy probe면 없습니다.
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// 마지막 수집 시각입니다.
+    #[serde(default)]
+    pub collected_at_unix_ms: Option<u64>,
+    /// cgroup v2 resource 상태입니다.
+    #[serde(default)]
+    pub resource_state: Option<CollectorState>,
+    /// semantic metric 상태입니다.
+    #[serde(default)]
+    pub semantic_state: Option<CollectorState>,
+    /// cgroup 오류 코드입니다.
+    #[serde(default)]
+    pub resource_error_code: Option<String>,
+    /// semantic probe 오류 코드입니다.
+    #[serde(default)]
+    pub semantic_error_code: Option<String>,
+    /// allowlist된 unit의 cgroup v2 snapshot입니다.
+    #[serde(default)]
+    pub resources: Option<cgroup::CgroupSnapshot>,
+    /// service 종류별 병목 snapshot입니다.
+    #[serde(default)]
+    pub semantic: Option<services::ServiceSemanticSnapshot>,
 }

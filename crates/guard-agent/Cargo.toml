@@ -6,10 +6,19 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+guard-system = { path = "../guard-system", version = "0.1.0" }
+mysql_async.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile = "3.20"
 
 [lints]
 workspace = true

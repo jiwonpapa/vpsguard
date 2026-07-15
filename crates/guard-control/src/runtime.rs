@@ -8,8 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use guard_agent::os;
-use guard_agent::services::{ServiceTargets, collect_services};
-use guard_core::config::DetectionMode;
+use guard_agent::services::{
+    ServiceProbe, ServiceTarget, ServiceTargets, ServiceTargetsError, collect_services,
+    merge_service_history,
+};
+use guard_core::config::{DetectionMode, ServiceCollectorKind};
 use guard_core::policy::{RouteRule, StaticLimits};
 use guard_core::{
     Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
@@ -54,6 +57,9 @@ pub enum ControlError {
     /// Provider adapter 초기화 실패입니다.
     #[error(transparent)]
     Provider(#[from] ProviderControllerError),
+    /// 핵심 service collector 초기화 실패입니다.
+    #[error(transparent)]
+    Collector(#[from] ServiceTargetsError),
     /// HTTP server 실패입니다.
     #[error("control HTTP server 실패: {0}")]
     Serve(String),
@@ -120,7 +126,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     spawn_admin_socket(Arc::clone(&app), config.ui.admin_socket.clone())
         .map_err(|error| ControlError::AdminSocket(error.to_string()))?;
     spawn_os_collector(Arc::clone(&app));
-    spawn_service_collectors(Arc::clone(&app), &config);
+    spawn_service_collectors(Arc::clone(&app), &config)?;
     spawn_tls_inspection(Arc::clone(&app), config.tls.clone());
     let (storage_tx, storage_rx) = mpsc::channel(TRAFFIC_QUEUE_CAPACITY);
     spawn_storage_writer(Arc::clone(&storage), storage_rx)
@@ -194,21 +200,107 @@ fn spawn_os_collector(app: Arc<AppState>) {
     });
 }
 
-fn spawn_service_collectors(app: Arc<AppState>, config: &GuardConfig) {
-    let targets = ServiceTargets {
-        nginx_status_url: config.collectors.nginx_status_url.clone(),
-        php_fpm_status_url: config.collectors.php_fpm_status_url.clone(),
-        mysql_address: config.collectors.mysql_address,
-        redis_address: config.collectors.redis_address,
-    };
+fn spawn_service_collectors(
+    app: Arc<AppState>,
+    config: &GuardConfig,
+) -> Result<(), ServiceTargetsError> {
     let timeout = Duration::from_millis(config.collectors.timeout_ms);
+    let targets = ServiceTargets::new(
+        config.collectors.cgroup_root.clone(),
+        configured_service_targets(config),
+        timeout,
+    )?;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut previous = Vec::new();
         loop {
             interval.tick().await;
-            *app.service_health.write().await = collect_services(&targets, timeout).await;
+            let mut current = collect_services(&targets).await;
+            merge_service_history(
+                &previous,
+                &mut current,
+                unix_millis(),
+                Duration::from_secs(30),
+            );
+            *app.service_health.write().await = current.clone();
+            previous = current;
         }
     });
+    Ok(())
+}
+
+fn configured_service_targets(config: &GuardConfig) -> Vec<ServiceTarget> {
+    let mut targets = config
+        .collectors
+        .services
+        .iter()
+        .map(|service| {
+            let probe = match service.kind {
+                ServiceCollectorKind::Nginx => ServiceProbe::Nginx {
+                    status_url: service.status_url.clone().unwrap_or_default(),
+                },
+                ServiceCollectorKind::Apache => ServiceProbe::Apache {
+                    status_url: service.status_url.clone().unwrap_or_default(),
+                },
+                ServiceCollectorKind::PhpFpm => ServiceProbe::PhpFpm {
+                    status_url: service.status_url.clone().unwrap_or_default(),
+                },
+                ServiceCollectorKind::Mysql => ServiceProbe::Mysql {
+                    credential_file: service.credential_file.clone().unwrap_or_default(),
+                },
+                ServiceCollectorKind::Redis => service.address.map_or_else(
+                    || ServiceProbe::RedisCredential {
+                        credential_file: service.credential_file.clone().unwrap_or_default(),
+                    },
+                    |address| ServiceProbe::RedisAddress { address },
+                ),
+            };
+            ServiceTarget {
+                name: service.name.clone(),
+                unit: Some(service.unit.clone()),
+                cgroup_path: Some(
+                    service
+                        .cgroup_path
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("system.slice").join(&service.unit)),
+                ),
+                probe,
+            }
+        })
+        .collect::<Vec<_>>();
+    if let Some(status_url) = config.collectors.nginx_status_url.clone() {
+        targets.push(ServiceTarget {
+            name: "nginx".to_owned(),
+            unit: None,
+            cgroup_path: None,
+            probe: ServiceProbe::Nginx { status_url },
+        });
+    }
+    if let Some(status_url) = config.collectors.php_fpm_status_url.clone() {
+        targets.push(ServiceTarget {
+            name: "php_fpm".to_owned(),
+            unit: None,
+            cgroup_path: None,
+            probe: ServiceProbe::PhpFpm { status_url },
+        });
+    }
+    if let Some(address) = config.collectors.mysql_address {
+        targets.push(ServiceTarget {
+            name: "mysql".to_owned(),
+            unit: None,
+            cgroup_path: None,
+            probe: ServiceProbe::TcpHealth { address },
+        });
+    }
+    if let Some(address) = config.collectors.redis_address {
+        targets.push(ServiceTarget {
+            name: "redis".to_owned(),
+            unit: None,
+            cgroup_path: None,
+            probe: ServiceProbe::RedisAddress { address },
+        });
+    }
+    targets
 }
 
 fn spawn_telemetry_receiver(

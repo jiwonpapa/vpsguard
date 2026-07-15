@@ -71,6 +71,9 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 - `vps-guard-control` macOS release binary는 적용 전 7,207,616 bytes에서 적용 후 7,240,848 bytes로 33,232 bytes(0.46%) 증가했습니다. 2GB Linux VPS RSS 차이는 release gate에 남깁니다.
 - 공통 TLS lifecycle 관측은 이미 workspace에 있던 `rustls`, `rustls-pemfile`, `x509-parser`를 `guard-system` adapter로 이동해 재사용하며 새 runtime crate version을 추가하지 않습니다. Control release binary는 Cloudflare 배치 기준 7,240,848 bytes에서 7,460,784 bytes로 219,936 bytes(3.04%) 증가했습니다. 2GB Linux VPS RSS와 systemd credential 실증은 release gate에 남깁니다.
 - filesystem 여유는 OS별 `statvfs` ABI를 직접 구현하지 않고 `rustix 1.1.4`의 safe API를 사용합니다. MIT/Apache-2.0, MSRV 1.63이며 이미 lockfile에 있던 version을 직접 의존성으로 승격해 전이 crate는 늘지 않았습니다. 저장 배치 후 Control release binary는 7,460,784 bytes에서 7,527,824 bytes로 67,040 bytes(0.90%) 증가했고 SHA-256은 `d44a2a9805610192705a34ec132109115549801361af693572bf7bcfc3e8fafb`입니다. 2GB Linux VPS RSS와 disk-full fault는 release gate에 남깁니다.
+- MySQL wire/auth protocol은 `mysql_async 0.37.0`을 default feature 없이 `minimal-rust`로 사용합니다. MIT/Apache-2.0이며 crate metadata에 MSRV가 명시되지 않아 workspace Rust 1.96 build·clippy로 검증합니다. direct crate source에는 4개 파일의 5개 `unsafe` block이 있고 VPSGuard adapter는 URL·credential·query·timeout을 좁힌 safe API만 호출합니다.
+- Redis RESP/auth protocol은 `redis 0.32.7`을 default feature 없이 `tokio-comp`만 켜 사용합니다. BSD-3-Clause, MSRV 1.80이며 direct crate source에 `unsafe` block이 없습니다. 최신 1.4.0은 이 사용 범위와 무관한 unconditional `xxhash-rust`의 BSL-1.0 license가 repository policy를 위반해 제외했습니다. adapter는 loopback URL과 `PING`, `INFO`만 허용합니다.
+- 두 driver와 공통 `url` 검증을 추가하면서 lockfile production package가 10개 늘었습니다. Control macOS release binary는 7,527,824 bytes에서 9,343,696 bytes로 1,815,872 bytes(24.12%) 증가했고 SHA-256은 `661bf6347c430a39acb47dd65905a73e2682a87d8606f870221900eabf5f842c`입니다. wire protocol·인증을 직접 구현하지 않는 안전성과 교환한 증가이며 9.34MB absolute 크기는 유지하되, 2GB Linux RSS·5초 probe 비용이 256MB 합산 상한을 넘으면 collector 별도 프로세스 또는 feature 분리를 재검토합니다.
 - `cargo audit`: 허용되지 않은 알려진 취약점은 없고 Pingora 경로의 unmaintained `daemonize`, `derivative`, `rustls-pemfile` 경고 3건이 예외 문서로 추적됩니다.
 - `rustls-pemfile`은 VPSGuard도 직접 사용하므로 유지보수되는 rustls pki type 경로로 교체 가능한지 우선 확인합니다. Pingora 전이 의존성 제거는 upstream 갱신과 별도입니다.
 - `cargo deny check`: 통과했으며 Pingora 중심의 중복 version은 계속 측정합니다.
@@ -78,7 +81,7 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 
 ## 결과
 
-- `guard-agent`의 현재 health probe는 pre-MVP 생존 확인일 뿐 OBS-004~OBS-006과 OBS-011 완료 증거가 아닙니다.
+- `guard-agent`는 명시된 최대 16개 unit의 cgroup v2와 service semantic metric을 수집합니다. PHP-FPM·cgroup fixture는 자동 검증됐지만 MySQL·Redis 최소 권한과 2GB VPS 실제 unit 대조 전에는 운영 완료가 아닙니다.
 - `profiled`와 `protocol_only`는 enforcement의 `observe`와 `enforce`와 독립된 typed 설정으로 구현해야 합니다.
 - 인증서 자동화는 필요하지만 자체 ACME 구현 backlog는 만들지 않습니다.
 - dependency 변경 PR은 maintenance, license, advisory, MSRV, unsafe, transitive dependency와 2GB VPS binary/RSS 차이를 기록합니다.

@@ -66,7 +66,43 @@ export interface CollectorHealth {
   state: string;
   last_success_at: string | null;
   error_code: string | null;
+  unit: string | null;
+  collected_at_unix_ms: number | null;
+  resource_state: string | null;
+  semantic_state: string | null;
+  resource_error_code: string | null;
+  semantic_error_code: string | null;
+  resources: CgroupSnapshot | null;
+  semantic: ServiceSemanticSnapshot | null;
 }
+
+export interface CgroupSnapshot {
+  collected_at_unix_ms: number;
+  cpu_usage_usec: number;
+  cpu_user_usec: number;
+  cpu_system_usec: number;
+  cpu_nr_throttled: number;
+  cpu_throttled_usec: number;
+  cpu_usage_milli_percent: number | null;
+  memory_current_bytes: number;
+  memory_peak_bytes: number | null;
+  memory_high_events: number;
+  memory_max_events: number;
+  oom_events: number;
+  oom_kill_events: number;
+  io_read_bytes: number;
+  io_write_bytes: number;
+  process_count: number;
+  task_count: number;
+}
+
+export type ServiceSemanticSnapshot =
+  | { kind: "tcp_health" }
+  | { kind: "nginx"; active_connections: number; accepts: number; handled: number; requests: number; reading: number; writing: number; waiting: number }
+  | { kind: "apache"; total_accesses: number; total_kbytes: number; busy_workers: number; idle_workers: number }
+  | { kind: "php_fpm"; accepted_connections: number; listen_queue: number; max_listen_queue: number; listen_queue_length: number; idle_processes: number; active_processes: number; total_processes: number; max_active_processes: number; max_children_reached: number; slow_requests: number }
+  | { kind: "mysql"; max_connections: number; threads_connected: number; threads_running: number; slow_queries: number; innodb_row_lock_current_waits: number; total_connections: number; aborted_connects: number }
+  | { kind: "redis"; used_memory_bytes: number; connected_clients: number; blocked_clients: number; keyspace_hits: number; keyspace_misses: number; evicted_keys: number };
 
 export interface StorageHealth {
   condition: "healthy" | "degraded" | "critical";

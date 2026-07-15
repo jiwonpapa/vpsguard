@@ -66,7 +66,50 @@ async function mockApi(page: Page) {
           swap_free_bytes: 0,
           uptime_seconds: 7200,
         },
-        services: [],
+        services: [{
+          name: "php_fpm",
+          state: "delayed",
+          last_success_at: "2026-07-14T12:00:00Z",
+          error_code: "TIMEOUT",
+          unit: "php8.3-fpm.service",
+          collected_at_unix_ms: 1784000000000,
+          resource_state: "live",
+          semantic_state: "error",
+          resource_error_code: null,
+          semantic_error_code: "TIMEOUT",
+          resources: {
+            collected_at_unix_ms: 1784000000000,
+            cpu_usage_usec: 500000,
+            cpu_user_usec: 400000,
+            cpu_system_usec: 100000,
+            cpu_nr_throttled: 0,
+            cpu_throttled_usec: 0,
+            cpu_usage_milli_percent: 12500,
+            memory_current_bytes: 134217728,
+            memory_peak_bytes: 167772160,
+            memory_high_events: 0,
+            memory_max_events: 0,
+            oom_events: 0,
+            oom_kill_events: 0,
+            io_read_bytes: 1048576,
+            io_write_bytes: 2097152,
+            process_count: 4,
+            task_count: 7,
+          },
+          semantic: {
+            kind: "php_fpm",
+            accepted_connections: 100,
+            listen_queue: 2,
+            max_listen_queue: 4,
+            listen_queue_length: 128,
+            idle_processes: 3,
+            active_processes: 2,
+            total_processes: 5,
+            max_active_processes: 4,
+            max_children_reached: 1,
+            slow_requests: 2,
+          },
+        }],
         storage: {
           condition: "healthy",
           queue_depth: 0,
@@ -139,6 +182,10 @@ test("renders bounded storage health and retention state", async ({ page }) => {
   await expect(page.getByRole("region", { name: "저장 계층 상태" })).toContainText("healthy");
   await expect(page.getByText("1.1 MiB")).toBeVisible();
   await expect(page.getByText("10.0 GiB")).toBeVisible();
+  await expect(page.getByRole("region", { name: "핵심 서비스 상태" })).toContainText("php8.3-fpm.service");
+  await expect(page.getByRole("article", { name: "php_fpm 상태" })).toContainText("semantic error");
+  await expect(page.getByRole("article", { name: "php_fpm 상태" })).toContainText("128.0 MiB");
+  await expect(page.getByRole("article", { name: "php_fpm 상태" })).toContainText("Queue");
 });
 
 test("switches between live and persisted traffic resolutions", async ({ page }) => {

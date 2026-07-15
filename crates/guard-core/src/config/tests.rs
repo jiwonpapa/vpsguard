@@ -4,7 +4,7 @@
 
 use std::net::IpAddr;
 
-use super::{ConfigError, DetectionProfile, GuardConfig, TlsManagementMode};
+use super::{ConfigError, DetectionProfile, GuardConfig, ServiceCollectorKind, TlsManagementMode};
 
 const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -90,6 +90,56 @@ fn rejects_unbounded_live_retention_ring() {
         GuardConfig::from_toml(&input),
         Err(ConfigError::Invalid {
             field: "retention.live_seconds",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn parses_allowlisted_php_service_and_rejects_ssrf_or_cgroup_mismatch() {
+    let valid = format!(
+        "{VALID_CONFIG}\n[collectors]\ntimeout_ms = 500\n\n[[collectors.services]]\nname = \"php\"\nunit = \"php8.3-fpm.service\"\nkind = \"php_fpm\"\nstatus_url = \"http://127.0.0.1/fpm-status\"\n"
+    );
+    let config = GuardConfig::from_toml(&valid).expect("allowlisted service should parse");
+    assert_eq!(
+        config.collectors.services[0].kind,
+        ServiceCollectorKind::PhpFpm
+    );
+
+    let remote = valid.replace(
+        "status_url = \"http://127.0.0.1/fpm-status\"",
+        "status_url = \"http://example.com/fpm-status\"",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&remote),
+        Err(ConfigError::Invalid {
+            field: "collectors.services.status_url",
+            ..
+        })
+    ));
+
+    let mismatch = valid.replace(
+        "status_url = \"http://127.0.0.1/fpm-status\"",
+        "status_url = \"http://127.0.0.1/fpm-status\"\ncgroup_path = \"system.slice/redis.service\"",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&mismatch),
+        Err(ConfigError::Invalid {
+            field: "collectors.services.cgroup_path",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn mysql_service_requires_a_credential_file() {
+    let input = format!(
+        "{VALID_CONFIG}\n[collectors]\ntimeout_ms = 500\n\n[[collectors.services]]\nname = \"database\"\nunit = \"mysql.service\"\nkind = \"mysql\"\n"
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "collectors.services",
             ..
         })
     ));

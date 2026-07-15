@@ -66,8 +66,11 @@ grep -Fq '전체 systemd unit·process 목록' specs/product/09-monitoring-web-u
 # SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
 # 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.
 grep -Fq 'LoadCredential=cloudflare-token:/etc/vps-guard/secrets/cloudflare-token' packaging/systemd/vps-guard-control-cloudflare-credential.conf
+grep -Fq 'LoadCredential=mysql-monitor-url:/etc/vps-guard/secrets/mysql-monitor-url' packaging/systemd/vps-guard-control-service-credentials.conf.example
+grep -Fq 'LoadCredential=redis-monitor-url:/etc/vps-guard/secrets/redis-monitor-url' packaging/systemd/vps-guard-control-service-credentials.conf.example
 grep -Eq '^d /etc/vps-guard/secrets 0700 root root -$' packaging/tmpfiles/vps-guard.conf
 grep -Fq 'token: SecretString' crates/guard-provider/src/cloudflare.rs
+grep -Fq 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW' crates/guard-system/src/secret.rs
 grep -Fq 'GET /zones/{zone_id}/dns_records/{record_id}' docs/OPERATIONS.md
 if grep -Rq --exclude-dir=target --exclude='repository-contracts.sh' 'record_names' configs crates docs packaging specs; then
   echo "deprecated name-only Cloudflare allowlist must not return" >&2

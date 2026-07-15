@@ -1,13 +1,12 @@
 //! Cloudflare DNS read-back과 VPSGuard-owned nftables origin 보호 adapter입니다.
 
-use std::env;
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use guard_core::config::{CloudflareRecordConfig, DnsRecordType};
-use guard_system::{OriginFirewallPlan, VpsGuardNftables};
+use guard_system::{
+    OriginFirewallPlan, SecretFileError, SecretFilePolicy, VpsGuardNftables, load_secret_file,
+};
 use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::{StatusCode, redirect::Policy};
@@ -121,26 +120,15 @@ where
         origin: O,
         api_base: &str,
     ) -> Result<Self, ProviderError> {
-        let credential_directory = env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
-        let token_file = resolve_token_path(token_file, credential_directory.as_deref())?;
-        let metadata = fs::symlink_metadata(&token_file)
-            .map_err(|_| ProviderError::SecretFile("TOKEN_READ_FAILED"))?;
-        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-            return Err(ProviderError::SecretFile("TOKEN_MUST_BE_REGULAR_FILE"));
-        }
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(ProviderError::SecretFile(
-                "TOKEN_FILE_PERMISSIONS_MUST_BE_0600_OR_STRICTER",
-            ));
-        }
-        let mut token_text = fs::read_to_string(&token_file)
-            .map_err(|_| ProviderError::SecretFile("TOKEN_READ_FAILED"))?;
-        let token = token_text.trim().to_owned();
-        token_text.zeroize();
+        let token = load_secret_file(
+            token_file,
+            SecretFilePolicy {
+                min_bytes: 40,
+                max_bytes: 80,
+            },
+        )
+        .map_err(cloudflare_secret_error)?;
         let zone_id = zone_id.into();
-        if !(40..=80).contains(&token.len()) || !token.bytes().all(|byte| byte.is_ascii_graphic()) {
-            return Err(ProviderError::SecretFile("TOKEN_FORMAT_INVALID"));
-        }
         validate_configuration(&zone_id, &allowed_records)?;
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -153,7 +141,7 @@ where
             api_base: api_base.trim_end_matches('/').to_owned(),
             zone_id,
             allowed_records,
-            token: token.into(),
+            token,
             origin,
         })
     }
@@ -477,22 +465,17 @@ fn is_cloudflare_identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn resolve_token_path(
-    configured: &Path,
-    credential_directory: Option<&Path>,
-) -> Result<PathBuf, ProviderError> {
-    if configured.is_absolute() {
-        return Ok(configured.to_path_buf());
-    }
-    let Some(directory) = credential_directory else {
-        return Err(ProviderError::SecretFile(
-            "SYSTEMD_CREDENTIAL_DIRECTORY_UNAVAILABLE",
-        ));
-    };
-    if configured.components().count() != 1 {
-        return Err(ProviderError::SecretFile("CREDENTIAL_NAME_INVALID"));
-    }
-    Ok(directory.join(configured))
+fn cloudflare_secret_error(error: SecretFileError) -> ProviderError {
+    ProviderError::SecretFile(match error {
+        SecretFileError::CredentialDirectoryUnavailable => {
+            "SYSTEMD_CREDENTIAL_DIRECTORY_UNAVAILABLE"
+        }
+        SecretFileError::CredentialNameInvalid => "CREDENTIAL_NAME_INVALID",
+        SecretFileError::ReadFailed => "TOKEN_READ_FAILED",
+        SecretFileError::NotRegularFile => "TOKEN_MUST_BE_REGULAR_FILE",
+        SecretFileError::PermissionsTooOpen => "TOKEN_FILE_PERMISSIONS_MUST_BE_0600_OR_STRICTER",
+        SecretFileError::FormatInvalid => "TOKEN_FORMAT_INVALID",
+    })
 }
 
 fn http_status_error(status: StatusCode) -> ProviderError {
@@ -517,8 +500,9 @@ mod tests {
 
     use guard_core::config::{CloudflareRecordConfig, DnsRecordType};
 
-    use super::{CloudflareBackend, OriginProtection, resolve_token_path};
+    use super::{CloudflareBackend, OriginProtection};
     use crate::{ProviderBackend, ProviderError};
+    use guard_system::resolve_credential_path;
 
     const ZONE_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const RECORD_ID: &str = "11111111111111111111111111111111";
@@ -566,7 +550,7 @@ mod tests {
 
     #[test]
     fn resolves_relative_token_only_from_systemd_credentials() {
-        let resolved = resolve_token_path(
+        let resolved = resolve_credential_path(
             Path::new("cloudflare-token"),
             Some(Path::new("/run/credentials/vps-guard-control.service")),
         );
@@ -577,8 +561,8 @@ mod tests {
                     .to_path_buf()
             )
         );
-        assert!(resolve_token_path(Path::new("cloudflare-token"), None).is_err());
-        assert!(resolve_token_path(Path::new("../token"), Some(Path::new("/run"))).is_err());
+        assert!(resolve_credential_path(Path::new("cloudflare-token"), None).is_err());
+        assert!(resolve_credential_path(Path::new("../token"), Some(Path::new("/run"))).is_err());
     }
 
     #[test]

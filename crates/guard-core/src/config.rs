@@ -332,6 +332,12 @@ pub struct CollectorsConfig {
     /// Redis PING 확인 주소입니다.
     #[serde(default)]
     pub redis_address: Option<SocketAddr>,
+    /// cgroup v2 mount root입니다.
+    #[serde(default = "default_cgroup_root")]
+    pub cgroup_root: PathBuf,
+    /// 관리자가 명시적으로 허용한 핵심 service입니다.
+    #[serde(default)]
+    pub services: Vec<ServiceCollectorConfig>,
     /// collector별 timeout입니다.
     #[serde(default = "default_collector_timeout_ms")]
     pub timeout_ms: u64,
@@ -344,9 +350,51 @@ impl Default for CollectorsConfig {
             php_fpm_status_url: None,
             mysql_address: None,
             redis_address: None,
+            cgroup_root: default_cgroup_root(),
+            services: Vec::new(),
             timeout_ms: default_collector_timeout_ms(),
         }
     }
+}
+
+/// allowlist된 핵심 service의 cgroup과 semantic metric 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceCollectorConfig {
+    /// UI와 API에 표시할 안정된 식별자입니다.
+    pub name: String,
+    /// allowlist된 systemd service unit입니다.
+    pub unit: String,
+    /// semantic metric parser 종류입니다.
+    pub kind: ServiceCollectorKind,
+    /// cgroup root 아래 상대 경로입니다. 기본값은 `system.slice/<unit>`입니다.
+    #[serde(default)]
+    pub cgroup_path: Option<PathBuf>,
+    /// Nginx·Apache·PHP-FPM의 loopback status URL입니다.
+    #[serde(default)]
+    pub status_url: Option<String>,
+    /// 인증 없는 loopback Redis 주소입니다.
+    #[serde(default)]
+    pub address: Option<SocketAddr>,
+    /// MySQL 또는 인증 Redis connection URL을 담은 systemd credential 이름입니다.
+    #[serde(default)]
+    pub credential_file: Option<PathBuf>,
+}
+
+/// 핵심 service의 semantic metric 종류입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceCollectorKind {
+    /// Nginx `stub_status`입니다.
+    Nginx,
+    /// Apache `mod_status?auto`입니다.
+    Apache,
+    /// PHP-FPM status text입니다.
+    PhpFpm,
+    /// MySQL 또는 MariaDB global status입니다.
+    Mysql,
+    /// Redis INFO입니다.
+    Redis,
 }
 
 /// 설정 parse 또는 의미 검증 실패입니다.
@@ -691,6 +739,48 @@ impl GuardConfig {
         if self.collectors.timeout_ms == 0 {
             return invalid("collectors.timeout_ms", "0보다 커야 합니다");
         }
+        if self.collectors.timeout_ms > 10_000 {
+            return invalid("collectors.timeout_ms", "최대 10초여야 합니다");
+        }
+        if self.collectors.cgroup_root != Path::new("/sys/fs/cgroup") {
+            return invalid(
+                "collectors.cgroup_root",
+                "지원하는 cgroup v2 root는 /sys/fs/cgroup입니다",
+            );
+        }
+        for (field, url) in [
+            (
+                "collectors.nginx_status_url",
+                &self.collectors.nginx_status_url,
+            ),
+            (
+                "collectors.php_fpm_status_url",
+                &self.collectors.php_fpm_status_url,
+            ),
+        ] {
+            if let Some(url) = url {
+                validate_loopback_http_url(url, field)?;
+            }
+        }
+        for (field, address) in [
+            ("collectors.mysql_address", self.collectors.mysql_address),
+            ("collectors.redis_address", self.collectors.redis_address),
+        ] {
+            if address.is_some_and(|address| !address.ip().is_loopback()) {
+                return invalid(field, "loopback 주소만 허용합니다");
+            }
+        }
+        let legacy_service_configured = self.collectors.nginx_status_url.is_some()
+            || self.collectors.php_fpm_status_url.is_some()
+            || self.collectors.mysql_address.is_some()
+            || self.collectors.redis_address.is_some();
+        if legacy_service_configured && !self.collectors.services.is_empty() {
+            return invalid(
+                "collectors",
+                "legacy endpoint와 allowlist service 설정을 함께 사용할 수 없습니다",
+            );
+        }
+        validate_service_collectors(&self.collectors.services)?;
         Ok(())
     }
 
@@ -755,6 +845,141 @@ fn host_rule_matches(rule: &str, host: &str) -> bool {
     }
 }
 
+fn validate_service_collectors(services: &[ServiceCollectorConfig]) -> Result<(), ConfigError> {
+    if services.len() > 16 {
+        return invalid("collectors.services", "핵심 service는 최대 16개입니다");
+    }
+    let mut names = HashSet::with_capacity(services.len());
+    let mut units = HashSet::with_capacity(services.len());
+    for service in services {
+        if service.name.is_empty()
+            || service.name.len() > 64
+            || !service
+                .name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            || !names.insert(&service.name)
+        {
+            return invalid(
+                "collectors.services.name",
+                "중복되지 않은 64자 이하 안전 식별자가 필요합니다",
+            );
+        }
+        if service.unit.len() > 128
+            || !service.unit.ends_with(".service")
+            || service.unit.contains('/')
+            || !service.unit.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'.' | b'_' | b'-' | b'@' | b':' | b'\\')
+            })
+            || !units.insert(&service.unit)
+        {
+            return invalid(
+                "collectors.services.unit",
+                "중복되지 않은 안전한 systemd .service unit이 필요합니다",
+            );
+        }
+        if let Some(path) = service.cgroup_path.as_deref()
+            && (!is_safe_relative_path(path, 8) || path.file_name() != Some(service.unit.as_ref()))
+        {
+            return invalid(
+                "collectors.services.cgroup_path",
+                "cgroup root 아래 안전한 상대 경로여야 합니다",
+            );
+        }
+        match service.kind {
+            ServiceCollectorKind::Nginx
+            | ServiceCollectorKind::Apache
+            | ServiceCollectorKind::PhpFpm => {
+                let Some(status_url) = service.status_url.as_deref() else {
+                    return invalid(
+                        "collectors.services.status_url",
+                        "HTTP service에는 loopback status URL이 필요합니다",
+                    );
+                };
+                validate_loopback_http_url(status_url, "collectors.services.status_url")?;
+                if service.address.is_some() || service.credential_file.is_some() {
+                    return invalid(
+                        "collectors.services",
+                        "HTTP service에는 address나 credential_file을 함께 둘 수 없습니다",
+                    );
+                }
+            }
+            ServiceCollectorKind::Mysql => {
+                if service.status_url.is_some()
+                    || service.address.is_some()
+                    || service.credential_file.is_none()
+                {
+                    return invalid(
+                        "collectors.services",
+                        "MySQL에는 connection URL credential_file만 필요합니다",
+                    );
+                }
+            }
+            ServiceCollectorKind::Redis => {
+                if service.status_url.is_some()
+                    || service.address.is_some() == service.credential_file.is_some()
+                {
+                    return invalid(
+                        "collectors.services",
+                        "Redis에는 loopback address 또는 credential_file 중 하나가 필요합니다",
+                    );
+                }
+                if service
+                    .address
+                    .is_some_and(|address| !address.ip().is_loopback())
+                {
+                    return invalid(
+                        "collectors.services.address",
+                        "Redis는 loopback 주소만 허용합니다",
+                    );
+                }
+            }
+        }
+        if let Some(path) = service.credential_file.as_deref()
+            && !path.is_absolute()
+            && !is_systemd_credential_name(path)
+        {
+            return invalid(
+                "collectors.services.credential_file",
+                "절대 경로 또는 단일 systemd credential 이름이 필요합니다",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_loopback_http_url(value: &str, field: &'static str) -> Result<(), ConfigError> {
+    let parsed = url::Url::parse(value)
+        .ok()
+        .filter(|url| url.scheme() == "http")
+        .filter(|url| url.username().is_empty() && url.password().is_none())
+        .filter(|url| url.fragment().is_none())
+        .filter(loopback_url_host);
+    if parsed.is_none() {
+        return invalid(field, "인증 정보 없는 loopback HTTP URL만 허용합니다");
+    }
+    Ok(())
+}
+
+fn loopback_url_host(value: &url::Url) -> bool {
+    match value.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
+fn is_safe_relative_path(path: &Path, max_components: usize) -> bool {
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path.components().count() <= max_components
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
 fn invalid<T>(field: &'static str, reason: impl Into<String>) -> Result<T, ConfigError> {
     Err(ConfigError::Invalid {
         field,
@@ -792,6 +1017,10 @@ const fn default_clearance_ttl_seconds() -> u64 {
 
 const fn default_collector_timeout_ms() -> u64 {
     500
+}
+
+fn default_cgroup_root() -> PathBuf {
+    PathBuf::from("/sys/fs/cgroup")
 }
 
 const fn default_audit_retention_days() -> u64 {

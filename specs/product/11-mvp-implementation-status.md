@@ -13,7 +13,7 @@ last_reviewed: 2026-07-15
 
 현재 상태는 **pre-MVP 개발용 수직 슬라이스**입니다. 기본 Rust 단위 테스트와 loopback smoke는 재현되지만, 요구사항별 자동 증거·실제 VPS 장애 주입·Cloudflare test zone·public 80/443·rollback 인증이 남아 있습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 90개 중 `PLANNED` 15개, `CODE_ONLY` 43개, `AUTO_PASS` 32개, `VPS_PASS` 0개입니다. 즉 75개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 32개이고, 실제 VPS 운영 수용 기준을 완료한 항목은 아직 없습니다.
+현재 요구사항 90개 중 `PLANNED` 13개, `CODE_ONLY` 43개, `AUTO_PASS` 34개, `VPS_PASS` 0개입니다. 즉 77개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 34개이고, 실제 VPS 운영 수용 기준을 완료한 항목은 아직 없습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -23,7 +23,7 @@ last_reviewed: 2026-07-15
 | `EDGE-010`~`EDGE-012` | 첫 origin 성공 전 ready 차단, live/ready 분리, query·body 로그 제외, bounded limiter | edge unit·integration tests |
 | `EDGE-008`, `EDGE-009` | policy hash·request-time TTL·version 검증, last-known-good 원자 hot reload와 5분 lease 갱신 | `policy_runtime`·control runtime tests |
 | `OBS-001`, `OBS-008` | status·latency·bytes·upstream connection·client·route aggregate, SQLite WAL·retention, non-blocking datagram 재연결·손실 계측 | telemetry·storage·loopback integration tests |
-| `OBS-003` 일부, `OBS-005`·`OBS-006` 생존 probe | Linux `/proc`의 load·memory·swap·uptime, Nginx/PHP HTTP 200, MySQL TCP, Redis PING와 collector health | agent tests, control resource API; semantic metric은 미완료 |
+| `OBS-003`~`OBS-006`, `OBS-011` | Linux `/proc` 서버값, allowlist systemd unit의 cgroup v2 CPU·memory·I/O·process/task, Nginx/Apache·PHP-FPM·MySQL/MariaDB·Redis semantic metric과 component별 timeout/error/stale 상태 | config·bounded parser·loopback transport·cgroup fixture, Control resource API와 Playwright; 실제 DB/Redis·2GB VPS 대조는 미완료 |
 | `OBS-007` 자동 검증 | 설정 상한이 적용된 1초 live ring, 전용 blocking batch writer, SQLite WAL 상세·client IP·10초·1분 rollup, 계층별 bounded retention, DB/WAL·disk·drop health | telemetry·storage·API·UI 회귀 테스트; busy·disk-full fault와 2GB VPS 부하 증거는 미완료 |
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
 | `DET-002`, `DET-011` | 범용 PHP·GnuBoard 5·GnuBoard 7·WordPress route 분리, app 분류와 site override를 실제 strict·upload 정책에 합성 | profile·edge runtime tests |
@@ -45,7 +45,7 @@ last_reviewed: 2026-07-15
 
 - `EDGE-001`, `EDGE-002`, `EDGE-005`: `g7devops` public 80/443, 인증서별 multi-SNI 선택, WebSocket 실제 VPS E2E
 - `EDGE-013`: app profile·행동 분석을 생략하되 HTTP 안전 한도를 유지하는 `protocol_only` mode
-- `OBS-003`~`OBS-006`, `OBS-010`, `OBS-011`: 저장 batch·1초/10초/1분 rollup·retention·disk budget은 자동 검증됐으나 실제 semantic metric, allowlisted service별 cgroup CPU·memory·I/O·process/task, busy·disk-full 장애와 2GB VPS 정확도·route-resource 상관 검증이 남음
+- `OBS-003`~`OBS-006`, `OBS-010`, `OBS-011`: semantic·cgroup 수집 코드는 구현됐으나 실제 MySQL/Redis 최소 권한 smoke, cgroup/systemd 값 대조, busy·disk-full 장애와 2GB VPS 정확도·route-resource 상관 검증이 남음
 - `UI-001`: 실제 public 443 관리 Host의 인증서·접속·복구와 앱 origin 비혼선 VPS 증거
 - `UI-005`, `UI-006`, `UI-008`, `UI-010`, `UI-012`: client 상세 score/action, 동일축 상관 그래프, TLS 실제 read-back, 용어집, read/export 세부 역할 분리
 - 애플리케이션 보안 계층: 현재 G5·G7 route 분류와 route/client 한도까지만 구현됐으며, origin 응답 CSP·보안 header 정책, XSS·SQL injection 판별, 계정·session 단위 무차별 대입 방어는 별도 요구사항 정의부터 필요

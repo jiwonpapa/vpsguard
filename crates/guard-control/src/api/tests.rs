@@ -8,6 +8,9 @@ use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use guard_agent::cgroup::CgroupSnapshot;
+use guard_agent::services::ServiceSemanticSnapshot;
+use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::UiConfig;
 use guard_core::{GuardMode, GuardState};
 use guard_system::{AtomicJsonStore, inspect_tls_management};
@@ -426,6 +429,49 @@ async fn resources_exposes_bounded_storage_health_to_authenticated_session()
     let state = app(&directory.path().join("state.json"))?;
     state.storage.note_queue_send_started();
     state.storage.note_queue_send_failed();
+    state.service_health.write().await.push(CollectorHealth {
+        name: "php_fpm".to_owned(),
+        state: CollectorState::Live,
+        last_success_at: Some("2026-07-14T00:00:00Z".to_owned()),
+        error_code: None,
+        unit: Some("php8.3-fpm.service".to_owned()),
+        collected_at_unix_ms: Some(1_000),
+        resource_state: Some(CollectorState::Live),
+        semantic_state: Some(CollectorState::Live),
+        resource_error_code: None,
+        semantic_error_code: None,
+        resources: Some(CgroupSnapshot {
+            collected_at_unix_ms: 1_000,
+            cpu_usage_usec: 500,
+            cpu_user_usec: 400,
+            cpu_system_usec: 100,
+            cpu_nr_throttled: 0,
+            cpu_throttled_usec: 0,
+            cpu_usage_milli_percent: Some(12_500),
+            memory_current_bytes: 4_096,
+            memory_peak_bytes: Some(8_192),
+            memory_high_events: 0,
+            memory_max_events: 0,
+            oom_events: 0,
+            oom_kill_events: 0,
+            io_read_bytes: 10,
+            io_write_bytes: 20,
+            process_count: 2,
+            task_count: 4,
+        }),
+        semantic: Some(ServiceSemanticSnapshot::PhpFpm {
+            accepted_connections: 10,
+            listen_queue: 1,
+            max_listen_queue: 2,
+            listen_queue_length: 128,
+            idle_processes: 2,
+            active_processes: 1,
+            total_processes: 3,
+            max_active_processes: 2,
+            max_children_reached: 0,
+            slow_requests: 0,
+        }),
+    });
     let issued = state.sessions.issue(false);
     let response = router(state)
         .oneshot(
@@ -441,6 +487,12 @@ async fn resources_exposes_bounded_storage_health_to_authenticated_session()
     assert_eq!(value["storage"]["queue_capacity"], 4_096);
     assert_eq!(value["storage"]["queue_dropped_samples"], 1);
     assert_eq!(value["storage"]["condition"], "degraded");
+    assert_eq!(
+        value["services"][0]["resources"]["memory_current_bytes"],
+        4_096
+    );
+    assert_eq!(value["services"][0]["semantic"]["kind"], "php_fpm");
+    assert_eq!(value["services"][0]["semantic"]["listen_queue"], 1);
     Ok(())
 }
 

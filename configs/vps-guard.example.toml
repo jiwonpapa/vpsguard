@@ -80,3 +80,28 @@ min_disk_free_bytes = 268435456
 
 [collectors]
 timeout_ms = 500
+
+# 전체 서버를 검색하지 않습니다. 실제 HTTP 처리 경로의 systemd unit만 명시합니다.
+# [[collectors.services]]
+# name = "nginx"
+# unit = "nginx.service"
+# kind = "nginx"
+# status_url = "http://127.0.0.1:8081/nginx-status"
+#
+# [[collectors.services]]
+# name = "php_fpm"
+# unit = "php8.3-fpm.service"
+# kind = "php_fpm"
+# status_url = "http://127.0.0.1:8081/php-fpm-status"
+#
+# [[collectors.services]]
+# name = "mysql"
+# unit = "mariadb.service"
+# kind = "mysql"
+# credential_file = "mysql-monitor-url"
+#
+# [[collectors.services]]
+# name = "redis"
+# unit = "redis-server.service"
+# kind = "redis"
+# credential_file = "redis-monitor-url"
