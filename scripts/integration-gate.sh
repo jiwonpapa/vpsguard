@@ -67,7 +67,7 @@ chmod 0600 /tmp/vps-guard-smoke/tls-key.pem
 VPS_GUARD_TEST_ORIGIN_PORT=28081 \
   python3 tests/fixtures/origin_server.py >"${evidence_dir}/origin.log" 2>&1 &
 origin_pid=$!
-curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   http://127.0.0.1:28081/health >"${evidence_dir}/origin-live.json"
 
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.integration.toml" \
@@ -75,52 +75,52 @@ VPS_GUARD_STATE="${evidence_dir}/state.json" \
   target/debug/vps-guard-control >"${evidence_dir}/control.log" 2>&1 &
 control_pid=$!
 
-curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   http://127.0.0.1:27727/health/live >"${evidence_dir}/control-live.txt"
 
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.integration.toml" \
   target/debug/vps-guard-edge >"${evidence_dir}/edge.log" 2>&1 &
 edge_pid=$!
-curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   --dump-header "${evidence_dir}/edge-live.headers" \
   -H 'Host: example.test' http://127.0.0.1:28080/health/live >"${evidence_dir}/edge-live.txt"
 grep -Eiq '^x-vpsguard-telemetry-(emitted|dropped|reconnected): [0-9]+' "${evidence_dir}/edge-live.headers"
 
-initial_ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
+initial_ready_status="$(curl --disable --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
 [[ "${initial_ready_status}" == "503" ]]
 
 app_request() {
   local path="$1"
   shift
-  curl --silent --show-error --insecure --noproxy '*' \
+  curl --disable --silent --show-error --insecure --noproxy '*' \
     --resolve example.test:28443:127.0.0.1 "$@" "https://example.test:28443${path}"
 }
 
 protocol_request() {
   local path="$1"
   shift
-  curl --silent --show-error --noproxy '*' \
+  curl --disable --silent --show-error --noproxy '*' \
     -H 'Host: example.test' "$@" "http://127.0.0.1:28082${path}"
 }
 
 protocol_tls_request() {
   local path="$1"
   shift
-  curl --silent --show-error --insecure --noproxy '*' \
+  curl --disable --silent --show-error --insecure --http1.1 --noproxy '*' \
     --resolve example.test:28444:127.0.0.1 "$@" "https://example.test:28444${path}"
 }
 
 security_request() {
   local path="$1"
   shift
-  curl --silent --show-error --noproxy '*' \
+  curl --disable --silent --show-error --noproxy '*' \
     -H 'Host: example.test' "$@" "http://127.0.0.1:28083${path}"
 }
 
 admin_request() {
   local path="$1"
   shift
-  curl --silent --show-error --insecure --noproxy '*' \
+  curl --disable --silent --show-error --insecure --noproxy '*' \
     --resolve guard.example.test:28443:127.0.0.1 "$@" "https://guard.example.test:28443${path}"
 }
 
@@ -139,7 +139,7 @@ if grep -Eiq '^(server|x-powered-by|x-aspnet-version):' "${evidence_dir}/app-sec
   echo "origin version header leaked through edge" >&2
   exit 1
 fi
-ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
+ready_status="$(curl --disable --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
 [[ "${ready_status}" == "200" ]]
 
 # EDGE-013: protocol_only는 G7 app profile과 동적 판정을 건너뛰지만
@@ -147,15 +147,20 @@ ready_status="$(curl --silent --output /dev/null --write-out '%{http_code}' -H '
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.protocol-only.integration.toml" \
   target/debug/vps-guard-edge >"${evidence_dir}/protocol-only-edge.log" 2>&1 &
 protocol_edge_pid=$!
-curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   -H 'Host: example.test' http://127.0.0.1:28082/health/live \
   >"${evidence_dir}/protocol-only-live.txt"
 # health listener가 먼저 준비될 수 있으므로 TLS listener도 별도로 대기합니다.
 protocol_tls_request /health/live \
   --retry 40 --retry-connrefused --retry-delay 0 \
   --output "${evidence_dir}/protocol-only-tls-live.txt"
+protocol_request /api/auth/login \
+  --dump-header "${evidence_dir}/protocol-only-http-redirect.headers" \
+  --output /dev/null
+grep -Eq '^HTTP/[0-9.]+ 308' "${evidence_dir}/protocol-only-http-redirect.headers"
+grep -Eiq '^location: https://example\.test/api/auth/login' "${evidence_dir}/protocol-only-http-redirect.headers"
 for _request in 1 2 3 4; do
-  [[ "$(protocol_request /api/auth/login --output /dev/null --write-out '%{http_code}')" == "200" ]]
+  [[ "$(protocol_tls_request /api/auth/login --output /dev/null --write-out '%{http_code}')" == "200" ]]
 done
 [[ "$(protocol_tls_request /protocol-only-tls --output /dev/null --write-out '%{http_code}')" == "200" ]]
 protocol_tls_request /protocol-only-tls \
@@ -168,15 +173,15 @@ if grep -Eiq '^content-security-policy(-report-only)?:' "${evidence_dir}/protoco
   exit 1
 fi
 for unsafe_method in CONNECT TRACE TRACK; do
-  [[ "$(protocol_request / --request "${unsafe_method}" --output /dev/null --write-out '%{http_code}')" == "405" ]]
+  [[ "$(protocol_tls_request / --request "${unsafe_method}" --output /dev/null --write-out '%{http_code}')" == "405" ]]
 done
-protocol_spoof="$(protocol_request /protocol-only -H 'X-Forwarded-For: 203.0.113.7')"
+protocol_spoof="$(protocol_tls_request /protocol-only -H 'X-Forwarded-For: 203.0.113.7')"
 [[ "${protocol_spoof}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
 [[ "${protocol_spoof}" != *'203.0.113.7'* ]]
-[[ "$(protocol_request / --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test')" == "400" ]]
+[[ "$(protocol_tls_request / --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test')" == "400" ]]
 python3 -c 'from pathlib import Path; Path("/tmp/vps-guard-smoke/protocol-body.bin").write_bytes(b"x" * 2048)'
-[[ "$(protocol_request /upload --output /dev/null --write-out '%{http_code}' -X POST --data-binary @/tmp/vps-guard-smoke/protocol-body.bin)" == "200" ]]
-[[ "$(protocol_request /regular --output /dev/null --write-out '%{http_code}' -X POST --data-binary @/tmp/vps-guard-smoke/protocol-body.bin)" == "413" ]]
+[[ "$(protocol_tls_request /upload --output /dev/null --write-out '%{http_code}' -X POST --data-binary @/tmp/vps-guard-smoke/protocol-body.bin)" == "200" ]]
+[[ "$(protocol_tls_request /regular --output /dev/null --write-out '%{http_code}' -X POST --data-binary @/tmp/vps-guard-smoke/protocol-body.bin)" == "413" ]]
 python3 - <<'PY'
 import socket
 
@@ -203,7 +208,7 @@ protocol_edge_pid=""
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.security.integration.toml" \
   target/debug/vps-guard-edge >"${evidence_dir}/security-edge.log" 2>&1 &
 security_edge_pid=$!
-curl --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
   -H 'Host: example.test' http://127.0.0.1:28083/health/live \
   >"${evidence_dir}/security-live.txt"
 for _request in 1 2; do
@@ -247,7 +252,7 @@ grep -Fq '<title>VPSGuard 운영 콘솔</title>' "${evidence_dir}/management-ind
 management_unknown="$(admin_request /hello)"
 [[ "${management_unknown}" == *'<title>VPSGuard 운영 콘솔</title>'* ]]
 [[ "${management_unknown}" != *'"path": "/hello"'* ]]
-redirect_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+redirect_status="$(curl --disable --silent --output /dev/null --write-out '%{http_code}' \
   --dump-header "${evidence_dir}/management-redirect.headers" \
   -H 'Host: guard.example.test' http://127.0.0.1:28080/)"
 [[ "${redirect_status}" == "308" ]]
@@ -342,7 +347,7 @@ wait "${control_pid}" 2>/dev/null || true
 control_pid=""
 [[ "$(app_request /hello --output /dev/null --write-out '%{http_code}')" == "200" ]]
 [[ "$(admin_request / --output /dev/null --write-out '%{http_code}')" == "502" ]]
-[[ "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+[[ "$(curl --disable --silent --output /dev/null --write-out '%{http_code}' \
   -H 'Host: example.test' http://127.0.0.1:28080/health/ready)" == "200" ]]
 
 echo "integration gate: PASS"
