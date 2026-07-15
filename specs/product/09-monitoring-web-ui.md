@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-14
+last_reviewed: 2026-07-15
 ---
 
 # 독립 모니터링 웹 UI
@@ -27,6 +27,7 @@ last_reviewed: 2026-07-14
 - 봇 가능성, 신뢰도와 자원 비용
 - CPU, memory, swap, network와 disk wait
 - Nginx, PHP-FPM, MySQL과 Redis 상태
+- 관리자가 확정한 핵심 service별 CPU, memory, I/O와 process/task 수
 - 로컬 제한·차단·challenge
 - Cloudflare, 원본 방화벽과 TLS 실제 상태
 - 사건 타임라인, 자동 조치와 복구
@@ -224,6 +225,19 @@ IP 상세에서는 다음 명령을 제공합니다.
 - CPU·load·memory·swap·disk wait
 
 사용자는 특정 spike를 선택해 해당 시간에 비용을 만든 IP와 경로로 이동할 수 있어야 합니다.
+
+### 7.3 핵심 service inventory
+
+관리자는 읽기 전용으로 발견된 후보 중 HTTP 처리 경로에 있는 service만 관측 대상으로 확정합니다. 전체 systemd unit·process 목록, command line과 unrelated daemon은 수집하지 않습니다.
+
+service별 화면은 다음을 같은 시간축에 표시합니다.
+
+- systemd unit active·failed·restart 상태와 마지막 성공 시각
+- cgroup v2 CPU 사용률, `memory.current`·OOM event, I/O bytes와 `pids.current`
+- Nginx/Apache connection, PHP-FPM active·idle·queue, DB connection·lock wait, Redis memory·client·eviction
+- 수집 권한 부족, 미설정, delayed, stale와 error 상태
+
+이 화면은 관측용이며 service stop·restart, process kill과 범용 설정 편집을 제공하지 않습니다.
 
 ## 8. 사건과 대응
 

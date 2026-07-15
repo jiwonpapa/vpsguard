@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: verification-contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-14
+last_reviewed: 2026-07-15
 ---
 
 # 검증 추적표
@@ -41,6 +41,7 @@ last_reviewed: 2026-07-14
 | `EDGE-010` | `tests/integration/health_contract.rs` | origin down 상태 live/ready 비교 |
 | `EDGE-011` | `tests/security/log_secret_scan.rs` | 배포 로그 secret scan |
 | `EDGE-012` | `tests/load/high_cardinality.js` | RSS와 eviction/drop counter |
+| `EDGE-013` | `tests/e2e/inspection_modes.rs` | `profiled`·`protocol_only` 정상 요청과 정적 불변조건 report |
 
 ### 3.2 Observation
 
@@ -54,6 +55,7 @@ last_reviewed: 2026-07-14
 | `OBS-006` | `crates/guard-agent/tests/redis_collector.rs` | Redis on/off/error smoke |
 | `OBS-008` | `tests/fault/telemetry_backpressure.rs` | drop counter와 HTTP success |
 | `OBS-010` | `crates/guard-core/tests/resource_correlation.rs` | incident evidence snapshot |
+| `OBS-011` | `crates/guard-agent/tests/systemd_cgroup_collector.rs` | 2GB VPS allowlisted unit과 cgroup 실제값 대조 |
 
 ### 3.3 Detection
 
@@ -78,7 +80,7 @@ last_reviewed: 2026-07-14
 | `ACT-005` | `crates/guard-core/tests/temporary_block.rs` | nftables set·TTL read-back |
 | `ACT-006`, `ACT-007`, `ACT-008` | `crates/guard-provider/tests/cloudflare_transaction.rs` | 실제 test zone 전환·복구 artifact |
 | `ACT-009` | `crates/guard-core/tests/manual_hold.rs` | UI hold 중 state timeline |
-| `ACT-010` | `crates/guard-provider/tests/firewall_invariants.rs` | 전후 SSH rule diff |
+| `ACT-010` | `crates/guard-provider/tests/firewall_invariants.rs` | 전후 SSH·non-web listener·firewall rule diff |
 | `ACT-011` | `tests/fault/provider_unavailable.rs` | local guard 지속 report |
 | `ACT-012` | `crates/guard-control/tests/idempotent_actions.rs` | 중복 요청 provider call count |
 
@@ -87,7 +89,7 @@ last_reviewed: 2026-07-14
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
 | `TLS-001` | `crates/guard-edge/tests/certificate_validation.rs` | invalid cert start rejection |
-| `TLS-002`, `TLS-003` | `tests/e2e/certbot_renew.rs` | staging issuance·renew report |
+| `TLS-002`, `TLS-003`, `TLS-006` | `tests/e2e/certbot_renew.rs` | staging webroot issuance·systemd timer·renew·deploy hook report |
 | `TLS-004` | `crates/guard-agent/tests/served_certificate.rs` | file/served cert comparison |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | update·bypass 전후 fingerprint |
 | `OPS-001`, `OPS-002`, `OPS-003` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
@@ -112,6 +114,8 @@ last_reviewed: 2026-07-14
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |
 | `NFR-005` | error snapshot tests | UI·CLI problem report |
+| `NFR-007` | workspace lint 상속·module rustdoc gate·`cargo doc -D warnings` | CI rustdoc build artifact |
+| `NFR-008` | dependency decision record + audit·deny·machete | 2GB VPS binary·RSS dependency diff |
 
 ## 4. 품질 게이트
 

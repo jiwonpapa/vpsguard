@@ -130,6 +130,10 @@
 
 - Rust stable과 Rust 2024 edition을 사용합니다.
 - 서버에 Rust toolchain을 설치하지 않고 검증된 release artifact를 배포합니다.
+- ACME, HTTP, TLS, DNS, DB와 Redis처럼 표준 프로토콜·암호·wire format을 다루는 기능은 유지보수되는 검증된 crate 또는 외부 client를 우선하고 임의로 재구현하지 않습니다.
+- 새 외부 의존성은 유지보수 상태, license, RustSec, MSRV, `unsafe` 범위, 전이 의존성 수와 2GB VPS의 binary·RSS 영향을 기록한 뒤 선택합니다.
+- 외부 crate는 project-owned typed adapter 뒤에 두고 timeout, 크기 상한, 최소 권한과 fake test를 적용합니다.
+- 작은 bounded parser, VPSGuard 고유 상태 전이와 hot-path cardinality 불변조건은 범용 crate 도입이 더 큰 공격면이나 자원 비용을 만들면 직접 구현할 수 있으며 근거를 ADR에 기록합니다.
 - `unwrap`, `expect`, `panic`을 production path에서 금지합니다.
 - 실패는 typed error로 표현하고 문제, 원인, 영향, 다음 조치를 분리합니다.
 - 비즈니스 로직과 외부 명령·HTTP·파일 부작용을 분리합니다.
@@ -218,6 +222,8 @@
 - snapshot 없는 ingress·firewall·TLS 변경
 - rollback 없는 update·bypass
 - stale 데이터를 정상으로 표시
+- 검증된 표준 protocol client가 있는데 근거 없이 wire protocol을 재구현
+- 유지보수·license·advisory·자원 영향을 기록하지 않은 runtime dependency 추가
 - 테스트 완화로 회귀 은폐
 - G7 Installer에 VPSGuard runtime 책임 추가
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# OPS-007, NFR-005: 저장소 게이트는 CI 기본 이미지에서 재현되고 미수집 증거를
+# OPS-007, NFR-005, NFR-007: 저장소 게이트는 CI 기본 이미지에서 재현되고 미수집 증거를
 # 릴리스 완료로 오인하지 않아야 합니다.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
 bash scripts/requirements-gate.sh
+bash scripts/docs-gate.sh
 
 release_output="$(mktemp)"
 trap 'rm -f "${release_output}"' EXIT
@@ -35,6 +36,7 @@ grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
 
 # OPS-007, NFR-005: CI evidence must be generated at the exact paths uploaded by
 # the workflow, and repository linters must remain available on a clean runner.
+# shellcheck disable=SC2016 # GitHub workflow의 literal shell expression을 검사합니다.
 grep -Fq 'echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"' .github/workflows/ci.yml
 grep -Fq 'apt-get install --yes shellcheck' .github/workflows/ci.yml
 grep -Fq '[profile.ci.junit]' .config/nextest.toml
@@ -44,5 +46,32 @@ if grep -Fq 'path = "target/nextest/ci/junit.xml"' .config/nextest.toml; then
   exit 1
 fi
 grep -Fq 'outputFolder: "playwright-report"' web/playwright.config.ts
+
+# NFR-007: workspace lint 상속, module rustdoc와 rustdoc warning 거부를
+# 로컬 check와 CI 모두에서 제거할 수 없게 고정합니다.
+grep -Eq '^[[:space:]]*missing_docs[[:space:]]*=[[:space:]]*"deny"[[:space:]]*$' Cargo.toml
+grep -Fq 'bash scripts/docs-gate.sh' scripts/check.sh
+grep -Fq 'RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items' scripts/check.sh
+grep -Fq 'RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items' .github/workflows/ci.yml
+
+# NFR-008, TLS-006, OBS-011, SEC-004: 외부 protocol client 우선 원칙과
+# 최소 권한 provider·핵심 service 관측 경계를 문서에서 제거하지 못하게 합니다.
+grep -Fq '표준 프로토콜·암호·wire format을 다루는 기능은 유지보수되는 검증된 crate 또는 외부 client를 우선' DEVELOPMENT_CONSTITUTION.md
+grep -Fq 'HTTP status 수집' docs/adr/0002-edge-integrations-and-service-observability.md
+grep -Fq 'VPSGuard의 기본 생성 경로는 Cloudflare User API Token입니다.' docs/OPERATIONS.md
+grep -Fq 'Account DNS Settings`, `DNS Firewall`, `DNS View`는' docs/OPERATIONS.md
+grep -Fq 'Account API Tokens Read/Write' docs/OPERATIONS.md
+grep -Fq '전체 systemd unit·process 목록' specs/product/09-monitoring-web-ui.md
+
+# SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
+# 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.
+grep -Fq 'LoadCredential=cloudflare-token:/etc/vps-guard/secrets/cloudflare-token' packaging/systemd/vps-guard-control-cloudflare-credential.conf
+grep -Eq '^d /etc/vps-guard/secrets 0700 root root -$' packaging/tmpfiles/vps-guard.conf
+grep -Fq 'token: SecretString' crates/guard-provider/src/cloudflare.rs
+grep -Fq 'GET /zones/{zone_id}/dns_records/{record_id}' docs/OPERATIONS.md
+if grep -Rq --exclude-dir=target --exclude='repository-contracts.sh' 'record_names' configs crates docs packaging specs; then
+  echo "deprecated name-only Cloudflare allowlist must not return" >&2
+  exit 1
+fi
 
 echo "repository contract tests: PASS"

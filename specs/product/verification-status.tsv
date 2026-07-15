@@ -12,6 +12,7 @@ EDGE-009|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src
 EDGE-010|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 EDGE-011|CODE_ONLY|crates/guard-edge/src/telemetry.rs|-|-
 EDGE-012|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
+EDGE-013|PLANNED|-|-|-
 OBS-001|AUTO_PASS|crates/guard-control/src/telemetry.rs|crates/guard-control/src/telemetry/tests.rs|-
 OBS-002|CODE_ONLY|crates/guard-control/src/storage.rs|-|-
 OBS-003|CODE_ONLY|crates/guard-agent/src/os.rs|-|-
@@ -22,6 +23,7 @@ OBS-007|PLANNED|-|-|-
 OBS-008|AUTO_PASS|crates/guard-edge/src/telemetry.rs|crates/guard-edge/src/telemetry/tests.rs|-
 OBS-009|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 OBS-010|PLANNED|-|-|-
+OBS-011|PLANNED|-|-|-
 DET-001|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-002|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-
 DET-003|PLANNED|-|-|-
@@ -50,6 +52,7 @@ TLS-002|CODE_ONLY|packaging/certbot/vps-guard-deploy-hook|-|-
 TLS-003|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 TLS-004|PLANNED|-|-|-
 TLS-005|CODE_ONLY|scripts/update-release.sh|-|-
+TLS-006|PLANNED|-|-|-
 UI-001|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 UI-002|AUTO_PASS|web/src/pages/overview.tsx|web/tests/console.e2e.ts|-
 UI-003|CODE_ONLY|web/src/pages/traffic.tsx|-|-
@@ -85,3 +88,5 @@ NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 NFR-004|AUTO_PASS|crates/guard-system/src/atomic_store.rs|crates/guard-system/src/atomic_store/tests.rs|-
 NFR-005|CODE_ONLY|crates/guard-control/src/api.rs|-|-
 NFR-006|AUTO_PASS|crates/guard-core/src/config.rs|crates/guard-core/src/config/tests.rs|-
+NFR-007|AUTO_PASS|Cargo.toml|scripts/docs-gate.sh|-
+NFR-008|CODE_ONLY|docs/adr/0002-edge-integrations-and-service-observability.md|-|-

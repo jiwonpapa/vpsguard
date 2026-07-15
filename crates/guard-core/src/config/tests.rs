@@ -209,18 +209,25 @@ fn only_trusts_configured_forwarded_peer() {
 }
 
 #[test]
-fn cloudflare_mvp_rejects_multiple_records() {
+fn cloudflare_rejects_records_for_multiple_hostnames() {
     let input = format!(
         "{VALID_CONFIG}\n{}",
         cloudflare_config(
-            "[\"example.com\", \"www.example.com\"]",
+            &[
+                ("11111111111111111111111111111111", "example.com", "A"),
+                (
+                    "22222222222222222222222222222222",
+                    "www.example.com",
+                    "AAAA",
+                ),
+            ],
             "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
         )
     );
     assert!(matches!(
         GuardConfig::from_toml(&input),
         Err(ConfigError::Invalid {
-            field: "cloudflare.record_names",
+            field: "cloudflare.records",
             ..
         })
     ));
@@ -230,7 +237,10 @@ fn cloudflare_mvp_rejects_multiple_records() {
 fn cloudflare_origin_lock_requires_both_address_families() {
     let input = format!(
         "{VALID_CONFIG}\n{}",
-        cloudflare_config("[\"example.com\"]", "[\"192.0.2.0/24\"]")
+        cloudflare_config(
+            &[("11111111111111111111111111111111", "example.com", "A")],
+            "[\"192.0.2.0/24\"]"
+        )
     );
     assert!(matches!(
         GuardConfig::from_toml(&input),
@@ -246,21 +256,21 @@ fn cloudflare_single_record_requires_one_served_hostname() {
     let input = format!(
         "{VALID_CONFIG}\n{}",
         cloudflare_config(
-            "[\"g7devops.com\"]",
+            &[("11111111111111111111111111111111", "g7devops.com", "A",)],
             "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
         )
     );
     assert!(matches!(
         GuardConfig::from_toml(&input),
         Err(ConfigError::Invalid {
-            field: "cloudflare.record_names",
+            field: "cloudflare.records",
             ..
         })
     ));
 }
 
 #[test]
-fn accepts_single_host_dual_stack_cloudflare_config() {
+fn accepts_single_hostname_multi_record_cloudflare_config() {
     let base = VALID_CONFIG.replace(
         "allowed_hosts = [\"g7devops.com\", \"*.g7devops.com\"]",
         "allowed_hosts = [\"g7devops.com\"]",
@@ -268,22 +278,63 @@ fn accepts_single_host_dual_stack_cloudflare_config() {
     let input = format!(
         "{base}\n{}",
         cloudflare_config(
-            "[\"g7devops.com\"]",
+            &[
+                ("11111111111111111111111111111111", "g7devops.com", "A",),
+                ("22222222222222222222222222222222", "g7devops.com", "AAAA",),
+            ],
             "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
         )
     );
     assert!(GuardConfig::from_toml(&input).is_ok());
 }
 
-fn cloudflare_config(records: &str, networks: &str) -> String {
+#[test]
+fn rejects_duplicate_cloudflare_record_ids() {
+    let base = VALID_CONFIG.replace(
+        "allowed_hosts = [\"g7devops.com\", \"*.g7devops.com\"]",
+        "allowed_hosts = [\"g7devops.com\"]",
+    );
+    let input = format!(
+        "{base}\n{}",
+        cloudflare_config(
+            &[
+                ("11111111111111111111111111111111", "g7devops.com", "A",),
+                ("11111111111111111111111111111111", "g7devops.com", "AAAA",),
+            ],
+            "[\"192.0.2.0/24\", \"2001:db8::/32\"]"
+        )
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "cloudflare.records",
+            ..
+        })
+    ));
+}
+
+fn cloudflare_config(records: &[(&str, &str, &str)], networks: &str) -> String {
+    let record_tables = records
+        .iter()
+        .map(|(id, name, record_type)| {
+            format!(
+                r#"
+[[cloudflare.records]]
+id = "{id}"
+name = "{name}"
+record_type = "{record_type}"
+"#
+            )
+        })
+        .collect::<String>();
     format!(
         r#"
 [cloudflare]
 enabled = true
-zone_id = "zone-test"
-record_names = {records}
+zone_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 token_file = "/tmp/cloudflare-token"
 ip_networks = {networks}
+{record_tables}
 "#
     )
 }

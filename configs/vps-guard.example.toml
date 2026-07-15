@@ -38,10 +38,19 @@ mode = "observe"
 
 [cloudflare]
 enabled = false
+# 기본 생성 경로는 User API Token입니다.
+# Zone / DNS / Edit와 특정 zone만 부여합니다. Account DNS Settings, DNS Firewall,
+# DNS View와 Account API Tokens Write는 DNS record 변경에 필요하지 않습니다.
 zone_id = ""
-record_names = []
-token_file = "/etc/vps-guard/secrets/cloudflare-token"
+records = []
+# 운영에서는 systemd credential 이름을 사용합니다. 로컬 개발만 0600 절대 경로를 허용합니다.
+token_file = "cloudflare-token"
 ip_networks = []
+# 활성화 전 Cloudflare dashboard/API에서 ID를 확인해 record별로 추가합니다.
+# [[cloudflare.records]]
+# id = "0123456789abcdef0123456789abcdef"
+# name = "example.com"
+# record_type = "A" # A, AAAA 또는 CNAME
 
 [retention]
 live_seconds = 900

@@ -1,7 +1,8 @@
 //! Versioned TOML 설정 계약과 의미 검증을 제공합니다.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -214,15 +215,38 @@ pub struct CloudflareConfig {
     /// 변경 가능한 zone ID입니다.
     #[serde(default)]
     pub zone_id: String,
-    /// 변경 가능한 DNS record allowlist입니다.
+    /// 변경 가능한 DNS record ID·이름·type allowlist입니다.
     #[serde(default)]
-    pub record_names: Vec<String>,
-    /// root-only token 파일 경로입니다.
+    pub records: Vec<CloudflareRecordConfig>,
+    /// 절대 token 파일 경로 또는 systemd credential 이름입니다.
     #[serde(default)]
     pub token_file: PathBuf,
     /// 원본 80/443에 허용할 Cloudflare network CIDR입니다.
     #[serde(default)]
     pub ip_networks: Vec<IpNet>,
+}
+
+/// Cloudflare에서 변경할 수 있는 단일 DNS record 식별자입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudflareRecordConfig {
+    /// Cloudflare DNS record ID입니다.
+    pub id: String,
+    /// 완전한 DNS record hostname입니다.
+    pub name: String,
+    /// 허용 record type입니다.
+    pub record_type: DnsRecordType,
+}
+
+/// 비상 proxy 전환에서 지원하는 DNS record type입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum DnsRecordType {
+    /// IPv4 address record입니다.
+    A,
+    /// IPv6 address record입니다.
+    AAAA,
+    /// Canonical name record입니다.
+    CNAME,
 }
 
 /// 데이터 계층별 보존기간입니다.
@@ -464,7 +488,7 @@ impl GuardConfig {
         }
         if self.cloudflare.enabled
             && (self.cloudflare.zone_id.trim().is_empty()
-                || self.cloudflare.record_names.is_empty()
+                || self.cloudflare.records.is_empty()
                 || self.cloudflare.token_file.as_os_str().is_empty()
                 || self.cloudflare.ip_networks.is_empty())
         {
@@ -473,13 +497,27 @@ impl GuardConfig {
                 "활성화 시 zone, record allowlist, token 파일과 IP network가 필요합니다",
             );
         }
-        if self.cloudflare.enabled && self.cloudflare.record_names.len() != 1 {
-            return invalid(
-                "cloudflare.record_names",
-                "MVP provider transaction은 정확히 한 개의 DNS record만 허용합니다",
-            );
-        }
         if self.cloudflare.enabled {
+            if !is_cloudflare_identifier(&self.cloudflare.zone_id) {
+                return invalid(
+                    "cloudflare.zone_id",
+                    "Cloudflare zone ID는 32자리 소문자 hex여야 합니다",
+                );
+            }
+            if !self.cloudflare.token_file.is_absolute()
+                && !is_systemd_credential_name(&self.cloudflare.token_file)
+            {
+                return invalid(
+                    "cloudflare.token_file",
+                    "절대 경로 또는 단일 systemd credential 이름이 필요합니다",
+                );
+            }
+            if self.cloudflare.records.len() > 16 {
+                return invalid(
+                    "cloudflare.records",
+                    "단일 hostname에 최대 16개 record만 허용합니다",
+                );
+            }
             let has_ipv4 = self
                 .cloudflare
                 .ip_networks
@@ -496,14 +534,38 @@ impl GuardConfig {
                     "origin lock에는 IPv4와 IPv6 Cloudflare network가 모두 필요합니다",
                 );
             }
-            let record_name = &self.cloudflare.record_names[0];
+            let mut record_ids = HashSet::with_capacity(self.cloudflare.records.len());
+            let record_name = &self.cloudflare.records[0].name;
             if record_name.starts_with("*.") {
                 return invalid(
-                    "cloudflare.record_names",
+                    "cloudflare.records",
                     "wildcard가 아닌 실제 DNS record 이름이 필요합니다",
                 );
             }
-            validate_host_rule(record_name, "cloudflare.record_names")?;
+            validate_host_rule(record_name, "cloudflare.records")?;
+            let mut has_cname = false;
+            for record in &self.cloudflare.records {
+                if !is_cloudflare_identifier(&record.id) || !record_ids.insert(&record.id) {
+                    return invalid(
+                        "cloudflare.records",
+                        "각 record에는 중복되지 않은 32자리 소문자 hex ID가 필요합니다",
+                    );
+                }
+                if !record.name.eq_ignore_ascii_case(record_name) {
+                    return invalid(
+                        "cloudflare.records",
+                        "한 transaction의 모든 record는 같은 hostname이어야 합니다",
+                    );
+                }
+                validate_host_rule(&record.name, "cloudflare.records")?;
+                has_cname |= record.record_type == DnsRecordType::CNAME;
+            }
+            if has_cname && self.cloudflare.records.len() != 1 {
+                return invalid(
+                    "cloudflare.records",
+                    "CNAME은 같은 hostname의 A·AAAA 또는 다른 CNAME과 함께 둘 수 없습니다",
+                );
+            }
             let single_served_host = self.edge.allowed_hosts.len() == 1
                 && self.edge.allowed_hosts[0].eq_ignore_ascii_case(record_name)
                 && self
@@ -513,8 +575,8 @@ impl GuardConfig {
                     .is_none_or(|canonical| canonical.eq_ignore_ascii_case(record_name));
             if !single_served_host {
                 return invalid(
-                    "cloudflare.record_names",
-                    "단일-record MVP에서는 allowed_hosts와 canonical_host도 같은 한 hostname이어야 합니다",
+                    "cloudflare.records",
+                    "provider hostname과 allowed_hosts·canonical_host가 정확히 일치해야 합니다",
                 );
             }
         }
@@ -547,6 +609,31 @@ impl GuardConfig {
             .iter()
             .any(|network| network.contains(&peer))
     }
+}
+
+fn is_cloudflare_identifier(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_systemd_credential_name(path: &Path) -> bool {
+    let mut components = path.components();
+    let Some(Component::Normal(name)) = components.next() else {
+        return false;
+    };
+    if components.next().is_some() {
+        return false;
+    }
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn validate_host_rule(raw: &str, field: &'static str) -> Result<(), ConfigError> {

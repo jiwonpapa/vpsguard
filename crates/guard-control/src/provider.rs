@@ -32,6 +32,7 @@ pub(crate) struct ProviderController {
     transaction: Option<ProviderTransaction>,
     record_name: String,
     allowed_records: Vec<String>,
+    preflight_error: Option<ProviderError>,
 }
 
 impl ProviderController {
@@ -47,10 +48,11 @@ impl ProviderController {
         let origin = NftOriginProtection::new(firewall_plan);
         let backend = CloudflareBackend::from_token_file(
             config.cloudflare.zone_id.clone(),
-            config.cloudflare.record_names.clone(),
+            config.cloudflare.records.clone(),
             &config.cloudflare.token_file,
             origin,
         )?;
+        let preflight_error = backend.preflight().err();
         let state_path = provider_state_path(config);
         let store = AtomicJsonStore::new(state_path);
         let transaction = if store.path().exists() {
@@ -58,31 +60,41 @@ impl ProviderController {
         } else {
             None
         };
-        let record_name = config.cloudflare.record_names[0].clone();
+        let record_name = config.cloudflare.records[0].name.clone();
         Ok(Some(Self {
             backend,
             store,
             transaction,
             record_name,
-            allowed_records: config.cloudflare.record_names.clone(),
+            allowed_records: config
+                .cloudflare
+                .records
+                .iter()
+                .map(|record| record.name.clone())
+                .collect(),
+            preflight_error,
         }))
     }
 
     /// 현재 provider 단계 문자열입니다.
     pub(crate) fn status(&self) -> String {
-        self.transaction.as_ref().map_or_else(
-            || "ready".to_owned(),
-            |transaction| stage_name(transaction.stage).to_owned(),
-        )
+        if let Some(transaction) = &self.transaction {
+            stage_name(transaction.stage).to_owned()
+        } else if let Some(error) = &self.preflight_error {
+            format!("unavailable:{}", error.code().to_ascii_lowercase())
+        } else {
+            "ready".to_owned()
+        }
     }
 
     /// 외부 보호가 완료됐거나 이미 snapshot 복구돼 recovery를 진행할 수 있는지 반환합니다.
     pub(crate) fn recovery_ready(&self) -> bool {
         self.transaction.as_ref().is_some_and(|transaction| {
-            matches!(
-                transaction.stage,
-                ProviderStage::Complete | ProviderStage::Restored
-            )
+            transaction.snapshot.is_some()
+                && !matches!(
+                    transaction.stage,
+                    ProviderStage::Pending | ProviderStage::Restored
+                )
         })
     }
 
@@ -91,6 +103,11 @@ impl ProviderController {
         &mut self,
         operation_id: &str,
     ) -> Result<ProviderStage, ProviderControllerError> {
+        if let Err(error) = self.backend.preflight() {
+            self.preflight_error = Some(error.clone());
+            return Err(error.into());
+        }
+        self.preflight_error = None;
         let create_new = self.transaction.as_ref().is_none_or(|transaction| {
             transaction.stage == ProviderStage::Restored
                 || transaction.record_name != self.record_name

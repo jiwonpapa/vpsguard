@@ -3,4 +3,5 @@
 /usr/local/bin/vps-guard-edge
 /etc/systemd/system/vps-guard-control.service
 /etc/systemd/system/vps-guard-edge.service
+/etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf
 /usr/lib/tmpfiles.d/vps-guard.conf

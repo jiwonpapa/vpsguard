@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+bash scripts/docs-gate.sh
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items
@@ -12,7 +13,6 @@ if command -v cargo-machete >/dev/null 2>&1; then
   cargo machete crates
 fi
 
-bash scripts/docs-gate.sh
 bash scripts/requirements-gate.sh
 bash scripts/tests/repository-contracts.sh
 

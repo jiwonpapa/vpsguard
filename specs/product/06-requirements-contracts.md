@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-14
+last_reviewed: 2026-07-15
 ---
 
 # 요구사항과 구현 계약
@@ -43,6 +43,9 @@ last_reviewed: 2026-07-14
 | `EDGE-010` | health/live와 health/ready를 분리 | process 생존과 upstream 준비 상태 구분 |
 | `EDGE-011` | 요청 body와 민감 query 값을 기본 로그에서 제외 | 로그 fixture에 비밀값이 없음 |
 | `EDGE-012` | client·route별 bounded in-memory counter 사용 | 공격 cardinality에서도 메모리 상한 유지 |
+| `EDGE-013` | 지원 HTTP protocol에서 app 분석을 생략하는 `protocol_only` mode 제공 | profile 판정은 생략하되 TLS·Host·forwarded header·body·timeout·bounded 계측 불변조건과 HTTP E2E 유지 |
+
+`protocol_only`는 raw L4 pass-through가 아니라 HTTP parsing 이후 app profile·행동 분석만 생략하는 mode이며, WebSocket은 upgrade handshake 이후 frame payload를 해석하지 않습니다. VPSGuard가 bind·변경하지 않은 port의 protocol은 기존 service로 계속 전달되며, 소유한 80/443의 비HTTP protocol은 protocol confusion 방지를 위해 거부합니다.
 
 ### 2.2 Observation
 
@@ -58,8 +61,11 @@ last_reviewed: 2026-07-14
 | `OBS-008` | edge 계측 전송은 non-blocking이며 손실량을 기록 | control 중단 시 drop counter 증가, 요청 성공 |
 | `OBS-009` | 외부 GeoIP/ASN API를 요청 hot path에서 호출 금지 | 네트워크 차단 상태에서도 edge 처리 동일 |
 | `OBS-010` | route와 server pressure를 동일 시간창으로 상관분석 | 사건 리포트에 원인 경로와 자원 변화 표시 |
+| `OBS-011` | 관리자가 확정한 핵심 service별 CPU·memory·I/O·process/task 수를 cgroup v2 기준으로 수집 | 전체 process 감사 없이 allowlisted systemd unit 값과 semantic health를 동일 시간축에 표시 |
 
 ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으로 표시합니다. 정확하지 않은 위치를 추정해서 확정값처럼 표시하지 않습니다.
+
+service 자동 발견은 읽기 전용 후보 제시까지만 허용합니다. 관리자가 선택하지 않은 unit, unrelated daemon과 개별 process command line은 수집·저장하지 않습니다. Nginx/Apache, PHP-FPM, MySQL/MariaDB와 Redis는 HTTP 요청의 실제 병목 경로에 포함될 때만 관측하며, 일반 health와 service 자원값 외에 각각 connection·queue·lock·memory 같은 semantic metric을 별도 상태로 표시합니다.
 
 ### 2.3 Detection
 
@@ -90,7 +96,7 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 | `ACT-007` | 프록시 경유 확인 후 원본 80/443 보호 | 확인 전 origin lock 실행 금지 |
 | `ACT-008` | 안정 구간 후 DNS only 복구 | snapshot 기반 역순 복구와 read-back |
 | `ACT-009` | 관리자가 자동 전이를 고정·해제 | MANUAL_HOLD에서 외부 자동 조치 없음 |
-| `ACT-010` | SSH와 현재 관리 규칙을 자동 변경하지 않음 | 모든 firewall mutation property test 통과 |
+| `ACT-010` | SSH와 TCP 80/443 외 기존 listener·firewall rule·service를 자동 변경하지 않음 | ingress·provider 전후 non-web port와 SSH rule diff 0, 모든 firewall mutation property test 통과 |
 | `ACT-011` | provider 미설정·장애 시 로컬 보호 유지 | 외부 실패가 edge 요청 실패로 전파되지 않음 |
 | `ACT-012` | 모든 action에 idempotency key와 audit event | 중복 명령이 중복 방화벽 변경을 만들지 않음 |
 
@@ -103,6 +109,7 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 | `TLS-003` | HTTP-01 경로를 명시적으로 허용 | 발급·갱신 E2E 통과 |
 | `TLS-004` | 실제 제공 인증서와 파일 인증서 비교 | 불일치 경고와 리포트 생성 |
 | `TLS-005` | reset·update·bypass에서 인증서 보존 | 파괴 작업 회귀 테스트 통과 |
+| `TLS-006` | 기존 외부 갱신 수단을 우선 감지·사용하고, 없을 때만 외부 ACME client 구성을 plan·승인·apply로 보조 | startup은 검사만 수행하며 기존 timer를 변경하지 않고, 미설정 fixture에서만 Certbot staging 발급·timer·deploy hook과 실패 사건 E2E 통과 |
 
 ### 2.6 Web UI
 
@@ -155,6 +162,8 @@ ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으
 | `NFR-004` | 상태·정책·snapshot 원자 저장 | 강제 종료 후 손상 없음 |
 | `NFR-005` | 구조화 오류에 문제·원인·영향·다음 조치 포함 | API·CLI 오류 snapshot 통과 |
 | `NFR-006` | 설정과 상태에 schema version 포함 | 구버전 migration과 미래 버전 거부 |
+| `NFR-007` | 모든 Rust module과 공개 API의 rustdoc를 빌드 게이트로 강제 | module `//!`, workspace `missing_docs = "deny"`, rustdoc warning 거부와 lint 우회 차단 |
+| `NFR-008` | 표준 protocol·parser·DB driver는 검증된 외부 crate/client를 우선하고 project 고유 불변조건만 직접 구현 | dependency 결정에 유지보수·license·advisory·MSRV·unsafe·전이 의존성·binary/RSS 영향과 adapter test 근거 존재 |
 
 ## 3. 프로세스 간 계약
 
@@ -233,8 +242,13 @@ mode = "observe"
 [cloudflare]
 enabled = false
 zone_id = ""
-record_names = []
-token_file = "/etc/vps-guard/secrets/cloudflare-token"
+records = []
+token_file = "cloudflare-token"
+
+# [[cloudflare.records]]
+# id = "0123456789abcdef0123456789abcdef"
+# name = "example.com"
+# record_type = "A"
 
 [retention]
 live_seconds = 900
@@ -249,6 +263,8 @@ raw_ip_days = 7
 - unknown key는 warning이 아니라 오류로 처리합니다.
 - port, path, CIDR, duration과 threshold 범위를 검증합니다.
 - token 본문을 TOML에 직접 넣는 것을 금지합니다.
+- `cloudflare.token_file`의 상대값은 systemd `$CREDENTIALS_DIRECTORY`의 단일 credential 이름으로만 해석하고, 운영 token 원본은 root-only 파일로 유지합니다.
+- Cloudflare record는 32자리 ID·정확한 hostname·A/AAAA/CNAME type을 명시하고 한 transaction에서 같은 hostname만 허용합니다.
 - `ui.public_host`는 exact hostname이며 app canonical Host와 분리하고 TLS certificate domain에 포함해야 합니다.
 - `ui.bind`는 loopback, `ui.admin_socket`은 절대 경로, 로그인 시도 한도는 `1..=60`이어야 합니다.
 - `detection.profile = "gnuboard"`는 기존 설정 호환을 위해 GnuBoard 5 alias로만 읽고 새 설정은 `php`, `gnuboard5`, `gnuboard7`, `wordpress`를 명시합니다.
@@ -371,9 +387,13 @@ Cloudflare adapter는 다음 의미 단계를 구현합니다.
 
 ## 10. 저장 계약
 
-- live 1초 자료는 메모리 ring buffer로 유지합니다.
-- 10초·1분 집계와 incident는 control의 SQLite WAL에 저장할 수 있습니다.
+- 운영 로그는 구조화 JSON으로 stdout/stderr에 기록해 systemd journal이 수집하며 request별 원본 IP·path 로그를 기본 `info`에 남기지 않습니다. VPSGuard는 host의 전역 journald 보존 설정을 임의 변경하지 않습니다.
+- live 1초 자료는 bounded 메모리 ring buffer로 유지합니다.
+- edge telemetry는 query·header·body 원문 없이 normalized route, status, latency, byte count와 판정만 bounded non-blocking channel로 보냅니다.
+- control은 bounded queue 뒤의 전용 blocking writer에서 transaction batch로 상세 sample을 SQLite WAL에 기록합니다. async runtime worker에서 request별 동기 SQLite write를 실행하지 않습니다.
+- 10초·1분 rollup table과 incident·audit table을 분리하고 각 retention 값을 실제 삭제·downsampling에 연결합니다.
 - edge는 SQLite에 접근하지 않습니다.
-- retention 만료는 batch로 삭제하고 vacuum 때문에 실시간 control이 장시간 멈추지 않게 합니다.
-- raw IP 보존기간과 사건 보존기간을 분리합니다.
+- retention 만료는 bounded batch로 삭제하고 WAL checkpoint·vacuum 때문에 실시간 control이 장시간 멈추지 않게 합니다.
+- raw IP는 장기 route aggregate와 분리된 상세·client 단기 계층에만 두고 상세·IP·aggregate·incident 보존기간을 독립 적용합니다.
+- DB·WAL 크기, queue drop, 마지막 rollup·retention 성공과 disk 여유를 계측합니다.
 - request body, cookie 원문, authorization header와 민감 query 값은 저장하지 않습니다.

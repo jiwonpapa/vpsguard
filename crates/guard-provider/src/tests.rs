@@ -1,9 +1,10 @@
 //! provider 단계·복구 회귀 테스트입니다.
 
 use super::{
-    ProviderBackend, ProviderError, ProviderSnapshot, ProviderStage, ProviderTransaction,
-    provider_error_code,
+    ProviderBackend, ProviderError, ProviderRecordSnapshot, ProviderSnapshot, ProviderStage,
+    ProviderTransaction, provider_error_code,
 };
+use guard_core::config::DnsRecordType;
 
 #[derive(Default)]
 struct FakeBackend {
@@ -18,7 +19,12 @@ impl ProviderBackend for FakeBackend {
     fn snapshot(&mut self, record_name: &str) -> Result<ProviderSnapshot, ProviderError> {
         Ok(ProviderSnapshot {
             record_name: record_name.to_owned(),
-            proxied: false,
+            records: vec![ProviderRecordSnapshot {
+                id: "11111111111111111111111111111111".to_owned(),
+                name: record_name.to_owned(),
+                record_type: DnsRecordType::A,
+                proxied: false,
+            }],
             origin_locked: false,
         })
     }
@@ -129,6 +135,30 @@ fn restores_snapshot() -> Result<(), ProviderError> {
         ProviderStage::Restored
     );
     assert_eq!(transaction.stage, ProviderStage::Restored);
+    assert_eq!(backend.restore_calls, 1);
+    Ok(())
+}
+
+#[test]
+fn can_restore_after_partial_provider_progress() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend::default();
+    let mut transaction = transaction()?;
+    assert_eq!(
+        transaction.enable_step(&mut backend)?,
+        ProviderStage::Snapshotted
+    );
+    assert_eq!(
+        transaction.enable_step(&mut backend)?,
+        ProviderStage::ProxyRequested
+    );
+    assert_eq!(
+        transaction.restore_step(&mut backend)?,
+        ProviderStage::RestoreRequested
+    );
+    assert_eq!(
+        transaction.restore_step(&mut backend)?,
+        ProviderStage::Restored
+    );
     assert_eq!(backend.restore_calls, 1);
     Ok(())
 }

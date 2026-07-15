@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-14
+last_reviewed: 2026-07-15
 bounded_context: adaptive-vps-guard
 ---
 
@@ -63,6 +63,8 @@ VPS Guard 자체는 정상 상태에도 로컬 VPS 최앞단에 존재합니다.
 - 바이러스 백신, SIEM, 범용 서버 관리 패널
 - SMTP, R2, 결제 등 애플리케이션 외부 서비스 설정
 - 자체 ACME 프로토콜 클라이언트 구현
+- 임의 TCP/UDP 프로토콜을 전달하는 범용 L4 proxy
+- 전체 systemd unit·process를 감사하거나 제어하는 서버 관리 도구
 - 첫 버전의 머신러닝 봇 판별
 - Docker 기반 배포
 
@@ -105,6 +107,8 @@ MySQL/Redis                  (OS/PHP/DB/Redis)
 ### 5.3 `guard-agent`
 
 - OS, Nginx, PHP-FPM, MySQL, Redis 관측
+- 자동 발견 결과를 그대로 수집하지 않고 관리자가 확인한 HTTP 핵심 경로 service만 allowlist로 관측
+- service별 CPU, memory, I/O와 process/task 수는 systemd unit의 cgroup v2 계정값으로 집계
 - 읽기 전용 또는 최소 권한으로 수집
 - 수집 실패를 명시하고 추정값으로 성공 처리하지 않음
 - 초기에는 control 프로세스 내부 모듈로 구현 가능
@@ -138,6 +142,15 @@ git show 87c0f0e61^:crates/common/src/config/model/edge_proxy_config.rs
 7. 집계 결과는 요청 처리와 분리된 비동기 경로로 control에 전달합니다.
 
 정책 조회 때문에 요청마다 control 프로세스나 SQLite에 접근하는 구현은 금지합니다.
+
+VPSGuard의 공개 protocol 범위는 HTTP/1.1, HTTP/2와 HTTP Upgrade로 시작하는 WebSocket입니다. 지원한다고 선언한 protocol은 모두 E2E를 통과해야 하지만 인터넷의 모든 protocol을 해석하지는 않습니다. 요청 처리 mode는 다음 두 축을 분리합니다.
+
+- `profiled`: app profile, route class와 행동 신호를 사용해 분석·판정합니다.
+- `protocol_only`: app profile과 행동 판정을 생략하고 upstream으로 전달합니다. 다만 TLS·SNI·Host, forwarded header, 연결·body·timeout 상한, bounded 계측과 비밀값 미저장 불변조건은 유지합니다.
+
+`protocol_only`도 Pingora가 HTTP와 TLS를 종료하므로 raw TCP/TLS pass-through가 아닙니다. WebSocket은 HTTP upgrade까지 검사한 뒤 frame 내용은 해석하지 않고 bounded tunnel로 전달합니다. enforcement의 `observe`·`enforce`와 inspection의 `profiled`·`protocol_only`는 서로 독립된 설정입니다.
+
+VPSGuard는 소유한 TCP 80/443 외 listener와 firewall rule을 가로채지 않습니다. SSH, DB, mail, game server와 사용자 정의 port의 트래픽은 VPSGuard를 통과시키는 것이 아니라 기존 kernel·service 경로를 그대로 유지합니다. 반대로 VPSGuard가 소유한 80/443에 들어온 비HTTP protocol을 HTTP origin으로 무조건 전달하면 protocol confusion과 우회가 생기므로 거부합니다. 동일 443에서 별도 raw TLS service를 multiplex해야 하는 요구는 명시적 SNI/ALPN L4 listener와 별도 요구사항 없이는 지원하지 않습니다.
 
 ## 8. 클라이언트 식별 계약
 
@@ -196,6 +209,10 @@ git show 87c0f0e61^:crates/common/src/config/model/edge_proxy_config.rs
 
 - edge가 public TLS를 종료합니다.
 - MVP 인증서는 Certbot 또는 검증된 외부 ACME 클라이언트가 발급합니다.
+- 기존 Certbot timer·renewal 설정이나 다른 인증서 관리 수단이 있으면 소유권을 빼앗거나 재설정하지 않고 감지·검증해 그대로 사용합니다.
+- edge 시작 때마다 설정된 cert/key 일치, SAN과 현재 유효기간을 검사하되 package 설치, 인증서 발급과 timer 활성화를 startup 부작용으로 실행하지 않습니다.
+- 자동 갱신 수단이 없을 때만 관리 UI·CLI가 plan과 명시적 승인을 거쳐 Certbot 설치·발급·timer·deploy hook 구성을 보조할 수 있습니다. VPSGuard는 ACME protocol과 private key 저장소를 직접 구현하지 않습니다.
+- 초기 발급은 HTTP-01 webroot를 기본으로 하고 wildcard 등 DNS-01이 필요한 경우 provider별 별도 자격증명을 사용합니다.
 - edge는 PEM 경로를 설정으로 받고 시작 전에 cert/key 일치와 유효기간을 검사합니다.
 - 갱신 hook은 새 인증서를 검증한 뒤 graceful reload합니다.
 - 갱신 실패, 만료 임박과 현재 제공 중인 인증서 불일치를 이벤트로 기록합니다.

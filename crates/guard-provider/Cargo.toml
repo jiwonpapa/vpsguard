@@ -6,14 +6,17 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+guard-core = { path = "../guard-core", version = "0.1.0" }
 guard-system = { path = "../guard-system", version = "0.1.0" }
 reqwest.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+mockito = { version = "1.7.2", default-features = false }
 tempfile = "3.20"
 
 [lints]
