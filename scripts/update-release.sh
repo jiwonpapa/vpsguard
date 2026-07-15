@@ -10,6 +10,10 @@ edge_health_url="${VPS_GUARD_EDGE_HEALTH_URL:-http://127.0.0.1:18080/health/live
 edge_host="${VPS_GUARD_EDGE_HOST:-}"
 snapshot=""
 
+wait_for_http() {
+  curl --disable --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 "$@"
+}
+
 echo "mode: ${mode}"
 echo "bundle: ${bundle:-<required for apply>}"
 echo "preserve: /etc/vps-guard, /var/lib/vps-guard, /etc/letsencrypt, Nginx site data"
@@ -78,8 +82,8 @@ install -m 0644 "${bundle}/${manifest_name}" /var/lib/vps-guard/ownership-manife
 systemctl daemon-reload
 /usr/local/bin/vps-guard check-config --config /etc/vps-guard/config.toml
 systemctl restart vps-guard-control.service vps-guard-edge.service
-curl --fail --silent "${health_url}" >/dev/null
-curl --fail --silent -H "Host: ${edge_host}" "${edge_health_url}" >/dev/null
+wait_for_http "${health_url}" >/dev/null
+wait_for_http -H "Host: ${edge_host}" "${edge_health_url}" >/dev/null
 bash "${bundle}/scripts/deployment-state.sh" --verify "${snapshot}" >/dev/null
 trap - EXIT
 echo "update complete; snapshot=${snapshot}"

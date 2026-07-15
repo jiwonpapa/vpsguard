@@ -221,11 +221,11 @@ bash '${remote_stage}/bundle/scripts/update-release.sh' --apply '${remote_stage}
 
 ssh "${target}" "set -eu
 sudo systemctl enable vps-guard-control.service vps-guard-edge.service >/dev/null
-curl --fail --silent http://127.0.0.1:7727/health/live >/dev/null
-status=\$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Host: ${edge_host}' http://127.0.0.1:18080/)
+curl --disable --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 http://127.0.0.1:7727/health/live >/dev/null
+status=\$(curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 --output /dev/null --write-out '%{http_code}' -H 'Host: ${edge_host}' http://127.0.0.1:18080/)
 test \"\${status}\" -gt 0
 test \"\${status}\" -lt 500
-curl --fail --silent -H 'Host: ${edge_host}' http://127.0.0.1:18080/health/ready >/dev/null
+curl --disable --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 -H 'Host: ${edge_host}' http://127.0.0.1:18080/health/ready >/dev/null
 sudo bash '${remote_stage}/bundle/scripts/deployment-state.sh' --verify '${snapshot}' >/dev/null
 sudo systemctl is-active --quiet nginx.service
 sudo nginx -t >/dev/null

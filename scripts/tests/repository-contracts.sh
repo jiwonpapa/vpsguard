@@ -46,6 +46,8 @@ grep -Fq 'systemd-examples' scripts/build-release.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
+grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/update-release.sh
+grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/deploy-g7devops.sh
 grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
 
 # OPS-007, NFR-005: CI evidence must be generated at the exact paths uploaded by
