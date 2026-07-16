@@ -9,6 +9,12 @@ User=vps-guard
 Group=vps-guard
 ExecStart=/usr/local/bin/vps-guard-edge
 Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
+Environment=RUST_LOG=vps_guard_edge=info,guard_edge=info,pingora=warn
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-guard-edge
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=2000
 Restart=always
 RestartSec=2s
 RuntimeDirectory=vps-guard

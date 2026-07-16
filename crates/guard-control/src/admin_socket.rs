@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_core::{
     ADMIN_PROTOCOL_VERSION, AdminCommand, AdminErrorCode, AdminRequest, AdminResponse,
 };
@@ -69,11 +70,23 @@ pub(crate) fn spawn_admin_socket(
                     let app = Arc::clone(&app);
                     tokio::spawn(async move {
                         if let Err(error) = handle_connection(stream, app, owner_uid).await {
-                            warn!(error = %error, "local admin request failed");
+                            warn!(
+                                log_schema_version = LOG_SCHEMA_VERSION,
+                                component = "guard-control",
+                                error_code = "CONTROL_ADMIN_REQUEST_FAILED",
+                                error = %error,
+                                "local admin request failed"
+                            );
                         }
                     });
                 }
-                Err(error) => warn!(error = %error, "local admin socket accept failed"),
+                Err(error) => warn!(
+                    log_schema_version = LOG_SCHEMA_VERSION,
+                    component = "guard-control",
+                    error_code = "CONTROL_ADMIN_SOCKET_ACCEPT_FAILED",
+                    error = %error,
+                    "local admin socket accept failed"
+                ),
             }
         }
     });

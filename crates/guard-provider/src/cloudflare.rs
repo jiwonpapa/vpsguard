@@ -4,6 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use guard_core::config::{CloudflareRecordConfig, DnsRecordType};
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_system::{
     OriginFirewallPlan, SecretFileError, SecretFilePolicy, VpsGuardNftables, load_secret_file,
 };
@@ -374,7 +375,13 @@ where
 fn log_command_audits(audits: &[guard_system::CommandAudit]) {
     for audit in audits {
         if let Ok(encoded) = serde_json::to_string(audit) {
-            tracing::info!(command_audit = %encoded, "owned OS command completed");
+            tracing::info!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-provider",
+                event_code = "PROVIDER_OWNED_COMMAND_COMPLETED",
+                command_audit = %encoded,
+                "owned OS command completed"
+            );
         }
     }
 }

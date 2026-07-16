@@ -108,6 +108,19 @@ grep -Fq 'rejects_method(&context.method)' crates/guard-edge/src/proxy.rs
 grep -Fq 'VPSGUARD_INTEGRATION_BODY_SECRET' scripts/integration-gate.sh
 grep -Fq '계정·session·device별 한도' docs/APP_SECURITY.md
 
+# OBS-012, OBS-013, NFR-005: request 상관관계와 운영 로그 공통 field가
+# hot path·Control API·systemd journal 계약에서 함께 유지돼야 합니다.
+grep -Fq 'RequestIdGenerator' crates/guard-edge/src/proxy.rs
+grep -Fq 'traffic_request_id_idx' crates/guard-control/src/storage.rs
+grep -Fq '/api/v1/correlations/{correlation_id}' crates/guard-control/src/api.rs
+grep -Fq 'cause: &' crates/guard-control/src/api.rs
+grep -Fq 'event_id: String' crates/guard-control/src/api.rs
+for unit in packaging/systemd/vps-guard-edge.service packaging/systemd/vps-guard-control.service; do
+  grep -Fq 'StandardOutput=journal' "${unit}"
+  grep -Fq 'LogRateLimitIntervalSec=30s' "${unit}"
+  grep -Fq 'LogRateLimitBurst=2000' "${unit}"
+done
+
 # SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
 # 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.
 grep -Fq 'LoadCredential=cloudflare-token:/etc/vps-guard/secrets/cloudflare-token' packaging/systemd/vps-guard-control-cloudflare-credential.conf

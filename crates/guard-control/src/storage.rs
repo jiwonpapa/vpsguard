@@ -71,6 +71,34 @@ pub(crate) struct EventRow {
     pub(crate) payload: serde_json::Value,
 }
 
+/// detail retention 안에서 request ID로 찾은 비식별 요청 추적 row입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RequestTraceRow {
+    pub(crate) request_id: String,
+    pub(crate) occurred_at_unix_ms: u64,
+    pub(crate) method: String,
+    pub(crate) route_class: String,
+    pub(crate) normalized_route: String,
+    pub(crate) route_cost: u8,
+    pub(crate) status: u16,
+    pub(crate) latency_micros: u64,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
+    pub(crate) upstream_connection_reused: Option<bool>,
+    pub(crate) decision: String,
+    pub(crate) policy_version: u64,
+}
+
+/// operation ID로 찾은 감사 action row입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct AuditActionRow {
+    pub(crate) operation_id: String,
+    pub(crate) occurred_at: String,
+    pub(crate) action: String,
+    pub(crate) mode: String,
+    pub(crate) result: String,
+}
+
 /// 저장 계층의 현재 상태입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -377,7 +405,9 @@ impl SqliteStore {
             );
             CREATE TABLE IF NOT EXISTS traffic_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT,
                 occurred_at_ms INTEGER NOT NULL,
+                method TEXT NOT NULL DEFAULT '',
                 client_ip TEXT,
                 route_class TEXT NOT NULL,
                 normalized_route TEXT NOT NULL,
@@ -424,6 +454,7 @@ impl SqliteStore {
         )?;
         ensure_column(&connection, "upstream_connection_reused", "INTEGER")?;
         apply_rollup_migration(&mut connection)?;
+        apply_correlation_migration(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             database_path,
@@ -480,10 +511,11 @@ impl SqliteStore {
         {
             let mut statement = transaction.prepare_cached(
                 "INSERT INTO traffic_samples(
-                    occurred_at_ms, client_ip, route_class, normalized_route, route_cost,
-                    status, latency_micros, request_body_bytes, response_body_bytes,
-                    upstream_connection_reused, decision, policy_version
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    request_id, occurred_at_ms, method, client_ip, route_class,
+                    normalized_route, route_cost, status, latency_micros,
+                    request_body_bytes, response_body_bytes, upstream_connection_reused,
+                    decision, policy_version
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             )?;
             for telemetry in batch {
                 let client_ip = self
@@ -491,7 +523,9 @@ impl SqliteStore {
                     .then(|| telemetry.client_ip.map(|value| value.to_string()))
                     .flatten();
                 statement.execute(params![
+                    telemetry.request_id,
                     to_i64(telemetry.occurred_at_unix_ms),
+                    telemetry.method,
                     client_ip,
                     telemetry.route_class,
                     telemetry.normalized_route,
@@ -674,6 +708,109 @@ impl SqliteStore {
             })
         })
         .collect()
+    }
+
+    /// canonical request ID의 단기 상세를 반환합니다.
+    pub(crate) fn request_trace(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<RequestTraceRow>, StorageError> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT request_id, occurred_at_ms, method, route_class, normalized_route,
+                        route_cost, status, latency_micros, request_body_bytes,
+                        response_body_bytes, upstream_connection_reused, decision, policy_version
+                 FROM traffic_samples WHERE request_id = ?1 LIMIT 1",
+                [request_id],
+                |row| {
+                    Ok(RequestTraceRow {
+                        request_id: row.get(0)?,
+                        occurred_at_unix_ms: from_i64(row.get(1)?),
+                        method: row.get(2)?,
+                        route_class: row.get(3)?,
+                        normalized_route: row.get(4)?,
+                        route_cost: from_i64(row.get(5)?).try_into().unwrap_or(u8::MAX),
+                        status: from_i64(row.get(6)?).try_into().unwrap_or(u16::MAX),
+                        latency_micros: from_i64(row.get(7)?),
+                        request_body_bytes: from_i64(row.get(8)?),
+                        response_body_bytes: from_i64(row.get(9)?),
+                        upstream_connection_reused: row.get(10)?,
+                        decision: row.get(11)?,
+                        policy_version: from_i64(row.get(12)?),
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// event ID 또는 event가 포함한 operation ID와 일치하는 bounded 사건을 반환합니다.
+    pub(crate) fn events_for_correlation(
+        &self,
+        correlation_id: &str,
+        limit: usize,
+    ) -> Result<Vec<EventRow>, StorageError> {
+        let operation_fragment = format!(
+            "\"operation_id\":{}",
+            serde_json::to_string(correlation_id)?
+        );
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT event_id, occurred_at, severity, kind, payload
+             FROM guard_events
+             WHERE event_id = ?1
+                OR event_id = 'action-' || ?1
+                OR event_id = 'provider-' || ?1
+                OR instr(payload, ?2) > 0
+             ORDER BY occurred_at DESC LIMIT ?3",
+        )?;
+        let rows = statement.query_map(
+            params![correlation_id, operation_fragment, to_i64(limit as u64)],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )?;
+        rows.map(|row| {
+            let (event_id, occurred_at, severity, kind, payload) = row?;
+            Ok(EventRow {
+                event_id,
+                occurred_at,
+                severity,
+                kind,
+                payload: serde_json::from_str(&payload)?,
+            })
+        })
+        .collect()
+    }
+
+    /// operation ID와 정확히 일치하는 감사 action을 반환합니다.
+    pub(crate) fn audit_action(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<AuditActionRow>, StorageError> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT operation_id, occurred_at, action, mode, result
+                 FROM audit_actions WHERE operation_id = ?1",
+                [operation_id],
+                |row| {
+                    Ok(AuditActionRow {
+                        operation_id: row.get(0)?,
+                        occurred_at: row.get(1)?,
+                        action: row.get(2)?,
+                        mode: row.get(3)?,
+                        result: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     /// idempotency key의 기존 action과 mode를 확인합니다.
@@ -923,6 +1060,29 @@ fn apply_rollup_migration(connection: &mut Connection) -> Result<(), rusqlite::E
     transaction.commit()
 }
 
+fn apply_correlation_migration(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let applied = connection
+        .query_row(
+            "SELECT version FROM schema_migrations WHERE version = 3",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some();
+    if applied {
+        return Ok(());
+    }
+    ensure_column(connection, "request_id", "TEXT")?;
+    ensure_column(connection, "method", "TEXT NOT NULL DEFAULT ''")?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS traffic_request_id_idx
+            ON traffic_samples(request_id) WHERE request_id IS NOT NULL;
+         INSERT INTO schema_migrations(version) VALUES (3);",
+    )?;
+    transaction.commit()
+}
+
 fn backfill_route_rollup(
     transaction: &Transaction<'_>,
     table: &str,
@@ -1138,7 +1298,10 @@ fn ensure_column(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::net::{IpAddr, Ipv4Addr};
+
+    use guard_core::{GuardEvent, Severity};
 
     use super::{RetentionCutoffs, SqliteStore};
     use crate::telemetry::TelemetryEnvelope;
@@ -1200,6 +1363,60 @@ mod tests {
                 })?;
         assert_eq!(ten_second_rows, 2);
         assert_eq!(store.health().persisted_batches, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn persists_and_finds_bounded_request_trace() -> Result<(), Box<dyn std::error::Error>> {
+        let store = SqliteStore::in_memory()?;
+        let telemetry = telemetry(120_000, None, "deny");
+        let request_id = telemetry.request_id.clone();
+        store.record_traffic(&telemetry)?;
+
+        let trace = store
+            .request_trace(&request_id)?
+            .ok_or("request trace was not persisted")?;
+        assert_eq!(trace.request_id, request_id);
+        assert_eq!(trace.method, "GET");
+        assert_eq!(trace.normalized_route, "/bbs/:id");
+        assert_eq!(trace.status, 503);
+        assert_eq!(trace.decision, "deny");
+        assert!(store.request_trace("guard-missing")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn correlates_operation_audit_and_event_without_scanning_request_payloads()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = SqliteStore::in_memory()?;
+        store.record_action(
+            "operation-42",
+            "2026-07-16T00:00:00Z",
+            "manual_hold",
+            "manual_hold",
+            "applied",
+        )?;
+        store.record_event(&GuardEvent {
+            schema_version: 1,
+            event_id: "provider-failed-random".to_owned(),
+            occurred_at: "2026-07-16T00:00:01Z".to_owned(),
+            severity: Severity::Critical,
+            kind: "provider.action_failed".to_owned(),
+            summary: "Provider 조치가 실패했습니다.".to_owned(),
+            reason_codes: Vec::new(),
+            evidence: BTreeMap::from([("operation_id".to_owned(), "operation-42".to_owned())]),
+            action: BTreeMap::new(),
+            result: BTreeMap::new(),
+            recovery: BTreeMap::new(),
+        })?;
+
+        let action = store
+            .audit_action("operation-42")?
+            .ok_or("audit action was not correlated")?;
+        assert_eq!(action.action, "manual_hold");
+        let events = store.events_for_correlation("operation-42", 10)?;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, "provider-failed-random");
         Ok(())
     }
 
@@ -1316,11 +1533,12 @@ mod tests {
         assert_eq!(store.ten_second_series(0)?[0].bucket_unix_ms, 60_000);
         assert_eq!(store.clients(10)?[0].client_ip, "127.0.0.1");
         let migration: i64 = store.lock().query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 2",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (2, 3)",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(migration, 1);
+        assert_eq!(migration, 2);
+        assert!(store.request_trace("guard-legacy")?.is_none());
         Ok(())
     }
 

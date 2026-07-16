@@ -5,6 +5,7 @@
 
 pub mod admin;
 pub mod config;
+pub mod correlation;
 pub mod detection;
 pub mod event;
 pub mod policy;

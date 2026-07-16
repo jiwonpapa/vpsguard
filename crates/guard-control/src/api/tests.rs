@@ -12,6 +12,7 @@ use guard_agent::cgroup::CgroupSnapshot;
 use guard_agent::services::ServiceSemanticSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::{DetectionMode, InspectionMode, SecurityConfig, UiConfig};
+use guard_core::correlation::is_valid_request_id;
 use guard_core::{GuardMode, GuardState};
 use guard_system::{AtomicJsonStore, inspect_tls_management};
 use tokio::sync::{RwLock, broadcast};
@@ -78,6 +79,7 @@ fn app_with_options(
         access: UiAccessPolicy::from_config(&ui),
         provider: Arc::new(Mutex::new(None)),
         provider_action_active: Arc::new(AtomicBool::new(false)),
+        request_ids: guard_core::correlation::RequestIdGenerator::new(),
     }))
 }
 
@@ -158,6 +160,66 @@ async fn anonymous_read_and_mutation_are_rejected() -> Result<(), Box<dyn std::e
         .await?;
     assert_eq!(read.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(mutation.status(), StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
+#[tokio::test]
+async fn control_assigns_valid_request_id_and_preserves_trusted_edge_id()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    let trusted = "guard-0123456789abcdef0123456789abcdef-0000000000000001";
+    let preserved = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/health/live")
+                .header("host", LOOPBACK_HOST)
+                .header("x-request-id", trusted)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(preserved.headers()["x-request-id"], trusted);
+
+    let replaced = router(state)
+        .oneshot(
+            Request::get("/health/live")
+                .header("host", LOOPBACK_HOST)
+                .header("x-request-id", "client-controlled")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let assigned = replaced.headers()["x-request-id"].to_str()?;
+    assert!(is_valid_request_id(assigned));
+    assert_ne!(assigned, "client-controlled");
+    Ok(())
+}
+
+#[tokio::test]
+async fn api_error_contains_cause_event_id_and_request_correlation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let response = router(app(&directory.path().join("state.json"))?)
+        .oneshot(
+            Request::get("/api/v1/status")
+                .header("host", LOOPBACK_HOST)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(is_valid_request_id(
+        response.headers()["x-request-id"].to_str()?
+    ));
+    let body = to_bytes(response.into_body(), 8_192).await?;
+    let value = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert!(
+        value["error"]["cause"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        value["error"]["event_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("error-"))
+    );
     Ok(())
 }
 
@@ -503,6 +565,47 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
         serde_json::from_slice::<serde_json::Value>(&authenticated_body)?["items"][0]["client_ip"],
         "203.0.113.8"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticated_correlation_lookup_returns_request_detail()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    let request_id = "guard-0123456789abcdef0123456789abcdef-0000000000000009";
+    state.storage.record_traffic(&TelemetryEnvelope {
+        schema_version: 1,
+        request_id: request_id.to_owned(),
+        method: "POST".to_owned(),
+        route_class: "strict".to_owned(),
+        normalized_route: "/api/login".to_owned(),
+        route_cost: 5,
+        status: 429,
+        latency_micros: 1_500,
+        client_ip: None,
+        request_body_bytes: 64,
+        response_body_bytes: 128,
+        upstream_connection_reused: Some(true),
+        decision: "throttle".to_owned(),
+        policy_version: 3,
+        occurred_at_unix_ms: 1_000,
+    })?;
+    let issued = issue_session(&state)?;
+    let response = router(state)
+        .oneshot(
+            Request::get(format!("/api/v1/correlations/{request_id}"))
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 16_384).await?;
+    let value = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(value["request"]["request_id"], request_id);
+    assert_eq!(value["request"]["method"], "POST");
+    assert_eq!(value["request"]["status"], 429);
     Ok(())
 }
 

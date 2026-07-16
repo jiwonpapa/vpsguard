@@ -13,6 +13,7 @@ use guard_agent::services::{
     merge_service_history,
 };
 use guard_core::config::{DetectionMode, InspectionMode, ServiceCollectorKind};
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_core::policy::{RouteRule, StaticLimits};
 use guard_core::{
     Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
@@ -24,6 +25,17 @@ use tokio::net::{TcpListener, UnixDatagram};
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+macro_rules! control_warn {
+    ($error_code:literal, $($field:tt)*) => {
+        warn!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-control",
+            error_code = $error_code,
+            $($field)*
+        )
+    };
+}
 
 use crate::admin_socket::spawn_admin_socket;
 use crate::api::{AppState, router};
@@ -134,6 +146,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         access: UiAccessPolicy::from_config(&config.ui),
         provider,
         provider_action_active: Arc::new(AtomicBool::new(false)),
+        request_ids: guard_core::correlation::RequestIdGenerator::new(),
     });
     spawn_admin_socket(Arc::clone(&app), config.ui.admin_socket.clone())
         .map_err(|error| ControlError::AdminSocket(error.to_string()))?;
@@ -152,7 +165,13 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     spawn_detection_loop(Arc::clone(&app), &config);
     spawn_retention(Arc::clone(&storage), &config);
     let listener = TcpListener::bind(config.ui.bind).await?;
-    info!(listener = %config.ui.bind, "control API started");
+    info!(
+        log_schema_version = LOG_SCHEMA_VERSION,
+        component = "guard-control",
+        event_code = "CONTROL_STARTED",
+        listener = %config.ui.bind,
+        "control API started"
+    );
     axum::serve(listener, router(app))
         .with_graceful_shutdown(shutdown_signal())
         .await
@@ -191,7 +210,11 @@ fn spawn_tls_inspection(app: Arc<AppState>, tls: guard_core::config::TlsConfig) 
             let config = tls.clone();
             match tokio::task::spawn_blocking(move || inspect_tls_management(&config)).await {
                 Ok(snapshot) => *app.tls_management.write().await = snapshot,
-                Err(error) => warn!(error = %error, "TLS inspection task failed"),
+                Err(error) => control_warn!(
+                    "CONTROL_TLS_INSPECTION_TASK_FAILED",
+                    error = %error,
+                    "TLS inspection task failed"
+                ),
             }
         }
     });
@@ -205,8 +228,16 @@ fn spawn_os_collector(app: Arc<AppState>) {
             let result = tokio::task::spawn_blocking(|| os::collect(Path::new("/proc"))).await;
             match result {
                 Ok(Ok(snapshot)) => *app.os_snapshot.write().await = Some(snapshot),
-                Ok(Err(error)) => warn!(error = %error, "OS collector unavailable"),
-                Err(error) => warn!(error = %error, "OS collector task failed"),
+                Ok(Err(error)) => control_warn!(
+                    "CONTROL_OS_COLLECTOR_UNAVAILABLE",
+                    error = %error,
+                    "OS collector unavailable"
+                ),
+                Err(error) => control_warn!(
+                    "CONTROL_OS_COLLECTOR_TASK_FAILED",
+                    error = %error,
+                    "OS collector task failed"
+                ),
             }
         }
     });
@@ -338,13 +369,24 @@ fn spawn_telemetry_receiver(
                             app.storage.note_queue_send_started();
                             if storage_tx.try_send(telemetry).is_err() {
                                 app.storage.note_queue_send_failed();
-                                warn!("traffic persistence queue full; sample dropped");
+                                control_warn!(
+                                    "CONTROL_TRAFFIC_QUEUE_FULL",
+                                    "traffic persistence queue full; sample dropped"
+                                );
                             }
                         }
-                        Err(error) => warn!(error = %error, "invalid telemetry datagram dropped"),
+                        Err(error) => control_warn!(
+                            "CONTROL_TELEMETRY_INVALID",
+                            error = %error,
+                            "invalid telemetry datagram dropped"
+                        ),
                     }
                 }
-                Err(error) => warn!(error = %error, "telemetry receive failed"),
+                Err(error) => control_warn!(
+                    "CONTROL_TELEMETRY_RECEIVE_FAILED",
+                    error = %error,
+                    "telemetry receive failed"
+                ),
             }
         }
     });
@@ -379,12 +421,17 @@ fn storage_writer_loop(
             batch.push(telemetry);
         }
         if let Err(error) = storage.refresh_health() {
-            warn!(error = %error, "storage health refresh failed");
+            control_warn!(
+                "CONTROL_STORAGE_HEALTH_REFRESH_FAILED",
+                error = %error,
+                "storage health refresh failed"
+            );
         }
         if !storage.accepts_traffic_writes() {
             storage.note_write_rejected(batch.len());
             if !budget_warning_emitted {
-                warn!(
+                control_warn!(
+                    "CONTROL_STORAGE_BUDGET_EXCEEDED",
                     samples = batch.len(),
                     "traffic persistence paused by database or disk budget"
                 );
@@ -395,7 +442,12 @@ fn storage_writer_loop(
         budget_warning_emitted = false;
         if let Err(error) = storage.record_traffic_batch(&batch) {
             storage.note_write_failure(batch.len());
-            warn!(error = %error, samples = batch.len(), "traffic batch persistence failed");
+            control_warn!(
+                "CONTROL_TRAFFIC_BATCH_PERSISTENCE_FAILED",
+                error = %error,
+                samples = batch.len(),
+                "traffic batch persistence failed"
+            );
         }
     }
 }
@@ -408,8 +460,16 @@ fn spawn_storage_health(storage: Arc<SqliteStore>) {
             let storage = Arc::clone(&storage);
             match tokio::task::spawn_blocking(move || storage.refresh_health()).await {
                 Ok(Ok(())) => {}
-                Ok(Err(error)) => warn!(error = %error, "storage health refresh failed"),
-                Err(error) => warn!(error = %error, "storage health task failed"),
+                Ok(Err(error)) => control_warn!(
+                    "CONTROL_STORAGE_HEALTH_REFRESH_FAILED",
+                    error = %error,
+                    "storage health refresh failed"
+                ),
+                Err(error) => control_warn!(
+                    "CONTROL_STORAGE_HEALTH_TASK_FAILED",
+                    error = %error,
+                    "storage health task failed"
+                ),
             }
         }
     });
@@ -475,7 +535,12 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                 match run_provider_transaction(&app, false).await {
                     Ok(guard_provider::ProviderStage::Complete) => {}
                     Ok(stage) => {
-                        warn!(?stage, "provider transaction stopped before completion");
+                        control_warn!(
+                            "CONTROL_PROVIDER_TRANSACTION_INCOMPLETE",
+                            operation_id = "automatic-emergency",
+                            ?stage,
+                            "provider transaction stopped before completion"
+                        );
                         crate::api::record_provider_failure(
                             &app,
                             "automatic-emergency",
@@ -485,7 +550,12 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                         keep_local_guard(&current, &mut next);
                     }
                     Err(error) => {
-                        warn!(error, "automatic provider transaction unavailable");
+                        control_warn!(
+                            "CONTROL_PROVIDER_TRANSACTION_UNAVAILABLE",
+                            operation_id = "automatic-emergency",
+                            error,
+                            "automatic provider transaction unavailable"
+                        );
                         crate::api::record_provider_failure(
                             &app,
                             "automatic-emergency",
@@ -503,7 +573,12 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                 match run_provider_transaction(&app, true).await {
                     Ok(guard_provider::ProviderStage::Restored) => {}
                     Ok(stage) => {
-                        warn!(?stage, "provider restore stopped before completion");
+                        control_warn!(
+                            "CONTROL_PROVIDER_RESTORE_INCOMPLETE",
+                            operation_id = "automatic-recovery",
+                            ?stage,
+                            "provider restore stopped before completion"
+                        );
                         crate::api::record_provider_failure(
                             &app,
                             "automatic-recovery",
@@ -513,7 +588,12 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                         keep_emergency(&current, &mut next);
                     }
                     Err(error) => {
-                        warn!(error, "automatic provider restore failed");
+                        control_warn!(
+                            "CONTROL_PROVIDER_RESTORE_FAILED",
+                            operation_id = "automatic-recovery",
+                            error,
+                            "automatic provider restore failed"
+                        );
                         crate::api::record_provider_failure(
                             &app,
                             "automatic-recovery",
@@ -550,7 +630,11 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             if state_changed {
                 let event = transition_event(&current, &next, &assessment, occurred_at);
                 if let Err(error) = app.storage.record_event(&event) {
-                    warn!(error = %error, "transition event persistence failed");
+                    control_warn!(
+                        "CONTROL_TRANSITION_EVENT_PERSISTENCE_FAILED",
+                        error = %error,
+                        "transition event persistence failed"
+                    );
                 }
                 let _send_result = app.events.send(event);
             }
@@ -573,14 +657,21 @@ async fn write_policy_for_mode(
     ) {
         Ok(policy) => policy,
         Err(error) => {
-            warn!(error = %error, "policy snapshot generation failed");
+            control_warn!(
+                "CONTROL_POLICY_SNAPSHOT_GENERATION_FAILED",
+                error = %error,
+                "policy snapshot generation failed"
+            );
             return None;
         }
     };
     let policy_store = policy_store.clone();
     let write_result = tokio::task::spawn_blocking(move || policy_store.write(&policy)).await;
     if !matches!(write_result, Ok(Ok(()))) {
-        warn!("policy snapshot write failed; state update deferred");
+        control_warn!(
+            "CONTROL_POLICY_SNAPSHOT_WRITE_FAILED",
+            "policy snapshot write failed; state update deferred"
+        );
         return None;
     }
     state.policy_version = policy_version;
@@ -635,11 +726,19 @@ async fn persist_state(app: &AppState, state: &GuardState) -> Result<(), ()> {
     match tokio::task::spawn_blocking(move || store.write(&value)).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => {
-            warn!(error = %error, "state persistence failed");
+            control_warn!(
+                "CONTROL_STATE_PERSISTENCE_FAILED",
+                error = %error,
+                "state persistence failed"
+            );
             Err(())
         }
         Err(error) => {
-            warn!(error = %error, "state persistence task failed");
+            control_warn!(
+                "CONTROL_STATE_PERSISTENCE_TASK_FAILED",
+                error = %error,
+                "state persistence task failed"
+            );
             Err(())
         }
     }
@@ -771,8 +870,16 @@ fn spawn_retention(storage: Arc<SqliteStore>, config: &GuardConfig) {
             let storage = Arc::clone(&storage);
             match tokio::task::spawn_blocking(move || storage.retain(&cutoffs)).await {
                 Ok(Ok(_deleted)) => {}
-                Ok(Err(error)) => warn!(error = %error, "retention maintenance failed"),
-                Err(error) => warn!(error = %error, "retention maintenance task failed"),
+                Ok(Err(error)) => control_warn!(
+                    "CONTROL_RETENTION_MAINTENANCE_FAILED",
+                    error = %error,
+                    "retention maintenance failed"
+                ),
+                Err(error) => control_warn!(
+                    "CONTROL_RETENTION_MAINTENANCE_TASK_FAILED",
+                    error = %error,
+                    "retention maintenance task failed"
+                ),
             }
         }
     });
@@ -803,6 +910,9 @@ fn lock_traffic(app: &AppState) -> std::sync::MutexGuard<'_, TrafficAggregator> 
 
 async fn shutdown_signal() {
     if tokio::signal::ctrl_c().await.is_err() {
-        warn!("control shutdown signal handler failed");
+        control_warn!(
+            "CONTROL_SHUTDOWN_SIGNAL_FAILED",
+            "control shutdown signal handler failed"
+        );
     }
 }

@@ -4,7 +4,7 @@ status: active
 doc_type: implementation-status
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-16
 ---
 
 # pre-MVP 구현 현황
@@ -43,7 +43,8 @@ last_reviewed: 2026-07-15
 | `NFR-003`, `NFR-004`, `NFR-006` 일부 | edge/control 분리, 원자 state, versioned strict schema | integration·atomic store tests |
 | `NFR-007` | workspace `missing_docs = "deny"`, 모든 crate lint 상속, module `//!`, lint 우회 금지, private item 포함 rustdoc warning 거부 | docs gate·repository contract·CI rustdoc build |
 | `NFR-008` 계약 | 표준 protocol·DB driver는 외부 crate/client를 우선하고 project 고유 bounded 불변조건만 직접 구현하는 선택 기준 | ADR 0002; crate별 적용과 2GB binary·RSS 비교는 미완료 |
-| 운영 로그 일부 | edge/control JSON stdout 로그를 systemd journal이 수집하고 request 완료는 비식별 `debug`로 제한 | journald per-unit rate limit·보존 상태 UI는 미구현 |
+| 요청·오류 상관 추적 | 재시작 고유 request ID를 응답·upstream·detail 저장에 전파하고 request·operation·event 통합 조회와 API cause·event ID 제공 | 실제 VPS journal·Nginx upstream 상관 조회는 미검증 |
+| 운영 로그 일부 | edge/control JSON stdout 로그를 systemd journal이 수집하고 공통 component·event/error code와 unit별 rate limit 적용 | host journald 보존 상태 UI는 미구현 |
 
 ## release gate 미완료
 

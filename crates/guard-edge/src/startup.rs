@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::Path;
 
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_core::{ConfigError, GuardConfig};
 use pingora_core::listeners::tls::TlsSettings;
 use pingora_core::server::Server;
@@ -84,6 +85,9 @@ fn run_server(runtime: EdgeRuntimeConfig) -> Result<(), EdgeStartupError> {
         service.add_tls_with_settings(&tls.listen_addr, None, settings);
     }
     info!(
+        log_schema_version = LOG_SCHEMA_VERSION,
+        component = "guard-edge",
+        event_code = "EDGE_STARTED",
         http_listener = %runtime.listen_addr,
         tls_listener = ?runtime.tls.as_ref().map(|tls| tls.listen_addr.as_str()),
         origin_host = %runtime.origin_host,

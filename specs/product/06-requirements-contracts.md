@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-16
 ---
 
 # 요구사항과 구현 계약
@@ -62,6 +62,8 @@ last_reviewed: 2026-07-15
 | `OBS-009` | 외부 GeoIP/ASN API를 요청 hot path에서 호출 금지 | 네트워크 차단 상태에서도 edge 처리 동일 |
 | `OBS-010` | route와 server pressure를 동일 시간창으로 상관분석 | 사건 리포트에 원인 경로와 자원 변화 표시 |
 | `OBS-011` | 관리자가 확정한 핵심 service별 CPU·memory·I/O·process/task 수를 cgroup v2 기준으로 수집 | 전체 process 감사 없이 allowlisted systemd unit 값과 semantic health를 동일 시간축에 표시 |
+| `OBS-012` | Edge와 Control 요청에 재시작 후에도 충돌하지 않는 canonical request ID를 부여하고 응답·신뢰 upstream·단기 상세 저장 계층에 전파 | 외부 입력 ID는 검증 또는 교체되고, 응답 header·upstream echo·SQLite 상세 조회가 같은 ID이며 process 재생성 뒤에도 중복되지 않음 |
+| `OBS-013` | 운영 로그는 version·component·안정적 event/error code와 적용 가능한 request·operation·event ID를 공통 필드로 기록 | JSON log contract test와 journal fixture에서 오류를 식별자 하나로 상관 조회하고 비밀값·원본 request를 포함하지 않음 |
 
 ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으로 표시합니다. 정확하지 않은 위치를 추정해서 확정값처럼 표시하지 않습니다.
 
@@ -362,6 +364,7 @@ min_disk_free_bytes = 268435456
 | `GET` | `/resources` | OS·PHP·DB·Redis 상태 |
 | `GET` | `/incidents` | 사건 목록 |
 | `GET` | `/incidents/{id}` | 타임라인·증거·복구 |
+| `GET` | `/correlations/{id}` | request ID·operation ID·event ID의 단기 상세·사건·감사 상관 조회 |
 | `GET` | `/events` | SSE 실시간 event stream |
 | `GET` | `/auth/status` | 최초 관리자 등록 필요 여부와 사용 가능한 인증 경로 |
 | `GET` | `/session` | cookie session의 CSRF·actor·인증 방식 복원 |
@@ -433,6 +436,8 @@ Cloudflare adapter는 다음 의미 단계를 구현합니다.
 ## 10. 저장 계약
 
 - 운영 로그는 구조화 JSON으로 stdout/stderr에 기록해 systemd journal이 수집하며 request별 원본 IP·path 로그를 기본 `info`에 남기지 않습니다. VPSGuard는 host의 전역 journald 보존 설정을 임의 변경하지 않습니다.
+- 운영 로그 공통 필드는 `log_schema_version`, `component`, 안정적 `event_code` 또는 `error_code`이며 적용 가능한 경우 `request_id`, `operation_id`, `event_id`를 함께 둡니다.
+- canonical request ID는 Edge가 외부 요청마다 생성하고 신뢰 upstream과 응답에 전달합니다. loopback Control은 VPSGuard 형식이 검증된 ID만 이어받고 나머지는 자체 ID로 교체합니다.
 - live 1초 자료는 bounded 메모리 ring buffer로 유지합니다.
 - edge telemetry는 query·header·body 원문 없이 normalized route, status, latency, byte count와 판정만 bounded non-blocking channel로 보냅니다.
 - control은 bounded queue 뒤의 전용 blocking writer에서 transaction batch로 상세 sample을 SQLite WAL에 기록합니다. async runtime worker에서 request별 동기 SQLite write를 실행하지 않습니다.
@@ -442,3 +447,4 @@ Cloudflare adapter는 다음 의미 단계를 구현합니다.
 - raw IP는 장기 route aggregate와 분리된 상세·client 단기 계층에만 두고 상세·IP·aggregate·incident 보존기간을 독립 적용합니다.
 - DB·WAL 크기, queue drop, 마지막 rollup·retention 성공과 disk 여유를 계측합니다.
 - request body, cookie 원문, authorization header와 민감 query 값은 저장하지 않습니다.
+- request ID와 method는 detail retention 동안만 저장하며 10초·1분 장기 rollup에는 포함하지 않습니다. request·operation·event 상관 조회는 인증된 관리 API에서 bounded 결과만 반환합니다.

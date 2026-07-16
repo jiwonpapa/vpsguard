@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: verification-contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-16
 ---
 
 # 검증 추적표
@@ -56,6 +56,8 @@ last_reviewed: 2026-07-15
 | `OBS-008` | `tests/fault/telemetry_backpressure.rs` | drop counter와 HTTP success |
 | `OBS-010` | `crates/guard-core/tests/resource_correlation.rs` | incident evidence snapshot |
 | `OBS-011` | `crates/guard-agent/tests/systemd_cgroup_collector.rs` | 2GB VPS allowlisted unit과 cgroup 실제값 대조 |
+| `OBS-012` | `crates/guard-core/src/correlation.rs`, `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs`, `scripts/integration-gate.sh` | public 응답·Nginx upstream·Control UI의 동일 request ID 조회 report |
+| `OBS-013` | `crates/guard-control/src/api/tests.rs`, `scripts/tests/repository-contracts.sh`, `scripts/integration-gate.sh` | edge/control journal JSON field와 식별자 상관 조회 report |
 
 ### 3.3 Detection
 
@@ -120,7 +122,7 @@ last_reviewed: 2026-07-15
 | `NFR-001`, `NFR-002` | Criterion + k6 regression | 2GB VPS perf artifact |
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |
-| `NFR-005` | error snapshot tests | UI·CLI problem report |
+| `NFR-005` | `crates/guard-control/src/api/tests.rs`, error snapshot tests | UI·CLI problem·cause·impact·next action·event ID report |
 | `NFR-007` | workspace lint 상속·module rustdoc gate·`cargo doc -D warnings` | CI rustdoc build artifact |
 | `NFR-008` | dependency decision record + audit·deny·machete | 2GB VPS binary·RSS dependency diff |
 

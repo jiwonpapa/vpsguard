@@ -2,12 +2,13 @@
 
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use guard_core::Decision;
+use guard_core::correlation::{LOG_SCHEMA_VERSION, RequestIdGenerator};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_error::{
     Error, ErrorSource,
@@ -37,7 +38,7 @@ const READY_PATH: &str = "/health/ready";
 #[derive(Debug)]
 pub(crate) struct GuardEdge {
     config: EdgeRuntimeConfig,
-    request_sequence: AtomicU64,
+    request_ids: RequestIdGenerator,
     rate_limiter: Arc<BoundedRateLimiter>,
     origin_ready: AtomicBool,
     telemetry: TelemetrySink,
@@ -51,19 +52,33 @@ impl GuardEdge {
         let telemetry = TelemetrySink::connect(&config.telemetry_socket);
         let policy = Arc::new(PolicyRuntime::new(config.policy_path.clone()));
         if let Err(error) = policy.reload_at(OffsetDateTime::now_utc()) {
-            warn!(error = %error, path = %policy.path().display(), "initial policy rejected");
+            warn!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                error_code = "EDGE_INITIAL_POLICY_REJECTED",
+                error = %error,
+                path = %policy.path().display(),
+                "initial policy rejected"
+            );
         }
         policy.spawn(config.policy_reload_interval);
         let clearance = config.challenge_secret_file.as_deref().and_then(|path| {
             ClearanceSigner::from_file(path, config.clearance_ttl_seconds)
-                .map_err(
-                    |error| warn!(error = %error, path = %path.display(), "clearance disabled"),
-                )
+                .map_err(|error| {
+                    warn!(
+                        log_schema_version = LOG_SCHEMA_VERSION,
+                        component = "guard-edge",
+                        error_code = "EDGE_CLEARANCE_DISABLED",
+                        error = %error,
+                        path = %path.display(),
+                        "clearance disabled"
+                    )
+                })
                 .ok()
         });
         Self {
             config,
-            request_sequence: AtomicU64::new(1),
+            request_ids: RequestIdGenerator::new(),
             rate_limiter: Arc::new(BoundedRateLimiter::new(max_entries)),
             origin_ready: AtomicBool::new(false),
             telemetry,
@@ -73,8 +88,7 @@ impl GuardEdge {
     }
 
     fn next_request_id(&self) -> String {
-        let next = self.request_sequence.fetch_add(1, Ordering::Relaxed);
-        format!("guard-{next:016x}")
+        self.request_ids.next_id()
     }
 
     async fn filter_request(
@@ -129,6 +143,9 @@ impl GuardEdge {
 
         if !host_allowed(host.as_deref(), &self.config.allowed_hosts) {
             warn!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                error_code = "EDGE_HOST_REJECTED",
                 request_id = %context.request_id,
                 path = %context.path,
                 client_ip = ?context.client_ip,
@@ -213,6 +230,9 @@ impl GuardEdge {
             let scheme = current_proto(session, context.forwarded_headers_trusted);
             let location = format!("{scheme}://{canonical}{target}");
             info!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                event_code = "EDGE_CANONICAL_REDIRECT",
                 request_id = %context.request_id,
                 path = %context.path,
                 canonical_host = canonical,
@@ -309,6 +329,9 @@ impl GuardEdge {
                 LimitDecision::Allow => {}
                 LimitDecision::Deny => {
                     warn!(
+                        log_schema_version = LOG_SCHEMA_VERSION,
+                        component = "guard-edge",
+                        event_code = "EDGE_REQUEST_RATE_LIMITED",
                         request_id = %context.request_id,
                         path = %context.path,
                         client_ip = %client_ip,
@@ -326,7 +349,13 @@ impl GuardEdge {
                     return Ok(true);
                 }
                 LimitDecision::CapacityReached => {
-                    warn!("rate limiter capacity reached; request allowed");
+                    warn!(
+                        log_schema_version = LOG_SCHEMA_VERSION,
+                        component = "guard-edge",
+                        error_code = "EDGE_RATE_LIMIT_CAPACITY_REACHED",
+                        request_id = %context.request_id,
+                        "rate limiter capacity reached; request allowed"
+                    );
                 }
             }
         }
@@ -462,6 +491,9 @@ impl ProxyHttp for GuardEdge {
         }
         add_common_headers(upstream_response, &context.request_id)?;
         debug!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-edge",
+            event_code = "EDGE_REQUEST_COMPLETED",
             request_id = %context.request_id,
             method = %context.method,
             status = upstream_response.status.as_u16(),
@@ -534,9 +566,26 @@ impl ProxyHttp for GuardEdge {
         if error_code > 0
             && let Err(send_error) = session.respond_error(error_code).await
         {
-            warn!(error = %send_error, "failed to send proxy error response");
+            warn!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                error_code = "EDGE_PROXY_ERROR_RESPONSE_FAILED",
+                request_id = %context.request_id,
+                status = error_code,
+                error = %send_error,
+                "failed to send proxy error response"
+            );
         }
         if error_code > 0 {
+            warn!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                error_code = "EDGE_PROXY_FAILED",
+                request_id = %context.request_id,
+                status = error_code,
+                error = %error,
+                "proxy request failed"
+            );
             let decision = if error_code == 429 {
                 DecisionKind::Throttle
             } else if (400..500).contains(&error_code) {

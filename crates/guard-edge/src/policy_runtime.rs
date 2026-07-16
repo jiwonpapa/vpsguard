@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_core::{Decision, PolicyError, PolicySnapshot};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -139,17 +140,35 @@ impl PolicyRuntime {
             .spawn(move || {
                 loop {
                     match runtime.reload_at(OffsetDateTime::now_utc()) {
-                        Ok(true) => info!(policy_version = runtime.version(), "policy reloaded"),
+                        Ok(true) => info!(
+                            log_schema_version = LOG_SCHEMA_VERSION,
+                            component = "guard-edge",
+                            event_code = "EDGE_POLICY_RELOADED",
+                            policy_version = runtime.version(),
+                            "policy reloaded"
+                        ),
                         Ok(false) => {}
                         Err(error) => {
-                            warn!(error = %error, "policy reload rejected; keeping last-known-good")
+                            warn!(
+                                log_schema_version = LOG_SCHEMA_VERSION,
+                                component = "guard-edge",
+                                error_code = "EDGE_POLICY_RELOAD_REJECTED",
+                                error = %error,
+                                "policy reload rejected; keeping last-known-good"
+                            )
                         }
                     }
                     std::thread::sleep(interval);
                 }
             });
         if let Err(error) = spawn_result {
-            warn!(error = %error, "policy reload thread unavailable");
+            warn!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                error_code = "EDGE_POLICY_RELOAD_THREAD_UNAVAILABLE",
+                error = %error,
+                "policy reload thread unavailable"
+            );
         }
     }
 

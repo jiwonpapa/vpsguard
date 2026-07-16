@@ -24,6 +24,8 @@ OBS-008|AUTO_PASS|crates/guard-edge/src/telemetry.rs|crates/guard-edge/src/telem
 OBS-009|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 OBS-010|PLANNED|-|-|-
 OBS-011|AUTO_PASS|crates/guard-agent/src/cgroup.rs|crates/guard-agent/tests/systemd_cgroup_collector.rs|-
+OBS-012|AUTO_PASS|crates/guard-core/src/correlation.rs|scripts/integration-gate.sh|-
+OBS-013|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
 DET-001|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-002|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-
 DET-003|PLANNED|-|-|-
@@ -97,7 +99,7 @@ NFR-001|PLANNED|-|-|-
 NFR-002|CODE_ONLY|crates/guard-edge/src/rate_limit.rs|-|-
 NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 NFR-004|AUTO_PASS|crates/guard-system/src/atomic_store.rs|crates/guard-system/src/atomic_store/tests.rs|-
-NFR-005|CODE_ONLY|crates/guard-control/src/api.rs|-|-
+NFR-005|AUTO_PASS|crates/guard-control/src/api.rs|crates/guard-control/src/api/tests.rs|-
 NFR-006|AUTO_PASS|crates/guard-core/src/config.rs|crates/guard-core/src/config/tests.rs|-
 NFR-007|AUTO_PASS|Cargo.toml|scripts/docs-gate.sh|-
 NFR-008|CODE_ONLY|docs/adr/0002-edge-integrations-and-service-observability.md|-|-

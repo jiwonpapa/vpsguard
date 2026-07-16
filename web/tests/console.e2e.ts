@@ -59,6 +59,33 @@ async function mockApi(page: Page) {
       });
       return;
     }
+    if (path.startsWith("/api/v1/correlations/")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          correlation_id: path.split("/").at(-1),
+          request: {
+            request_id: "guard-0123456789abcdef0123456789abcdef-0000000000000009",
+            occurred_at_unix_ms: 1784000000000,
+            method: "POST",
+            route_class: "strict",
+            normalized_route: "/api/login",
+            route_cost: 5,
+            status: 429,
+            latency_micros: 1500,
+            request_body_bytes: 64,
+            response_body_bytes: 128,
+            upstream_connection_reused: true,
+            decision: "throttle",
+            policy_version: 3,
+          },
+          events: [],
+          audit_action: null,
+        }),
+      });
+      return;
+    }
     const data: Record<string, unknown> = {
       "/api/v1/status": status,
       "/api/v1/traffic/summary": {
@@ -209,6 +236,18 @@ test("renders bounded storage health and retention state", async ({ page }) => {
   await expect(page.getByRole("article", { name: "php_fpm 상태" })).toContainText("semantic error");
   await expect(page.getByRole("article", { name: "php_fpm 상태" })).toContainText("128.0 MiB");
   await expect(page.getByRole("article", { name: "php_fpm 상태" })).toContainText("Queue");
+});
+
+test("finds a request by correlation ID without a terminal", async ({ page }) => {
+  await page.goto("/incidents");
+  await page.getByLabel("상관관계 ID").fill(
+    "guard-0123456789abcdef0123456789abcdef-0000000000000009",
+  );
+  await page.getByRole("button", { name: "추적" }).click();
+  await expect(page.getByRole("region", { name: "상관관계 조회 결과" })).toContainText(
+    "POST /api/login",
+  );
+  await expect(page.getByRole("region", { name: "상관관계 조회 결과" })).toContainText("429");
 });
 
 test("switches between live and persisted traffic resolutions", async ({ page }) => {

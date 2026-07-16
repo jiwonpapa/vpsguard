@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
@@ -22,7 +23,14 @@ fn main() -> ExitCode {
     match guard_edge::run_from_path(&config_path) {
         Ok(()) => ExitCode::SUCCESS,
         Err(startup_error) => {
-            error!(error = %startup_error, path = %config_path.display(), "edge startup failed");
+            error!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                error_code = "EDGE_STARTUP_FAILED",
+                error = %startup_error,
+                path = %config_path.display(),
+                "edge startup failed"
+            );
             ExitCode::FAILURE
         }
     }

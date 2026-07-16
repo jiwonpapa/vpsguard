@@ -2,6 +2,7 @@ import type {
   ActionResponse,
   CertbotAssistedPlan,
   ClientRow,
+  CorrelationResponse,
   EventRow,
   ListResponse,
   ResourcesResponse,
@@ -44,9 +45,30 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly code?: string,
+    public readonly causeDetail?: string,
+    public readonly impact?: string,
+    public readonly nextAction?: string,
+    public readonly eventId?: string,
+    public readonly requestId?: string | null,
   ) {
     super(message);
   }
+}
+
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error ? error.message : fallback;
+  }
+  return [
+    error.message,
+    error.causeDetail ? `원인: ${error.causeDetail}` : null,
+    error.impact ? `영향: ${error.impact}` : null,
+    error.nextAction ? `다음 조치: ${error.nextAction}` : null,
+    error.eventId ? `오류 ID: ${error.eventId}` : null,
+    error.requestId ? `요청 ID: ${error.requestId}` : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n");
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -56,6 +78,11 @@ async function parseResponse<T>(response: Response): Promise<T> {
       body.error?.problem ?? `요청 실패 (${response.status})`,
       response.status,
       body.error?.code,
+      body.error?.cause,
+      body.error?.impact,
+      body.error?.next_action,
+      body.error?.event_id,
+      response.headers.get("x-request-id"),
     );
   }
   return body as T;
@@ -67,6 +94,12 @@ export async function getJson<T>(path: string): Promise<T> {
     credentials: "same-origin",
   });
   return parseResponse<T>(response);
+}
+
+export function correlationPath(correlationId: string): string {
+  const bounded = correlationId.trim();
+  if (!bounded) throw new Error("상관관계 ID를 입력하십시오.");
+  return `/api/v1/correlations/${encodeURIComponent(bounded)}`;
 }
 
 async function sessionRequest(body: Record<string, string>): Promise<SessionInfo> {
@@ -230,6 +263,8 @@ export const api = {
     getJson<ListResponse<EventRow>>("/api/v1/incidents?limit=200").then(
       (value) => value.items,
     ),
+  correlation: (correlationId: string) =>
+    getJson<CorrelationResponse>(correlationPath(correlationId)),
   resources: () => getJson<ResourcesResponse>("/api/v1/resources"),
   tlsAssistedPlan: requestTlsAssistedPlan,
 };

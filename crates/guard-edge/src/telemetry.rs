@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use serde::{Deserialize, Serialize};
 
 use crate::rate_limit::RouteClass;
@@ -208,7 +209,13 @@ fn spawn_reconnector(inner: &Arc<TelemetryInner>) {
             }
         });
     if let Err(error) = spawn_result {
-        tracing::warn!(error = %error, "telemetry reconnect thread unavailable");
+        tracing::warn!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-edge",
+            error_code = "EDGE_TELEMETRY_RECONNECT_THREAD_UNAVAILABLE",
+            error = %error,
+            "telemetry reconnect thread unavailable"
+        );
     }
 }
 

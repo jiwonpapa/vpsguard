@@ -198,6 +198,37 @@ export interface EventRow {
   payload: GuardEventPayload;
 }
 
+export interface RequestTraceRow {
+  request_id: string;
+  occurred_at_unix_ms: number;
+  method: string;
+  route_class: string;
+  normalized_route: string;
+  route_cost: number;
+  status: number;
+  latency_micros: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
+  upstream_connection_reused: boolean | null;
+  decision: string;
+  policy_version: number;
+}
+
+export interface AuditActionRow {
+  operation_id: string;
+  occurred_at: string;
+  action: string;
+  mode: string;
+  result: string;
+}
+
+export interface CorrelationResponse {
+  correlation_id: string;
+  request: RequestTraceRow | null;
+  events: EventRow[];
+  audit_action: AuditActionRow | null;
+}
+
 export interface ListResponse<T> {
   items: T[];
 }

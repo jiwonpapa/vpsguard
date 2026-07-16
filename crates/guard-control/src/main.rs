@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use guard_core::correlation::LOG_SCHEMA_VERSION;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
@@ -22,7 +23,14 @@ async fn main() -> ExitCode {
     match guard_control::run_from_path(&config_path).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            error!(error = %error, path = %config_path.display(), "control startup failed");
+            error!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-control",
+                error_code = "CONTROL_STARTUP_FAILED",
+                error = %error,
+                path = %config_path.display(),
+                "control startup failed"
+            );
             ExitCode::FAILURE
         }
     }

@@ -4,9 +4,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -18,6 +19,7 @@ use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::{
     CspMode, DetectionMode, InspectionMode, SecurityConfig, TlsManagementMode,
 };
+use guard_core::correlation::{LOG_SCHEMA_VERSION, RequestIdGenerator, is_valid_request_id};
 use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
 use guard_system::{
     AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, build_certbot_assisted_plan,
@@ -27,13 +29,17 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
+use tracing::Instrument;
 
 use crate::auth::{
     AuthError, BootstrapStore, IssuedSession, LoginSecondFactor, SessionStore, UiAccessPolicy,
     unix_seconds,
 };
 use crate::provider::ProviderController;
-use crate::storage::{ClientRow, EventRow, RouteRow, SqliteStore, StorageHealthSnapshot};
+use crate::storage::{
+    AuditActionRow, ClientRow, EventRow, RequestTraceRow, RouteRow, SqliteStore,
+    StorageHealthSnapshot,
+};
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
 
 const INDEX_HTML: &str = include_str!("../../../web/dist/index.html");
@@ -61,6 +67,7 @@ pub(crate) struct AppState {
     pub(crate) access: UiAccessPolicy,
     pub(crate) provider: Arc<Mutex<Option<ProviderController>>>,
     pub(crate) provider_action_active: Arc<AtomicBool>,
+    pub(crate) request_ids: RequestIdGenerator,
 }
 
 /// overview 상태 응답입니다.
@@ -117,9 +124,19 @@ struct ErrorBody {
 struct ErrorDetail {
     code: &'static str,
     problem: &'static str,
+    cause: &'static str,
     impact: &'static str,
     next_action: &'static str,
     retriable: bool,
+    event_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CorrelationResponse {
+    correlation_id: String,
+    request: Option<RequestTraceRow>,
+    events: Vec<EventRow>,
+    audit_action: Option<AuditActionRow>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,6 +254,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/clients", get(clients))
         .route("/api/v1/routes", get(routes))
         .route("/api/v1/incidents", get(incidents))
+        .route("/api/v1/correlations/{correlation_id}", get(correlation))
         .route("/api/v1/events", get(event_stream))
         .route("/api/v1/resources", get(resources))
         .route("/api/v1/tls/assisted-plan", post(tls_assisted_plan))
@@ -270,7 +288,46 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
             Arc::clone(&state),
             enforce_management_host,
         ))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            correlate_request,
+        ))
         .with_state(state)
+}
+
+async fn correlate_request(
+    State(app): State<Arc<AppState>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| is_valid_request_id(value))
+        .map_or_else(|| app.request_ids.next_id(), ToOwned::to_owned);
+    let method = request.method().clone();
+    let started_at = Instant::now();
+    let span = tracing::info_span!(
+        "control_request",
+        log_schema_version = LOG_SCHEMA_VERSION,
+        component = "guard-control",
+        request_id = %request_id
+    );
+    let mut response = next.run(request).instrument(span.clone()).await;
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    span.in_scope(|| {
+        tracing::debug!(
+            event_code = "CONTROL_REQUEST_COMPLETED",
+            method = %method,
+            status = response.status().as_u16(),
+            latency_ms = started_at.elapsed().as_millis(),
+            "control request completed"
+        );
+    });
+    response
 }
 
 async fn enforce_management_host(
@@ -523,6 +580,66 @@ async fn routes(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>
 
 async fn incidents(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
     storage_list::<EventRow>(app.storage.events(bounded_limit(query.limit)))
+}
+
+async fn correlation(
+    State(app): State<Arc<AppState>>,
+    Path(correlation_id): Path<String>,
+) -> Response {
+    if !valid_correlation_id(&correlation_id) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "CORRELATION_ID_INVALID",
+            "상관관계 식별자 형식이 올바르지 않습니다.",
+            "저장된 요청·사건·감사 기록을 조회하지 않았습니다.",
+            "응답의 X-Request-ID, 운영 operation ID 또는 사건 event ID를 입력하십시오.",
+        );
+    }
+    let request = match app.storage.request_trace(&correlation_id) {
+        Ok(request) => request,
+        Err(error) => return correlation_storage_error(&error),
+    };
+    let events = match app.storage.events_for_correlation(&correlation_id, 32) {
+        Ok(events) => events,
+        Err(error) => return correlation_storage_error(&error),
+    };
+    let audit_action = match app.storage.audit_action(&correlation_id) {
+        Ok(action) => action,
+        Err(error) => return correlation_storage_error(&error),
+    };
+    if request.is_none() && events.is_empty() && audit_action.is_none() {
+        return api_error(
+            StatusCode::NOT_FOUND,
+            "CORRELATION_NOT_FOUND",
+            "보존 중인 상관관계 기록을 찾지 못했습니다.",
+            "현재 운영 상태와 저장된 기록은 변경하지 않았습니다.",
+            "식별자를 확인하고 detail·incident·audit 보존기간 안의 기록인지 확인하십시오.",
+        );
+    }
+    Json(CorrelationResponse {
+        correlation_id,
+        request,
+        events,
+        audit_action,
+    })
+    .into_response()
+}
+
+fn correlation_storage_error(error: &crate::storage::StorageError) -> Response {
+    tracing::warn!(
+        log_schema_version = LOG_SCHEMA_VERSION,
+        component = "guard-control",
+        error_code = "CORRELATION_STORAGE_QUERY_FAILED",
+        error = %error,
+        "correlation query failed"
+    );
+    api_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "CORRELATION_STORAGE_QUERY_FAILED",
+        "상관관계 저장소를 조회하지 못했습니다.",
+        "방어 동작은 계속되지만 요청 추적 결과를 제공하지 못했습니다.",
+        "SQLite 상태와 disk 여유를 확인한 뒤 다시 시도하십시오.",
+    )
 }
 
 async fn event_stream(
@@ -855,7 +972,12 @@ async fn apply_provider_action(
     let stage = match provider_result {
         Ok(Ok(stage)) => stage,
         Ok(Err(error)) => {
-            tracing::warn!(error, operation_id, "provider action failed");
+            tracing::warn!(
+                error_code = "PROVIDER_ACTION_FAILED",
+                error,
+                operation_id,
+                "provider action failed"
+            );
             record_provider_failure(app, &operation_id, action_name, &error);
             return api_error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -866,7 +988,12 @@ async fn apply_provider_action(
             );
         }
         Err(error) => {
-            tracing::warn!(error = %error, "provider task failed");
+            tracing::warn!(
+                error_code = "PROVIDER_TASK_FAILED",
+                error = %error,
+                operation_id,
+                "provider task failed"
+            );
             record_provider_failure(app, &operation_id, action_name, &error.to_string());
             return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -912,7 +1039,12 @@ async fn apply_provider_action(
         mode_name(next.current_mode),
         &format!("{:?}", stage),
     ) {
-        tracing::warn!(error = %error, "provider audit persistence failed");
+        tracing::warn!(
+            error_code = "PROVIDER_AUDIT_PERSISTENCE_FAILED",
+            error = %error,
+            operation_id,
+            "provider audit persistence failed"
+        );
     }
     let event = provider_event(
         operation_id.clone(),
@@ -922,7 +1054,13 @@ async fn apply_provider_action(
         stage,
     );
     if let Err(error) = app.storage.record_event(&event) {
-        tracing::warn!(error = %error, "provider event persistence failed");
+        tracing::warn!(
+            error_code = "PROVIDER_EVENT_PERSISTENCE_FAILED",
+            error = %error,
+            operation_id,
+            event_id = %event.event_id,
+            "provider event persistence failed"
+        );
     }
     let _send_result = app.events.send(event);
     Json(ActionResponse {
@@ -993,11 +1131,22 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
         mode_name(next.current_mode),
         "applied",
     ) {
-        tracing::warn!(error = %error, operation_id, "action audit persistence failed");
+        tracing::warn!(
+            error_code = "ACTION_AUDIT_PERSISTENCE_FAILED",
+            error = %error,
+            operation_id,
+            "action audit persistence failed"
+        );
     }
     let event = action_event(operation_id.clone(), now, action_name, next.current_mode);
     if let Err(error) = app.storage.record_event(&event) {
-        tracing::warn!(error = %error, "action event persistence failed");
+        tracing::warn!(
+            error_code = "ACTION_EVENT_PERSISTENCE_FAILED",
+            error = %error,
+            operation_id,
+            event_id = %event.event_id,
+            "action event persistence failed"
+        );
     }
     let _send_result = app.events.send(event);
     Json(ActionResponse {
@@ -1161,19 +1310,89 @@ fn api_error(
     impact: &'static str,
     next_action: &'static str,
 ) -> Response {
+    let cause = api_error_cause(code);
+    let event_id = format!("error-{}", uuid::Uuid::new_v4().simple());
+    if status.is_server_error() {
+        tracing::warn!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-control",
+            error_code = code,
+            event_id = %event_id,
+            problem,
+            cause,
+            impact,
+            next_action,
+            "control API error"
+        );
+    } else {
+        tracing::info!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-control",
+            event_code = "CONTROL_API_REQUEST_REJECTED",
+            error_code = code,
+            event_id = %event_id,
+            problem,
+            cause,
+            impact,
+            next_action,
+            "control API request rejected"
+        );
+    }
     (
         status,
         Json(ErrorBody {
             error: ErrorDetail {
                 code,
                 problem,
+                cause,
                 impact,
                 next_action,
                 retriable: true,
+                event_id,
             },
         }),
     )
         .into_response()
+}
+
+fn api_error_cause(code: &str) -> &'static str {
+    match code {
+        "MANAGEMENT_HOST_INVALID" => "Host header가 설정된 관리 hostname과 일치하지 않습니다.",
+        "MANAGEMENT_ORIGIN_INVALID" => {
+            "Origin header가 설정된 HTTPS 관리 origin과 일치하지 않습니다."
+        }
+        "SESSION_AUTH_REQUIRED" => "유효하고 만료되지 않은 관리자 session을 확인하지 못했습니다.",
+        "CSRF_AUTH_REQUIRED" => "session에 연결된 CSRF token 검증을 통과하지 못했습니다.",
+        "TLS_ASSISTED_MODE_REQUIRED" => {
+            "현재 TLS 소유권 mode가 VPSGuard 보조 발급을 허용하지 않습니다."
+        }
+        "TLS_HTTP01_DOMAIN_INVALID" => "HTTP-01에 사용할 exact non-wildcard domain이 없습니다.",
+        "TLS_ACME_EMAIL_INVALID" => "ACME 연락처가 bounded email 형식 검증을 통과하지 못했습니다.",
+        "IDEMPOTENCY_KEY_REQUIRED" => "요청 header에 비어 있지 않은 Idempotency-Key가 없습니다.",
+        "IDEMPOTENCY_KEY_CONFLICT" => {
+            "기존 operation ID에 기록된 명령과 현재 명령이 서로 다릅니다."
+        }
+        "MANUAL_HOLD_ACTIVE" => "현재 방어 상태가 관리자 수동 고정 상태입니다.",
+        "PROVIDER_ACTION_IN_PROGRESS" => "다른 provider transaction lease가 이미 활성 상태입니다.",
+        "PROVIDER_ACTION_FAILED" => "provider transaction 단계가 오류를 반환했습니다.",
+        "PROVIDER_TASK_FAILED" => "blocking provider task가 정상 결과 없이 종료됐습니다.",
+        "STATE_WRITE_FAILED" => "원자 state 저장 또는 read-back을 완료하지 못했습니다.",
+        "LOGIN_CODE_REJECTED" => "단회 code가 형식·만료·재사용 검증 중 하나를 통과하지 못했습니다.",
+        "ADMIN_AUTH_REJECTED" => "관리자 credential과 2단계 인증 조합을 확인하지 못했습니다.",
+        "ADMIN_USERNAME_INVALID" => "관리자 ID가 길이 또는 허용 문자 규칙을 위반했습니다.",
+        "ADMIN_PASSWORD_WEAK" => "관리자 비밀번호가 최소 길이 또는 최대 byte 규칙을 위반했습니다.",
+        "ADMIN_ALREADY_CONFIGURED" => "관리자 계정 저장소에 이미 활성 계정이 있습니다.",
+        "ADMIN_ENROLLMENT_UNAVAILABLE" => "등록 session이 없거나 유효기간을 지났습니다.",
+        "ADMIN_TOTP_REJECTED" => "제출한 TOTP가 허용 시간창의 값과 일치하지 않습니다.",
+        "ADMIN_LOGIN_RATE_LIMITED" => "bounded 로그인 시도 한도가 현재 시간창에서 소진됐습니다.",
+        "ADMIN_AUTH_UNAVAILABLE" => "인증 저장소·암호 처리·시각 중 하나를 사용할 수 없습니다.",
+        "STORAGE_QUERY_FAILED" | "CORRELATION_STORAGE_QUERY_FAILED" => {
+            "Control SQLite 조회가 정상 결과를 반환하지 못했습니다."
+        }
+        "CORRELATION_ID_INVALID" => "식별자가 허용 길이 또는 문자 규칙을 위반했습니다.",
+        "CORRELATION_NOT_FOUND" => "현재 detail·incident·audit 보존 계층에 일치값이 없습니다.",
+        _ => "요청 처리 전제조건 또는 내부 작업이 안정적 오류 code와 함께 실패했습니다.",
+    }
 }
 
 fn lock_traffic(app: &AppState) -> MutexGuard<'_, TrafficAggregator> {
@@ -1265,11 +1484,23 @@ fn bounded_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(100).clamp(1, 1_000)
 }
 
+fn valid_correlation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 fn storage_list<T: Serialize>(result: Result<Vec<T>, crate::storage::StorageError>) -> Response {
     match result {
         Ok(items) => Json(ListResponse { items }).into_response(),
         Err(error) => {
-            tracing::warn!(error = %error, "control query failed");
+            tracing::warn!(
+                error_code = "STORAGE_QUERY_FAILED",
+                error = %error,
+                "control query failed"
+            );
             api_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "STORAGE_QUERY_FAILED",
@@ -1364,7 +1595,15 @@ pub(crate) fn record_provider_failure(
         )]),
     };
     if let Err(storage_error) = app.storage.record_event(&event) {
-        tracing::warn!(error = %storage_error, "provider failure event persistence failed");
+        tracing::warn!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-control",
+            error_code = "PROVIDER_FAILURE_EVENT_PERSISTENCE_FAILED",
+            error = %storage_error,
+            operation_id,
+            event_id = %event.event_id,
+            "provider failure event persistence failed"
+        );
     }
     let _send_result = app.events.send(event);
 }

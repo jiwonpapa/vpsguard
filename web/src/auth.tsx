@@ -12,6 +12,7 @@ import { KeyRound, ShieldCheck, X } from "lucide-react";
 
 import {
   ApiError,
+  apiErrorMessage,
   confirmEnrollment,
   createBreakGlassSession,
   getAuthStatus,
@@ -74,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : "인증 상태를 확인하지 못했습니다.");
+        setMessage(apiErrorMessage(error, "인증 상태를 확인하지 못했습니다."));
       });
   }, [queryClient]);
 
@@ -99,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         showLogin();
         return;
       }
-      setMessage(error instanceof Error ? error.message : "운영 명령에 실패했습니다.");
+      setMessage(apiErrorMessage(error, "운영 명령에 실패했습니다."));
     }
   };
 
@@ -129,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : await loginWithTotp(username, password, secondFactor);
       await finishLogin(nextSession);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
+      setMessage(apiErrorMessage(error, "로그인에 실패했습니다."));
     } finally {
       setBusy(false);
     }
@@ -152,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setPasswordConfirm("");
       setView("setup-totp");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "관리자 등록을 시작하지 못했습니다.");
+      setMessage(apiErrorMessage(error, "관리자 등록을 시작하지 못했습니다."));
     } finally {
       setBusy(false);
     }
@@ -172,7 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setView("recovery-codes");
       await queryClient.invalidateQueries();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "2단계 인증을 확인하지 못했습니다.");
+      setMessage(apiErrorMessage(error, "2단계 인증을 확인하지 못했습니다."));
     } finally {
       setBusy(false);
     }
@@ -185,7 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await finishLogin(await createBreakGlassSession(bootstrapCode));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "긴급 복구 로그인에 실패했습니다.");
+      setMessage(apiErrorMessage(error, "긴급 복구 로그인에 실패했습니다."));
     } finally {
       setBusy(false);
     }
@@ -198,7 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await queryClient.invalidateQueries();
       setMessage("현재 관리자 session에서 로그아웃했습니다.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "로그아웃하지 못했습니다.");
+      setMessage(apiErrorMessage(error, "로그아웃하지 못했습니다."));
     }
   };
 
@@ -211,7 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await queryClient.invalidateQueries();
       setMessage(`관리자 session ${count}개를 모두 폐기했습니다.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "전체 session을 폐기하지 못했습니다.");
+      setMessage(apiErrorMessage(error, "전체 session을 폐기하지 못했습니다."));
     } finally {
       setBusy(false);
     }
@@ -269,7 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="닫기"><X className="size-4" /></Button>
               ) : null}
             </div>
-            <div aria-live="polite" className="mt-3 min-h-5 text-sm text-red-400">{message}</div>
+            <div aria-live="polite" className="mt-3 min-h-5 whitespace-pre-line text-sm text-red-400">{message}</div>
             {view === "login" ? (
               <LoginForm username={username} password={password} secondFactor={secondFactor} useRecovery={useRecovery} busy={busy} onUsername={setUsername} onPassword={setPassword} onSecondFactor={setSecondFactor} onUseRecovery={setUseRecovery} onSubmit={submitLogin} onBreakGlass={() => setView("break-glass")} />
             ) : null}
@@ -294,7 +295,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         </div>
       ) : null}
       {message && !open ? (
-        <button type="button" className="fixed bottom-5 right-5 z-50 border border-zinc-700 bg-zinc-100 px-4 py-3 text-left text-xs font-semibold text-zinc-950 shadow-xl" onClick={() => setMessage(null)}>{message}</button>
+        <button type="button" className="fixed bottom-5 right-5 z-50 whitespace-pre-line border border-zinc-700 bg-zinc-100 px-4 py-3 text-left text-xs font-semibold text-zinc-950 shadow-xl" onClick={() => setMessage(null)}>{message}</button>
       ) : null}
     </AuthContext.Provider>
   );

@@ -72,13 +72,17 @@ curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-dela
 
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.integration.toml" \
 VPS_GUARD_STATE="${evidence_dir}/state.json" \
+RUST_LOG=guard_control=debug,vps_guard_control=debug \
   target/debug/vps-guard-control >"${evidence_dir}/control.log" 2>&1 &
 control_pid=$!
 
 curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+  --dump-header "${evidence_dir}/control-live.headers" \
   http://127.0.0.1:27727/health/live >"${evidence_dir}/control-live.txt"
+grep -Eiq '^x-request-id: guard-[0-9a-f]{32}-[0-9a-f]{16}' "${evidence_dir}/control-live.headers"
 
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.integration.toml" \
+RUST_LOG=guard_edge=debug,vps_guard_edge=debug,pingora=warn \
   target/debug/vps-guard-edge >"${evidence_dir}/edge.log" 2>&1 &
 edge_pid=$!
 curl --disable --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
@@ -124,10 +128,19 @@ admin_request() {
     --resolve guard.example.test:28443:127.0.0.1 "$@" "https://guard.example.test:28443${path}"
 }
 
-proxy_body="$(app_request /hello)"
+app_request /hello \
+  --dump-header "${evidence_dir}/proxy-request.headers" \
+  --output "${evidence_dir}/proxy-request.json"
+proxy_body="$(<"${evidence_dir}/proxy-request.json")"
 [[ "${proxy_body}" == *'"path": "/hello"'* ]]
 [[ "${proxy_body}" == *'"x_forwarded_for": "127.0.0.1"'* ]]
 [[ "${proxy_body}" != *'secret='* ]]
+proxy_request_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["x_request_id"])' <<<"${proxy_body}")"
+response_request_id="$(sed -n 's/^x-request-id:[[:space:]]*//Ip' "${evidence_dir}/proxy-request.headers" | tr -d '\r' | head -1)"
+[[ "${proxy_request_id}" =~ ^guard-[0-9a-f]{32}-[0-9a-f]{16}$ ]]
+[[ "${response_request_id}" == "${proxy_request_id}" ]]
+spoofed_request_id="$(app_request /hello -H 'X-Request-ID: client-controlled' | python3 -c 'import json,sys; print(json.load(sys.stdin)["x_request_id"])')"
+[[ "${spoofed_request_id}" != 'client-controlled' ]]
 app_request /security-headers \
   --dump-header "${evidence_dir}/app-security.headers" \
   --output /dev/null
@@ -243,6 +256,13 @@ if grep -R -F -e 'VPSGUARD_INTEGRATION_QUERY_SECRET' \
   echo "request secret leaked into integration evidence" >&2
   exit 1
 fi
+
+# OBS-012, OBS-013: request ID와 operational JSON 공통 field를 같은 증거에서 확인합니다.
+grep -Fq '"log_schema_version":1' "${evidence_dir}/edge.log"
+grep -Fq '"component":"guard-edge"' "${evidence_dir}/edge.log"
+grep -Fq "\"request_id\":\"${proxy_request_id}\"" "${evidence_dir}/edge.log"
+grep -Fq '"log_schema_version":1' "${evidence_dir}/control.log"
+grep -Fq '"component":"guard-control"' "${evidence_dir}/control.log"
 
 invalid_host_status="$(app_request / --output /dev/null --write-out '%{http_code}' -H 'Host: invalid.test')"
 [[ "${invalid_host_status}" == "400" ]]

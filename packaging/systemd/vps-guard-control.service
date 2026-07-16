@@ -9,6 +9,12 @@ Group=vps-guard
 ExecStart=/usr/local/bin/vps-guard-control
 Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
 Environment=VPS_GUARD_STATE=/var/lib/vps-guard/state.json
+Environment=RUST_LOG=vps_guard_control=info,guard_control=info,guard_agent=info,guard_provider=info,guard_system=info
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-guard-control
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=2000
 AmbientCapabilities=CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_ADMIN
 Restart=on-failure
