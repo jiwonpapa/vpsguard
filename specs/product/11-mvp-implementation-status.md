@@ -13,7 +13,7 @@ last_reviewed: 2026-07-20
 
 현재 상태는 **pre-MVP 개발용 수직 슬라이스**입니다. 기본 Rust 단위 테스트와 loopback smoke는 재현되지만, 요구사항별 자동 증거·실제 VPS 장애 주입·Cloudflare test zone·public 80/443·rollback 인증이 남아 있습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 105개 중 `PLANNED` 10개, `CODE_ONLY` 34개, `AUTO_PASS` 52개, `VPS_PASS` 9개입니다. 즉 95개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 61개입니다. 실제 VPS 증거가 연결된 항목은 `EDGE-001`, `EDGE-002`, `EDGE-005`, `TLS-003`, `TLS-005`, `OPS-001`, `OPS-003`, `OPS-004`, `OPS-009`입니다. 현재 서버가 그 topology를 계속 사용한다는 뜻이 아니라 보존된 운영 증거 수준입니다.
+현재 요구사항 108개 중 `PLANNED` 10개, `CODE_ONLY` 34개, `AUTO_PASS` 55개, `VPS_PASS` 9개입니다. 즉 98개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 64개입니다. 실제 VPS 증거가 연결된 항목은 `EDGE-001`, `EDGE-002`, `EDGE-005`, `TLS-003`, `TLS-005`, `OPS-001`, `OPS-003`, `OPS-004`, `OPS-009`입니다. 현재 서버가 그 topology를 계속 사용한다는 뜻이 아니라 보존된 운영 증거 수준입니다.
 
 ## 코드 및 자동 검증 현황
 
