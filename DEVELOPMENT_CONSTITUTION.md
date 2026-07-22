@@ -44,7 +44,7 @@
 - `guard-core`: 점수, 상태 머신, 정책, 사건과 provider transaction domain을 담당합니다.
 - `guard-edge`: Pingora listener, request policy, proxy와 hot-path 계측만 담당합니다.
 - `guard-control`: 저장, collector orchestration, versioned API, SSE와 UI asset을 담당합니다.
-- `guard-system`: nftables, systemd, TLS 파일, Nginx와 원자 OS 작업을 담당합니다.
+- `guard-system`: UFW·VPSGuard-owned nftables set, systemd, TLS 파일, Nginx와 원자 OS 작업을 담당합니다.
 - `guard-provider`: Cloudflare와 VPS provider API adapter를 담당합니다.
 - `guard-profiles`: GnuBoard·WordPress route와 비용 profile을 담당합니다.
 - 크레이트 책임이 섞이면 새 기능보다 경계 복구를 먼저 합니다.
@@ -63,7 +63,8 @@
 
 - SSH port와 현재 관리 접속 규칙을 자동 변경하지 않습니다.
 - provider 전환, 방화벽, ingress, TLS와 bypass 작업 전 snapshot과 plan을 만듭니다.
-- VPSGuard가 생성한 nftables table·chain·set과 파일만 수정·삭제합니다.
+- standalone mode는 VPSGuard 소유 comment가 있는 UFW rule과 VPSGuard-owned nftables set만 수정·삭제합니다.
+- JW-agent 위임 mode에서는 firewall mutation을 실행하지 않고 소유자와 실제 상태만 표시합니다.
 - 기존 Nginx/Apache 설정은 소유권과 snapshot 없이 덮어쓰지 않습니다.
 - 상태, 정책과 transaction은 temp write, fsync, rename, parent fsync 순서로 원자 저장합니다.
 - 모든 자동 IP 차단에는 TTL을 두며 MVP에서 영구 차단을 금지합니다.
@@ -117,7 +118,8 @@
 - Control UI는 loopback에 bind하고 public 접속은 edge의 별도 HTTPS 관리 Host로만 제공합니다.
 - Control 포트를 public에 열거나 관리 Host 요청을 애플리케이션 origin으로 fallback하지 않습니다.
 - SSH는 초기 단회 로그인 코드 발급과 복구 경로로 유지하며 일상 UI 접속에 tunnel을 요구하지 않습니다.
-- 일상 인증은 Linux·SSH 계정과 분리된 VPSGuard 관리자 ID·비밀번호와 TOTP를 사용하고 복구 코드는 일회용으로 소비합니다.
+- standalone Ubuntu 설치의 일상 인증은 Linux-PAM과 `vpsguard-admin` group allowlist를 사용하고 root·system·잠김·만료 계정을 거부하며 MFA와 일회용 복구 경로를 유지합니다.
+- PAM 비밀번호는 저장·로그·재노출하지 않고 서버 계정·group·sudo 권한 자체를 웹에서 변경하지 않습니다.
 - 비밀번호, TOTP seed, 복구 코드와 session 원문을 평문 저장하거나 로그·API에 다시 노출하지 않습니다.
 - 실시간 트래픽, 외부 IP, route, server resource, provider, TLS와 사건 상태를 표시합니다.
 - `주의`, `대기`, `실패`만 표시하지 않고 원인, 영향, 조치와 복구 조건을 설명합니다.
@@ -177,7 +179,7 @@
 
 ## 17. 외부 명령과 감사
 
-- nftables, systemd, Nginx, Certbot과 OS 명령은 공통 command runner만 사용합니다.
+- UFW, nftables, systemd, Nginx, Certbot과 OS 명령은 공통 command runner만 사용합니다.
 - command, argv, 실행자, 시작·종료, exit code와 마스킹된 stderr를 기록합니다.
 - stdin과 secret argument를 출력하지 않습니다.
 - command runner는 fake와 failure injection을 지원합니다.
@@ -228,6 +230,7 @@
 - SSH rule 자동 변경
 - 비밀값·request body·cookie 원문 로그
 - snapshot 없는 ingress·firewall·TLS 변경
+- JW-agent 위임 mode의 UFW·nftables 직접 변경
 - rollback 없는 update·bypass
 - stale 데이터를 정상으로 표시
 - 검증된 표준 protocol client가 있는데 근거 없이 wire protocol을 재구현

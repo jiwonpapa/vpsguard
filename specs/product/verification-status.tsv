@@ -110,3 +110,12 @@ NFR-012|AUTO_PASS|tools/vpsguard_harness/dev_check.py|tools/tests/test_dev_check
 NFR-013|AUTO_PASS|tools/vpsguard_harness/commit_contract.py|tools/tests/test_commit_contract.py|-
 OPS-011|VPS_PASS|crates/guard-system/src/ingress_state/apache.rs|crates/guard-system/src/ingress_state/apache/tests.rs|specs/product/evidence/gnuboard5-apache-vm-20260722.md
 NFR-014|VPS_PASS|tools/vpsguard_harness/vm_lab.py|tools/tests/test_vm_lab.py|specs/product/evidence/gnuboard5-apache-vm-20260722.md
+EDGE-014|PLANNED|-|-|-
+DET-013|PLANNED|-|-|-
+ACT-013|PLANNED|-|-|-
+ACT-014|PLANNED|-|-|-
+UI-016|PLANNED|-|-|-
+UI-017|PLANNED|-|-|-
+SEC-015|PLANNED|-|-|-
+SEC-016|PLANNED|-|-|-
+SEC-017|PLANNED|-|-|-

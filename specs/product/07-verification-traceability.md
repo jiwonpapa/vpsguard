@@ -42,6 +42,7 @@ last_reviewed: 2026-07-22
 | `EDGE-011` | `tests/security/log_secret_scan.rs` | 배포 로그 secret scan |
 | `EDGE-012` | `tests/load/high_cardinality.js` | RSS와 eviction/drop counter |
 | `EDGE-013` | `scripts/integration-gate.sh` | `profiled`·`protocol_only` HTTP/TLS 정상 요청, app 판정 생략과 정적 불변조건 report |
+| `EDGE-014` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/load/high_cardinality.js` | limiter capacity·회전 IP·prefix/global budget과 2GB RSS report |
 
 ### 3.2 Observation
 
@@ -72,6 +73,7 @@ last_reviewed: 2026-07-22
 | `DET-010` | `tests/fault/collector_missing.rs` | degraded-confidence incident |
 | `DET-011` | `crates/guard-edge/src/runtime/tests.rs` | app profile·site override·incident policy 합성 replay |
 | `DET-012` | `crates/guard-profiles/src/tests.rs` | generic core와 G7 auth·CSP overlay 교차 profile fixture |
+| `DET-013` | `crates/guard-core/tests/crawler_identity.rs`, `crates/guard-control/tests/crawler_verifier.rs` | Google·Naver·Bing verified/spoofed와 미허용 AI bot VM replay |
 
 ### 3.4 Action
 
@@ -86,6 +88,7 @@ last_reviewed: 2026-07-22
 | `ACT-010` | `crates/guard-provider/tests/firewall_invariants.rs` | 전후 SSH·non-web listener·firewall rule diff |
 | `ACT-011` | `tests/fault/provider_unavailable.rs` | local guard 지속 report |
 | `ACT-012` | `crates/guard-control/tests/idempotent_actions.rs` | 중복 요청 provider call count |
+| `ACT-013`, `ACT-014` | `crates/guard-system/src/ufw/tests.rs`, `crates/guard-control/src/api/tests.rs` | standalone UFW apply·read-back·rollback과 JW-agent delegated mutation 0·SSH probe report |
 
 ### 3.5 TLS and operations
 
@@ -116,10 +119,15 @@ last_reviewed: 2026-07-22
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |
 | `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 계정·TOTP 로그인과 terminal 없는 일상 접속 browser report |
+| `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime/tests.rs`, `web/tests/console.e2e.ts` | Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure session과 Control public port scan |
+| `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/firewall.e2e.ts` | standalone typed UFW 화면과 JW-agent 위임 read-only browser report |
 | `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |
 | `SEC-012`, `SEC-013`, `SEC-014` | `crates/guard-control/src/auth/tests.rs`, `crates/guard-control/src/api/tests.rs` | 2GB VPS 재시작 session, TOTP·복구 코드와 auth DB secret scan report |
+| `SEC-015` | `crates/guard-control/src/pam_auth/tests.rs`, `crates/guard-control/src/api/tests.rs` | Ubuntu PAM group·root/locked denial·MFA browser와 DB/journal credential scan |
+| `SEC-016` | `crates/guard-edge/src/security/tests.rs`, `scripts/integration-gate.sh` | request smuggling corpus와 HTTP/1.1·HTTP/2·WebSocket 회귀 report |
+| `SEC-017` | `tools/tests/test_vm_lab.py`, `tests/vm/gnuboard5-toolkit.json` | ModSecurity·CRS off/detection/tuned enforce A/B와 정상 browser 오탐 report |
 | `NFR-001`, `NFR-002` | Criterion + k6 regression | 2GB VPS perf artifact |
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |
