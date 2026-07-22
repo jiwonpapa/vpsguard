@@ -131,6 +131,14 @@ fn plan_rejects_site_tree_and_excessive_budgets() {
 }
 
 #[test]
+fn restore_plan_may_preserve_the_current_ingress_topology() {
+    let mut restore = plan("op-restore", OperationKind::Restore);
+    restore.target_topology = restore.source_topology;
+
+    assert!(restore.validate().is_ok());
+}
+
+#[test]
 fn successful_apply_records_ordered_progress_and_releases_lock()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;

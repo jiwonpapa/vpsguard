@@ -52,7 +52,7 @@ impl OperationKind {
                 OperationPhase::Preflight,
                 OperationPhase::Snapshot,
                 OperationPhase::ValidateCandidate,
-                OperationPhase::SwitchIngress,
+                OperationPhase::RestoreOwnedState,
                 OperationPhase::VerifyTarget,
                 OperationPhase::Commit,
             ],
@@ -103,6 +103,21 @@ pub enum SnapshotResource {
     OwnedPath {
         /// 절대 경로입니다. directory 재귀 snapshot은 허용하지 않습니다.
         path: PathBuf,
+    },
+    /// VPSGuard-owned directory의 존재 여부만 보존합니다.
+    OwnedDirectoryPresence {
+        /// 재귀 내용을 읽지 않는 정확한 directory 경로입니다.
+        path: PathBuf,
+    },
+    /// 사용자 소유 tree는 읽지 않고 boundary identity만 보존합니다.
+    ProtectedPathIdentity {
+        /// 허용된 SSH, Nginx, 인증서 또는 site boundary입니다.
+        path: PathBuf,
+    },
+    /// VPSGuard system account의 배포 전 존재 여부입니다.
+    SystemAccount {
+        /// 정확히 `vps-guard`인 account 이름입니다.
+        name: String,
     },
     /// 운영자가 승인한 단일 Nginx ingress 파일입니다.
     IngressFile {
@@ -226,7 +241,11 @@ impl OperationPlan {
         }
         validate_identifier("operation_id", &self.operation_id)?;
         validate_identifier("release_id", &self.release_id)?;
-        if self.operation != OperationKind::Update && self.source_topology == self.target_topology {
+        if !matches!(
+            self.operation,
+            OperationKind::Update | OperationKind::Restore
+        ) && self.source_topology == self.target_topology
+        {
             return Err(OperationContractError::UnchangedTopology);
         }
         validate_budgets(self.operation, self.budgets)?;
@@ -260,12 +279,29 @@ impl SnapshotResource {
     fn validate(&self) -> Result<(), OperationContractError> {
         match self {
             Self::OwnedPath { path } => validate_owned_path(path),
+            Self::OwnedDirectoryPresence { path } => validate_owned_directory(path),
+            Self::ProtectedPathIdentity { path } => validate_protected_path(path),
+            Self::SystemAccount { name } => {
+                if name == "vps-guard" {
+                    Ok(())
+                } else {
+                    Err(OperationContractError::ForeignSystemAccount(name.clone()))
+                }
+            }
             Self::IngressFile { path } => validate_ingress_path(path, false),
             Self::IngressSymlink { path } => validate_ingress_path(path, true),
             Self::Service { unit } => {
                 if matches!(
                     unit.as_str(),
-                    "nginx.service" | "vps-guard-control.service" | "vps-guard-edge.service"
+                    "nginx.service"
+                        | "php8.5-fpm.service"
+                        | "mysql.service"
+                        | "redis-server.service"
+                        | "g7-queue.service"
+                        | "g7-scheduler.service"
+                        | "g7-reverb.service"
+                        | "vps-guard-control.service"
+                        | "vps-guard-edge.service"
                 ) {
                     Ok(())
                 } else {
@@ -303,6 +339,8 @@ pub enum OperationPhase {
     StageRelease,
     /// config, Nginx와 service 후보를 검사합니다.
     ValidateCandidate,
+    /// 검증된 deployment snapshot의 VPSGuard-owned 상태를 복구합니다.
+    RestoreOwnedState,
     /// public ingress 소유자를 짧게 전환합니다.
     SwitchIngress,
     /// 활성 release symlink 또는 service를 교체합니다.
@@ -584,6 +622,9 @@ pub enum OperationContractError {
     /// 허용되지 않은 service입니다.
     #[error("snapshot 허용 범위 밖 service입니다: {0}")]
     ForeignService(String),
+    /// 허용되지 않은 system account입니다.
+    #[error("snapshot 허용 범위 밖 system account입니다: {0}")]
+    ForeignSystemAccount(String),
     /// plan JSON encode 실패입니다.
     #[error("operation plan JSON 처리 실패: {0}")]
     Json(#[from] serde_json::Error),
@@ -968,6 +1009,45 @@ fn validate_owned_path(path: &Path) -> Result<(), OperationContractError> {
         Ok(())
     } else {
         Err(OperationContractError::ForeignSnapshotPath(text))
+    }
+}
+
+fn validate_owned_directory(path: &Path) -> Result<(), OperationContractError> {
+    validate_absolute_file(path)?;
+    let allowed = [
+        "/usr/local/lib/vps-guard/releases",
+        "/usr/local/lib/vps-guard",
+        "/usr/local/libexec/vps-guard",
+        "/etc/systemd/system/vps-guard-control.service.d",
+        "/etc/systemd/system/vps-guard-edge.service.d",
+        "/etc/vps-guard/secrets",
+        "/etc/vps-guard",
+        "/run/vps-guard",
+        "/var/lib/vps-guard",
+    ];
+    if allowed.contains(&path.to_string_lossy().as_ref()) {
+        Ok(())
+    } else {
+        Err(OperationContractError::ForeignSnapshotPath(
+            path.display().to_string(),
+        ))
+    }
+}
+
+fn validate_protected_path(path: &Path) -> Result<(), OperationContractError> {
+    validate_absolute_file(path)?;
+    let allowed = [
+        "/etc/ssh",
+        "/etc/nginx",
+        "/etc/letsencrypt",
+        "/home/g7devops/public_html",
+    ];
+    if allowed.contains(&path.to_string_lossy().as_ref()) {
+        Ok(())
+    } else {
+        Err(OperationContractError::ForeignSnapshotPath(
+            path.display().to_string(),
+        ))
     }
 }
 

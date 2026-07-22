@@ -4,6 +4,7 @@
 
 pub mod atomic_store;
 pub mod command;
+pub mod deployment_state;
 pub mod nftables;
 pub mod operation;
 pub mod plan;
@@ -12,6 +13,10 @@ pub mod tls;
 
 pub use atomic_store::{AtomicJsonStore, StoreError};
 pub use command::{CommandAudit, CommandError, CommandOutput, OwnedProgram, SystemCommandRunner};
+pub use deployment_state::{
+    DEPLOYMENT_SNAPSHOT_SCHEMA_VERSION, DeploymentRestoreDriver, DeploymentStateConfig,
+    DeploymentStateError, DeploymentStateStore, deployment_restore_plan,
+};
 pub use nftables::{NftablesError, OriginFirewallPlan, VpsGuardNftables};
 pub use operation::{
     IngressTopology, OperationBudgets, OperationContractError, OperationDriver,

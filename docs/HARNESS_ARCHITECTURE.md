@@ -56,4 +56,6 @@ bash scripts/ops-harness.sh
 
 ## 후속 이전
 
-현재 `deployment-state.sh`, `g7devops-direct-state.sh`와 cutover remote adapter에는 privileged mutation이 남아 있습니다. 이를 Python으로 번역하지 않고 `guard-system`의 실제 `OperationDriver`로 이전합니다. 기존 fixture와 실제 VPS round trip을 old/new parity oracle로 사용하고 단계별 증거가 통과한 뒤 Shell 구현을 제거합니다.
+`deployment-state.sh`의 first-install snapshot·검증·복원은 `guard-system`의 실제 `DeploymentRestoreDriver`로 이전했습니다. Shell은 기존 `--snapshot`, `--verify`, `--restore` 호출을 Rust CLI로 전달하는 호환 adapter만 소유하며, 기존 schema v1 snapshot도 그대로 읽습니다.
+
+남은 privileged Shell은 public ingress를 직접 변경하는 `g7devops-direct-state.sh`와 cutover remote adapter입니다. 이를 Python으로 번역하지 않고 별도 Rust `OperationDriver`로 이전하며, 기존 fixture와 격리 Ubuntu VM round trip을 parity oracle로 사용합니다.

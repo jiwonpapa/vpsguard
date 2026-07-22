@@ -1,5 +1,6 @@
 //! `vps-guard` 운영 CLI 진입점입니다.
 
+use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -13,8 +14,9 @@ use guard_core::{
     PolicySnapshot,
 };
 use guard_system::{
-    AtomicJsonStore, IngressTopology, MutationPlan, OperationKind, OperationPlan, OperationState,
-    PlannedChange, SnapshotResource,
+    AtomicJsonStore, DeploymentRestoreDriver, DeploymentStateConfig, DeploymentStateStore,
+    IngressTopology, MutationPlan, OperationKind, OperationPlan, OperationState, PlannedChange,
+    SnapshotResource, deployment_restore_plan, execute_operation,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -107,6 +109,33 @@ enum OpsCommand {
         )]
         state: PathBuf,
     },
+    /// VPSGuard-owned first-install snapshot·검증·복원을 실행합니다.
+    DeploymentState {
+        /// deployment state 하위 명령입니다.
+        #[command(subcommand)]
+        command: DeploymentStateCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DeploymentStateCommand {
+    /// 변경 없이 Rust driver의 bounded scope를 출력합니다.
+    Plan,
+    /// 현재 VPSGuard-owned 상태를 snapshot합니다.
+    Snapshot,
+    /// snapshot checksum, machine과 protected boundary를 검증합니다.
+    Verify {
+        /// 검증할 `deploy-*` direct child입니다.
+        snapshot: PathBuf,
+    },
+    /// typed transaction과 자동 rollback으로 snapshot을 복구합니다.
+    Restore {
+        /// 복구할 `deploy-*` direct child입니다.
+        snapshot: PathBuf,
+        /// retry마다 새 값을 사용하는 선택 transaction 식별자입니다.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -190,6 +219,14 @@ enum CliError {
     },
     #[error("로그인 code TTL은 60..=600초여야 합니다: actual={0}")]
     InvalidLoginTtl(u64),
+    #[error(transparent)]
+    DeploymentState(#[from] guard_system::DeploymentStateError),
+    #[error(transparent)]
+    OperationEngine(#[from] guard_system::OperationEngineError),
+    #[error("VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot 확인값이 필요합니다")]
+    MissingRestoreConfirmation,
+    #[error("deployment snapshot 이름이 UTF-8 deploy-* 식별자가 아닙니다: {0}")]
+    InvalidSnapshotName(String),
 }
 
 fn main() -> ExitCode {
@@ -293,6 +330,98 @@ fn execute_ops(command: OpsCommand) -> Result<String, CliError> {
             let state = AtomicJsonStore::<OperationState>::new(state).read()?;
             Ok(serde_json::to_string_pretty(&state)?)
         }
+        OpsCommand::DeploymentState { command } => execute_deployment_state(command),
+    }
+}
+
+fn execute_deployment_state(command: DeploymentStateCommand) -> Result<String, CliError> {
+    let config = deployment_state_config();
+    match command {
+        DeploymentStateCommand::Plan => {
+            let plan = deployment_restore_plan("deployment-restore-plan", "deployment-snapshot");
+            plan.validate()?;
+            Ok(format!(
+                "driver=guard-system\nsnapshot_root={}\nrestore_scope=vpsguard-owned-only\nprotected=ssh,nginx,certificates,g7-site,non-vpsguard-listeners\nplan_sha256={}",
+                config.snapshot_root.display(),
+                plan.sha256()?
+            ))
+        }
+        DeploymentStateCommand::Snapshot => {
+            let mut store = DeploymentStateStore::new(config);
+            let snapshot = store.create_snapshot()?;
+            Ok(format!("snapshot={}", snapshot.display()))
+        }
+        DeploymentStateCommand::Verify { snapshot } => {
+            let mut store = DeploymentStateStore::new(config);
+            store.verify_snapshot(&snapshot)?;
+            Ok(format!("protected=pass\nsnapshot={}", snapshot.display()))
+        }
+        DeploymentStateCommand::Restore {
+            snapshot,
+            operation_id,
+        } => {
+            if env::var("VPS_GUARD_RESTORE_CONFIRM").as_deref() != Ok("restore-deployment-snapshot")
+            {
+                return Err(CliError::MissingRestoreConfirmation);
+            }
+            let snapshot_id = snapshot
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| name.starts_with("deploy-"))
+                .ok_or_else(|| CliError::InvalidSnapshotName(snapshot.display().to_string()))?;
+            let operation_id = operation_id.unwrap_or_else(|| {
+                format!("deployment-restore-{snapshot_id}-{}", std::process::id())
+            });
+            let plan = deployment_restore_plan(&operation_id, snapshot_id);
+            let (state_path, lock_path) = deployment_operation_paths(&config, &operation_id);
+            let checkpoint_path = state_path.with_file_name("rollback.json");
+            let store = DeploymentStateStore::new(config);
+            let mut driver =
+                DeploymentRestoreDriver::with_checkpoint(store, &snapshot, checkpoint_path)?;
+            let state = execute_operation(&plan, &state_path, lock_path, &mut driver)?;
+            let rollback_snapshot = driver
+                .rollback_snapshot()
+                .map_or_else(|| "none".to_owned(), |path| path.display().to_string());
+            Ok(format!(
+                "restore=pass\nsnapshot={}\ntransaction_status={:?}\ntransaction_state={}\nrollback_snapshot={rollback_snapshot}",
+                snapshot.display(),
+                state.status,
+                state_path.display()
+            ))
+        }
+    }
+}
+
+fn deployment_state_config() -> DeploymentStateConfig {
+    let snapshot_root = env::var_os("VPS_GUARD_SNAPSHOT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/backups/vps-guard/deployments"));
+    match env::var_os("VPS_GUARD_TEST_ROOT") {
+        Some(root) => DeploymentStateConfig::fixture(PathBuf::from(root), snapshot_root),
+        None => DeploymentStateConfig::production(snapshot_root),
+    }
+}
+
+fn deployment_operation_paths(
+    config: &DeploymentStateConfig,
+    operation_id: &str,
+) -> (PathBuf, PathBuf) {
+    if config.test_root.is_some() {
+        (
+            config
+                .snapshot_root
+                .join("transactions")
+                .join(operation_id)
+                .join("state.json"),
+            config.snapshot_root.join("operation.lock"),
+        )
+    } else {
+        (
+            PathBuf::from("/var/backups/vps-guard/transactions")
+                .join(operation_id)
+                .join("state.json"),
+            PathBuf::from("/run/vps-guard/operation.lock"),
+        )
     }
 }
 

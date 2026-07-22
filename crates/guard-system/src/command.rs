@@ -18,6 +18,16 @@ pub enum OwnedProgram {
     Systemctl,
     /// Nginx 후보 설정 검사입니다.
     Nginx,
+    /// listener inventory를 읽는 iproute2 CLI입니다.
+    Ss,
+    /// system account와 group을 조회합니다.
+    Getent,
+    /// system account process를 조회합니다.
+    Pgrep,
+    /// VPSGuard system account를 제거합니다.
+    Userdel,
+    /// VPSGuard system group을 제거합니다.
+    Groupdel,
 }
 
 impl OwnedProgram {
@@ -26,6 +36,11 @@ impl OwnedProgram {
             Self::Nft => "/usr/sbin/nft",
             Self::Systemctl => "/usr/bin/systemctl",
             Self::Nginx => "/usr/sbin/nginx",
+            Self::Ss => "/usr/bin/ss",
+            Self::Getent => "/usr/bin/getent",
+            Self::Pgrep => "/usr/bin/pgrep",
+            Self::Userdel => "/usr/sbin/userdel",
+            Self::Groupdel => "/usr/sbin/groupdel",
         }
     }
 }
@@ -90,6 +105,25 @@ impl SystemCommandRunner {
         stdin: Option<&[u8]>,
         sensitive_indices: &[usize],
     ) -> Result<CommandOutput, CommandError> {
+        self.run_accepting(program, arguments, stdin, sensitive_indices, &[0])
+    }
+
+    /// 명령을 실행하고 계약에 명시된 exit code를 정상 결과로 반환합니다.
+    ///
+    /// `systemctl is-active`, `getent`처럼 정상적인 부재 상태를 non-zero로
+    /// 보고하는 read 명령에만 사용합니다.
+    ///
+    /// # Errors
+    ///
+    /// process I/O 또는 허용되지 않은 exit code를 반환합니다.
+    pub fn run_accepting(
+        &self,
+        program: OwnedProgram,
+        arguments: &[String],
+        stdin: Option<&[u8]>,
+        sensitive_indices: &[usize],
+        accepted_exit_codes: &[i32],
+    ) -> Result<CommandOutput, CommandError> {
         let started = Instant::now();
         let mut child = Command::new(program.path())
             .args(arguments)
@@ -124,7 +158,11 @@ impl SystemCommandRunner {
             exit_code: output.status.code(),
             duration_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         };
-        if !output.status.success() {
+        if !output
+            .status
+            .code()
+            .is_some_and(|code| accepted_exit_codes.contains(&code))
+        {
             return Err(CommandError::Failed {
                 program: program.path().to_owned(),
                 exit_code: output.status.code(),
@@ -145,12 +183,17 @@ fn bounded_text(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandAudit, OwnedProgram};
+    use super::{CommandAudit, OwnedProgram, bounded_text};
 
     #[test]
     fn program_paths_are_fixed_and_audit_is_serializable() -> Result<(), Box<dyn std::error::Error>>
     {
         assert_eq!(OwnedProgram::Nft.path(), "/usr/sbin/nft");
+        assert_eq!(OwnedProgram::Ss.path(), "/usr/bin/ss");
+        assert_eq!(OwnedProgram::Getent.path(), "/usr/bin/getent");
+        assert_eq!(OwnedProgram::Pgrep.path(), "/usr/bin/pgrep");
+        assert_eq!(OwnedProgram::Userdel.path(), "/usr/sbin/userdel");
+        assert_eq!(OwnedProgram::Groupdel.path(), "/usr/sbin/groupdel");
         let audit = CommandAudit {
             occurred_at: "2026-07-14T00:00:00Z".to_owned(),
             program: OwnedProgram::Systemctl.path().to_owned(),
@@ -162,5 +205,16 @@ mod tests {
         assert!(!json.contains("secret-token"));
         assert!(json.contains("***"));
         Ok(())
+    }
+
+    #[test]
+    fn stderr_text_is_lossy_utf8_and_bounded() {
+        let mut bytes = vec![b'x'; 5_000];
+        bytes[0] = 0xff;
+        let bounded = bounded_text(&bytes);
+
+        assert!(bounded.starts_with('\u{fffd}'));
+        assert!(bounded.len() <= 4_098);
+        assert!(!bounded.contains("secret-token"));
     }
 }
