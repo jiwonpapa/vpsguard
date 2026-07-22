@@ -13,8 +13,8 @@ const EDGE_SERVICE: &str = "vps-guard-edge.service";
 const NGINX_SERVICE: &str = "nginx.service";
 
 #[test]
-fn ingress_cli_round_trip_uses_one_typed_transaction_boundary(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn ingress_cli_round_trip_uses_one_typed_transaction_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
     let common = fixture.common_env();
     let snapshot_output = run(
