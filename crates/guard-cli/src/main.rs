@@ -15,8 +15,11 @@ use guard_core::{
 };
 use guard_system::{
     AtomicJsonStore, DeploymentRestoreDriver, DeploymentStateConfig, DeploymentStateStore,
-    IngressTopology, MutationPlan, OperationKind, OperationPlan, OperationState, PlannedChange,
-    SnapshotResource, deployment_restore_plan, execute_operation,
+    IngressApplyDriver, IngressRestoreDriver, IngressStateConfig, IngressStateStore,
+    IngressSwitchConfig, IngressSwitchDirection, IngressSwitchDriver, IngressTopology,
+    MutationPlan, OperationKind, OperationPlan, OperationState, PlannedChange, SnapshotResource,
+    deployment_restore_plan, execute_operation, ingress_apply_plan, ingress_restore_plan,
+    ingress_switch_plan,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -115,6 +118,18 @@ enum OpsCommand {
         #[command(subcommand)]
         command: DeploymentStateCommand,
     },
+    /// public ingress exact snapshot·검증·복원을 실행합니다.
+    IngressState {
+        /// ingress state 하위 명령입니다.
+        #[command(subcommand)]
+        command: IngressStateCommand,
+    },
+    /// 승인된 Nginx ingress 후보를 typed transaction으로 전환합니다.
+    IngressSwitch {
+        /// ingress switch 하위 명령입니다.
+        #[command(subcommand)]
+        command: IngressSwitchCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -136,6 +151,74 @@ enum DeploymentStateCommand {
         #[arg(long)]
         operation_id: Option<String>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum IngressStateCommand {
+    /// 변경 없이 Rust driver의 bounded scope를 출력합니다.
+    Plan,
+    /// 현재 public ingress 상태를 snapshot합니다.
+    Snapshot {
+        /// 운영 snapshot 또는 rollback checkpoint label입니다.
+        #[arg(long, default_value = "direct")]
+        label: String,
+    },
+    /// snapshot checksum, machine과 protected listener를 검증합니다.
+    Verify {
+        /// 검증할 `direct-*` direct child입니다.
+        snapshot: PathBuf,
+    },
+    /// typed transaction과 자동 rollback으로 ingress snapshot을 복구합니다.
+    Restore {
+        /// 복구할 `direct-*` direct child입니다.
+        snapshot: PathBuf,
+        /// retry마다 같은 값을 사용하는 선택 transaction 식별자입니다.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
+    /// staged direct TLS 후보를 public ingress에 적용합니다.
+    ApplyDirect {
+        /// `/tmp/vpsguard-direct.*` staging directory입니다.
+        #[arg(long)]
+        stage: PathBuf,
+        /// 재개에 사용할 선택 transaction 식별자입니다.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum IngressSwitchCommand {
+    /// 변경 없이 방향·경로·시간 예산 plan을 출력합니다.
+    Plan {
+        /// 전환 방향입니다.
+        #[arg(long, value_enum)]
+        direction: IngressSwitchDirectionArg,
+    },
+    /// 후보를 적용하고 probe 실패 시 자동 rollback합니다.
+    Apply {
+        /// 전환 방향입니다.
+        #[arg(long, value_enum)]
+        direction: IngressSwitchDirectionArg,
+        /// 재개에 사용할 선택 transaction 식별자입니다.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum IngressSwitchDirectionArg {
+    ToEdge,
+    ToNginx,
+}
+
+impl From<IngressSwitchDirectionArg> for IngressSwitchDirection {
+    fn from(value: IngressSwitchDirectionArg) -> Self {
+        match value {
+            IngressSwitchDirectionArg::ToEdge => Self::ToEdge,
+            IngressSwitchDirectionArg::ToNginx => Self::ToNginx,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -222,11 +305,21 @@ enum CliError {
     #[error(transparent)]
     DeploymentState(#[from] guard_system::DeploymentStateError),
     #[error(transparent)]
+    IngressState(#[from] guard_system::IngressStateError),
+    #[error(transparent)]
     OperationEngine(#[from] guard_system::OperationEngineError),
     #[error("VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot 확인값이 필요합니다")]
     MissingRestoreConfirmation,
+    #[error("VPS_GUARD_DIRECT_RESTORE_CONFIRM=restore-direct-snapshot 확인값이 필요합니다")]
+    MissingIngressRestoreConfirmation,
+    #[error("VPS_GUARD_INGRESS_CONFIRM이 요청 방향과 일치해야 합니다: expected={0}")]
+    MissingIngressSwitchConfirmation(&'static str),
+    #[error("VPS_GUARD_DIRECT_CONFIRM=g7devops:direct-tls 확인값이 필요합니다")]
+    MissingDirectApplyConfirmation,
     #[error("deployment snapshot 이름이 UTF-8 deploy-* 식별자가 아닙니다: {0}")]
     InvalidSnapshotName(String),
+    #[error("ingress snapshot 이름이 UTF-8 direct-* 식별자가 아닙니다: {0}")]
+    InvalidIngressSnapshotName(String),
 }
 
 fn main() -> ExitCode {
@@ -331,6 +424,176 @@ fn execute_ops(command: OpsCommand) -> Result<String, CliError> {
             Ok(serde_json::to_string_pretty(&state)?)
         }
         OpsCommand::DeploymentState { command } => execute_deployment_state(command),
+        OpsCommand::IngressState { command } => execute_ingress_state(command),
+        OpsCommand::IngressSwitch { command } => execute_ingress_switch(command),
+    }
+}
+
+fn execute_ingress_switch(command: IngressSwitchCommand) -> Result<String, CliError> {
+    let (direction_arg, apply, operation_id) = match command {
+        IngressSwitchCommand::Plan { direction } => (direction, false, None),
+        IngressSwitchCommand::Apply {
+            direction,
+            operation_id,
+        } => (direction, true, operation_id),
+    };
+    let direction: IngressSwitchDirection = direction_arg.into();
+    let expected = match direction {
+        IngressSwitchDirection::ToEdge => "to-edge",
+        IngressSwitchDirection::ToNginx => "to-nginx",
+    };
+    let config = ingress_switch_config();
+    let operation_id = operation_id.unwrap_or_else(|| {
+        format!(
+            "ingress-switch-{}-{}",
+            expected.trim_start_matches("to-"),
+            std::process::id()
+        )
+    });
+    let plan = ingress_switch_plan(&operation_id, direction, &config);
+    plan.validate()?;
+    if !apply {
+        return Ok(format!(
+            "driver=guard-system\ndirection={expected}\nactive={}\nedge_candidate={}\nnginx_candidate={}\nplan_sha256={}",
+            config.active_config.display(),
+            config.edge_candidate.display(),
+            config.nginx_candidate.display(),
+            plan.sha256()?
+        ));
+    }
+    if env::var("VPS_GUARD_INGRESS_CONFIRM").as_deref() != Ok(expected) {
+        return Err(CliError::MissingIngressSwitchConfirmation(expected));
+    }
+    let transaction = config.backup_root.join("transactions").join(&operation_id);
+    let state_path = transaction.join("state.json");
+    let checkpoint = transaction.join("rollback.json");
+    let lock_path = if config.state.test_root.is_some() {
+        config.backup_root.join("operation.lock")
+    } else {
+        PathBuf::from("/run/vps-guard/operation.lock")
+    };
+    let mut driver = IngressSwitchDriver::new(config, direction, checkpoint)?;
+    let state = execute_operation(&plan, &state_path, lock_path, &mut driver)?;
+    let rollback = driver
+        .rollback_snapshot()
+        .map_or_else(|| "none".to_owned(), |path| path.display().to_string());
+    Ok(format!(
+        "ingress_switch=pass\ndirection={expected}\ntransaction_status={:?}\ntransaction_state={}\nrollback_snapshot={rollback}",
+        state.status,
+        state_path.display()
+    ))
+}
+
+fn execute_ingress_state(command: IngressStateCommand) -> Result<String, CliError> {
+    let config = ingress_state_config();
+    match command {
+        IngressStateCommand::Plan => {
+            let plan = ingress_restore_plan(
+                "ingress-restore-plan",
+                "ingress-snapshot",
+                IngressTopology::NginxPublic,
+                IngressTopology::VpsGuardPublic,
+            );
+            plan.validate()?;
+            Ok(format!(
+                "driver=guard-system\nsnapshot_root={}\nrestore_scope=approved-ingress-only\nprotected=ssh,certificates,site,non-web-listeners\nplan_sha256={}",
+                config.snapshot_root.display(),
+                plan.sha256()?
+            ))
+        }
+        IngressStateCommand::Snapshot { label } => {
+            let mut store = IngressStateStore::new(config);
+            let snapshot = store.create_snapshot(&label)?;
+            Ok(format!("snapshot={}", snapshot.display()))
+        }
+        IngressStateCommand::Verify { snapshot } => {
+            let mut store = IngressStateStore::new(config);
+            store.verify_snapshot(&snapshot)?;
+            Ok(format!("protected=pass\nsnapshot={}", snapshot.display()))
+        }
+        IngressStateCommand::Restore {
+            snapshot,
+            operation_id,
+        } => {
+            if env::var("VPS_GUARD_DIRECT_RESTORE_CONFIRM").as_deref()
+                != Ok("restore-direct-snapshot")
+            {
+                return Err(CliError::MissingIngressRestoreConfirmation);
+            }
+            let snapshot_id = snapshot
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| name.starts_with("direct-"))
+                .ok_or_else(|| {
+                    CliError::InvalidIngressSnapshotName(snapshot.display().to_string())
+                })?;
+            let mut store = IngressStateStore::new(config.clone());
+            let source = store.current_topology()?;
+            let target = store.snapshot_topology(&snapshot)?;
+            let operation_id = operation_id
+                .unwrap_or_else(|| format!("ingress-restore-{snapshot_id}-{}", std::process::id()));
+            let plan = ingress_restore_plan(&operation_id, snapshot_id, source, target);
+            let (state_path, lock_path) = ingress_operation_paths(&config, &operation_id);
+            let checkpoint_path = state_path.with_file_name("rollback.json");
+            let mut driver =
+                IngressRestoreDriver::with_checkpoint(store, &snapshot, checkpoint_path)?;
+            let state = execute_operation(&plan, &state_path, lock_path, &mut driver)?;
+            let rollback_snapshot = driver
+                .rollback_snapshot()
+                .map_or_else(|| "none".to_owned(), |path| path.display().to_string());
+            Ok(format!(
+                "restore=pass\nsnapshot={}\ntransaction_status={:?}\ntransaction_state={}\nrollback_snapshot={rollback_snapshot}",
+                snapshot.display(),
+                state.status,
+                state_path.display()
+            ))
+        }
+        IngressStateCommand::ApplyDirect {
+            stage,
+            operation_id,
+        } => {
+            if env::var("VPS_GUARD_DIRECT_CONFIRM").as_deref() != Ok("g7devops:direct-tls") {
+                return Err(CliError::MissingDirectApplyConfirmation);
+            }
+            let operation_id = operation_id
+                .unwrap_or_else(|| format!("direct-ingress-apply-{}", std::process::id()));
+            let (state_path, lock_path) = ingress_operation_paths(&config, &operation_id);
+            let transaction = state_path.parent().ok_or_else(|| {
+                CliError::InvalidIngressSnapshotName(state_path.display().to_string())
+            })?;
+            let candidate_store =
+                AtomicJsonStore::<PathBuf>::new(transaction.join("candidate.json"));
+            let mut store = IngressStateStore::new(config);
+            let candidate = if candidate_store.path().exists() {
+                candidate_store.read()?
+            } else {
+                let candidate = store.create_direct_candidate_snapshot(&stage)?;
+                candidate_store.write(&candidate)?;
+                candidate
+            };
+            let candidate_id = candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    CliError::InvalidIngressSnapshotName(candidate.display().to_string())
+                })?;
+            let plan = ingress_apply_plan(&operation_id, candidate_id);
+            let mut driver = IngressApplyDriver::with_checkpoint(
+                store,
+                &candidate,
+                transaction.join("rollback.json"),
+            )?;
+            let state = execute_operation(&plan, &state_path, lock_path, &mut driver)?;
+            let rollback = driver
+                .rollback_snapshot()
+                .map_or_else(|| "none".to_owned(), |path| path.display().to_string());
+            Ok(format!(
+                "direct_apply=pass\ncandidate={}\ntransaction_status={:?}\ntransaction_state={}\nrollback_snapshot={rollback}",
+                candidate.display(),
+                state.status,
+                state_path.display()
+            ))
+        }
     }
 }
 
@@ -399,6 +662,81 @@ fn deployment_state_config() -> DeploymentStateConfig {
     match env::var_os("VPS_GUARD_TEST_ROOT") {
         Some(root) => DeploymentStateConfig::fixture(PathBuf::from(root), snapshot_root),
         None => DeploymentStateConfig::production(snapshot_root),
+    }
+}
+
+fn ingress_state_config() -> IngressStateConfig {
+    let snapshot_root = env::var_os("VPS_GUARD_DIRECT_SNAPSHOT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/backups/vps-guard/ingress"));
+    let mut config = match env::var_os("VPS_GUARD_TEST_ROOT") {
+        Some(root) => IngressStateConfig::fixture(
+            PathBuf::from(root),
+            env::var_os("VPS_GUARD_FAKE_STATE_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| snapshot_root.join("fixture-state")),
+            snapshot_root,
+        ),
+        None => IngressStateConfig::production(snapshot_root),
+    };
+    config.fixture_cutover_ms = env::var("VPS_GUARD_TEST_CUTOVER_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        .saturating_mul(1_000);
+    config
+}
+
+fn ingress_switch_config() -> IngressSwitchConfig {
+    let probe_url = env::var("VPS_GUARD_INGRESS_PROBE_URL").unwrap_or_default();
+    let mut config = match env::var_os("VPS_GUARD_TEST_ROOT") {
+        Some(root) => IngressSwitchConfig::fixture(
+            PathBuf::from(root),
+            env::var_os("VPS_GUARD_FAKE_STATE_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-fixture-state")),
+            env::var_os("VPS_GUARD_BACKUP_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-fixture-backups")),
+        ),
+        None => IngressSwitchConfig::production(probe_url),
+    };
+    if let Some(path) = env::var_os("VPS_GUARD_NGINX_ACTIVE") {
+        config.active_config = PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_NGINX_EDGE_CANDIDATE") {
+        config.edge_candidate = PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_NGINX_BYPASS_CANDIDATE") {
+        config.nginx_candidate = PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_INGRESS_STAGE") {
+        config.stage_root = Some(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_BACKUP_ROOT") {
+        config.backup_root = PathBuf::from(path);
+    }
+    config.fixture_probe_failure = env::var("VPS_GUARD_FAKE_CURL_FAIL").as_deref() == Ok("1");
+    config
+}
+
+fn ingress_operation_paths(config: &IngressStateConfig, operation_id: &str) -> (PathBuf, PathBuf) {
+    if config.test_root.is_some() {
+        (
+            config
+                .snapshot_root
+                .join("transactions")
+                .join(operation_id)
+                .join("state.json"),
+            config.snapshot_root.join("operation.lock"),
+        )
+    } else {
+        (
+            PathBuf::from("/var/backups/vps-guard/transactions")
+                .join(operation_id)
+                .join("state.json"),
+            PathBuf::from("/run/vps-guard/operation.lock"),
+        )
     }
 }
 
@@ -568,7 +906,10 @@ fn shadow_plan(config: &GuardConfig) -> MutationPlan {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_config, shadow_plan};
+    use super::{
+        IngressStateCommand, IngressSwitchCommand, IngressSwitchDirectionArg,
+        execute_ingress_state, execute_ingress_switch, read_config, shadow_plan,
+    };
 
     #[test]
     fn smoke_config_produces_safe_plan() -> Result<(), Box<dyn std::error::Error>> {
@@ -576,6 +917,25 @@ mod tests {
             .join("../../configs/vps-guard.smoke.toml");
         let config = read_config(&config_path)?;
         assert_eq!(shadow_plan(&config).validate(), Ok(()));
+        Ok(())
+    }
+
+    #[test]
+    fn ingress_plans_use_typed_drivers() -> Result<(), Box<dyn std::error::Error>> {
+        let state = execute_ingress_state(IngressStateCommand::Plan)?;
+        assert!(state.contains("driver=guard-system"));
+        assert!(state.contains("restore_scope=approved-ingress-only"));
+
+        let switch = execute_ingress_switch(IngressSwitchCommand::Plan {
+            direction: IngressSwitchDirectionArg::ToEdge,
+        })?;
+        assert!(switch.contains("driver=guard-system"));
+        assert!(switch.contains("direction=to-edge"));
+
+        let bypass = execute_ingress_switch(IngressSwitchCommand::Plan {
+            direction: IngressSwitchDirectionArg::ToNginx,
+        })?;
+        assert!(bypass.contains("direction=to-nginx"));
         Ok(())
     }
 }

@@ -22,9 +22,6 @@ fi
 for file in \
   BUILD-INFO.txt \
   SHA256SUMS \
-  scripts/operation-lock.sh \
-  scripts/state-common.sh \
-  scripts/g7devops-direct-state.sh \
   scripts/cutover-g7devops-direct-remote.sh \
   certbot/vps-guard-deploy-hook \
   g7devops/vps-guard.direct.toml \
@@ -63,11 +60,6 @@ scp -q "${bundle}/g7devops/certbot/deploy-hook" \
   "${target}:${stage}/g7-certbot-deploy-hook"
 scp -q "${bundle}/scripts/cutover-g7devops-direct-remote.sh" \
   "${target}:${stage}/cutover-direct.sh"
-scp -q "${bundle}/scripts/operation-lock.sh" \
-  "${target}:${stage}/operation-lock.sh"
-scp -q "${bundle}/scripts/state-common.sh" "${target}:${stage}/state-common.sh"
-scp -q "${bundle}/scripts/g7devops-direct-state.sh" \
-  "${target}:${stage}/direct-state.sh"
 # shellcheck disable=SC2029 # validated mktemp path intentionally expands locally
 ssh "${target}" \
   "sudo VPS_GUARD_DIRECT_CONFIRM=g7devops:direct-tls bash '${stage}/cutover-direct.sh' '${stage}'"

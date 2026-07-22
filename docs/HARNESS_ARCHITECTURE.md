@@ -58,4 +58,4 @@ bash scripts/ops-harness.sh
 
 `deployment-state.sh`의 first-install snapshot·검증·복원은 `guard-system`의 실제 `DeploymentRestoreDriver`로 이전했습니다. Shell은 기존 `--snapshot`, `--verify`, `--restore` 호출을 Rust CLI로 전달하는 호환 adapter만 소유하며, 기존 schema v1 snapshot도 그대로 읽습니다.
 
-남은 privileged Shell은 public ingress를 직접 변경하는 `g7devops-direct-state.sh`와 cutover remote adapter입니다. 이를 Python으로 번역하지 않고 별도 Rust `OperationDriver`로 이전하며, 기존 fixture와 격리 Ubuntu VM round trip을 parity oracle로 사용합니다.
+public ingress의 direct apply·restore와 Nginx edge/bypass 전환도 `guard-system`의 typed `OperationDriver`로 이전했습니다. Rust가 exact-file snapshot, 단일 operation lock, staged candidate 설치, service 순서, public header read-back과 실패 rollback을 소유합니다. `g7devops-direct-state.sh`, `ingress-transaction.sh`와 원격 adapter는 기존 명령 호환·release hash·읽기 전용 preflight·SSH transport만 담당합니다. 격리 fixture 왕복과 fault rollback은 자동 검증하며, Ubuntu VM 20회 timeline은 별도 release 증거로 남깁니다.

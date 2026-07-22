@@ -160,7 +160,7 @@ sudo VPS_GUARD_INGRESS_CONFIRM=to-nginx \
   bash scripts/ingress-transaction.sh --to-nginx --apply
 ```
 
-후보 설치, `nginx -t`, service 전환과 외부 probe 중 하나라도 실패하면 이전 active include를 복구합니다.
+Rust `IngressSwitchDriver`가 active Nginx, active VPSGuard config와 edge/bypass 후보 2개를 exact-file snapshot으로 보존합니다. staged 후보 설치, `nginx -t`, edge 준비, 짧은 active 교체, service 전환과 공개 `X-VPS-Guard` header read-back 중 하나라도 실패하면 네 파일과 edge 상태를 transaction 직전 값으로 자동 복구합니다. Shell은 기존 CLI 호환과 원격 read-only preflight만 담당합니다.
 
 ## Update와 uninstall
 

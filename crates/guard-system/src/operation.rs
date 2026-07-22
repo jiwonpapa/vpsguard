@@ -1004,6 +1004,7 @@ fn validate_owned_path(path: &Path) -> Result<(), OperationContractError> {
         "/usr/local/bin/vps-guard-edge",
         "/usr/local/lib/vps-guard/current",
         "/usr/lib/tmpfiles.d/vps-guard.conf",
+        "/etc/letsencrypt/renewal-hooks/deploy/vps-guard",
     ];
     if allowed.iter().any(|prefix| text.starts_with(prefix)) || exact.contains(&text.as_str()) {
         Ok(())
@@ -1058,6 +1059,7 @@ fn validate_ingress_path(path: &Path, symlink: bool) -> Result<(), OperationCont
     } else {
         path.starts_with("/etc/nginx/sites-available/")
             || path.starts_with("/etc/nginx/sites-enabled/")
+            || path.starts_with("/etc/nginx/conf.d/")
     };
     if allowed {
         Ok(())

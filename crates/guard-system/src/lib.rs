@@ -5,6 +5,7 @@
 pub mod atomic_store;
 pub mod command;
 pub mod deployment_state;
+pub mod ingress_state;
 pub mod nftables;
 pub mod operation;
 pub mod plan;
@@ -16,6 +17,11 @@ pub use command::{CommandAudit, CommandError, CommandOutput, OwnedProgram, Syste
 pub use deployment_state::{
     DEPLOYMENT_SNAPSHOT_SCHEMA_VERSION, DeploymentRestoreDriver, DeploymentStateConfig,
     DeploymentStateError, DeploymentStateStore, deployment_restore_plan,
+};
+pub use ingress_state::{
+    INGRESS_SNAPSHOT_SCHEMA_VERSION, IngressApplyDriver, IngressRestoreDriver, IngressStateConfig,
+    IngressStateError, IngressStateStore, IngressSwitchConfig, IngressSwitchDirection,
+    IngressSwitchDriver, ingress_apply_plan, ingress_restore_plan, ingress_switch_plan,
 };
 pub use nftables::{NftablesError, OriginFirewallPlan, VpsGuardNftables};
 pub use operation::{

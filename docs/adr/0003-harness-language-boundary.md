@@ -25,4 +25,4 @@
 - Shell 총량은 3,696줄에서 3,543줄로 감소합니다.
 - Python unit와 language policy가 `shell=True`, `os.system`, 공통 runner 우회, hard-coded production root path, 비표준 library와 Shell 증가를 거부합니다.
 - Python startup과 memory는 개발·CI gate에만 영향을 주므로 edge/control binary와 2GB VPS runtime RSS에는 변화가 없습니다.
-- privileged Shell 제거는 실제 Rust `OperationDriver`와 VPS parity 증거가 준비되는 후속 배치에서 수행합니다.
+- first-install과 public ingress의 privileged mutation은 Rust `OperationDriver`로 이전했습니다. Shell은 호환·transport·읽기 전용 preflight만 남고, 실제 VPS parity는 release gate에서 별도로 수집합니다.

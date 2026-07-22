@@ -36,7 +36,7 @@ echo "mode: ${mode}"
 echo "direction: ${direction}"
 echo "topology: public Nginx TLS -> VPSGuard 127.0.0.1:18080 -> Nginx 127.0.0.1:18081 -> PHP-FPM"
 echo "preserve: SSH, certificates, G7 site data, public Nginx TLS and non-web listeners"
-echo "rollback: exact active Nginx/config backup plus deployment snapshot"
+echo "rollback: Rust typed exact-file snapshot plus automatic rollback"
 
 if [[ "${mode}" == "--plan" ]]; then
   exit 0
@@ -46,8 +46,6 @@ fi
 for required in \
   "${bundle}/BUILD-INFO.txt" \
   "${bundle}/SHA256SUMS" \
-  "${bundle}/scripts/ingress-transaction.sh" \
-  "${bundle}/scripts/operation-lock.sh" \
   "${bundle}/scripts/cutover-g7devops-remote.sh" \
   "${bundle}/g7devops/vps-guard.shadow.toml" \
   "${bundle}/g7devops/vps-guard.ingress.toml" \
@@ -80,8 +78,6 @@ remote_stage="$(ssh "${target}" 'umask 077; mktemp -d /tmp/vpsguard-cutover.XXXX
 scp -q \
   "${bundle}/BUILD-INFO.txt" \
   "${bundle}/SHA256SUMS" \
-  "${bundle}/scripts/ingress-transaction.sh" \
-  "${bundle}/scripts/operation-lock.sh" \
   "${bundle}/scripts/cutover-g7devops-remote.sh" \
   "${target}:${remote_stage}/"
 scp -q "${bundle}/g7devops/vps-guard.shadow.toml" \

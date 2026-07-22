@@ -17,8 +17,8 @@ resolve_binary() {
       return
     fi
   done
-  if [[ -f "${repo_root}/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
-    (cd "${repo_root}" && cargo build -q -p guard-cli)
+  if [[ -f "${repo_root}/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1 &&
+    (cd "${repo_root}" && cargo build -q -p guard-cli); then
     printf '%s\n' "${repo_root}/target/debug/vps-guard"
     return
   fi

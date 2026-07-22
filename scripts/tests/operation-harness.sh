@@ -50,7 +50,7 @@ if (( SECONDS > 30 )); then
   echo "first-install restore fixture exceeded 30 seconds: ${SECONDS}s" >&2
   exit 1
 fi
-if rg -n 'tree_hash|find .*public_html|sha256sum .*public_html' scripts/deployment-state.sh; then
+if grep -En 'tree_hash|find .*public_html|sha256sum .*public_html' scripts/deployment-state.sh; then
   echo "deployment restore still scans the site tree" >&2
   exit 1
 fi
