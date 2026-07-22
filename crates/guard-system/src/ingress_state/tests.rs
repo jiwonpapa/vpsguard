@@ -110,7 +110,9 @@ fn corrupt_checksum_fails_before_mutation() -> Result<(), Box<dyn std::error::Er
     fixture.mutate_to_edge()?;
     fs::write(snapshot.join("g7.conf"), b"tampered\n")?;
 
-    let error = store.restore_snapshot(&snapshot).expect_err("must reject");
+    let Err(error) = store.restore_snapshot(&snapshot) else {
+        return Err("corrupt snapshot restore must be rejected".into());
+    };
     assert!(error.to_string().contains("checksum"));
     assert_eq!(fs::read(fixture.path(ACTIVE_NGINX))?, b"nginx-edge\n");
     Ok(())
@@ -165,7 +167,9 @@ fn symlink_parent_escape_is_rejected() -> Result<(), Box<dyn std::error::Error>>
     fs::remove_dir_all(fixture.root.join("etc/vps-guard"))?;
     symlink(&external, fixture.root.join("etc/vps-guard"))?;
 
-    let error = store.restore_snapshot(&snapshot).expect_err("must reject");
+    let Err(error) = store.restore_snapshot(&snapshot) else {
+        return Err("symlink parent restore must be rejected".into());
+    };
     assert!(error.to_string().contains("symlink parent"));
     assert!(!external.join("config.toml").exists());
     Ok(())
@@ -239,7 +243,10 @@ fn rollback_checkpoint_survives_driver_reconstruction() -> Result<(), Box<dyn st
                 std::time::Duration::from_secs(5),
             )
             .map_err(|issue| issue.cause)?;
-        driver.rollback_snapshot().expect("rollback").to_path_buf()
+        driver
+            .rollback_snapshot()
+            .ok_or("rollback snapshot is missing")?
+            .to_path_buf()
     };
     let driver = IngressRestoreDriver::with_checkpoint(
         IngressStateStore::new(fixture.config()),
