@@ -4,7 +4,7 @@ status: active
 doc_type: implementation-status
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-16
+last_reviewed: 2026-07-20
 ---
 
 # pre-MVP 구현 현황
@@ -13,7 +13,7 @@ last_reviewed: 2026-07-16
 
 현재 상태는 **pre-MVP 개발용 수직 슬라이스**입니다. 기본 Rust 단위 테스트와 loopback smoke는 재현되지만, 요구사항별 자동 증거·실제 VPS 장애 주입·Cloudflare test zone·public 80/443·rollback 인증이 남아 있습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 97개 중 `PLANNED` 10개, `CODE_ONLY` 35개, `AUTO_PASS` 43개, `VPS_PASS` 9개입니다. 즉 87개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 52개입니다. 실제 VPS 증거가 연결된 항목은 `EDGE-001`, `EDGE-002`, `EDGE-005`, `TLS-003`, `TLS-005`, `OPS-001`, `OPS-003`, `OPS-004`, `OPS-009`입니다. 현재 서버가 그 topology를 계속 사용한다는 뜻이 아니라 보존된 운영 증거 수준입니다.
+현재 요구사항 105개 중 `PLANNED` 10개, `CODE_ONLY` 34개, `AUTO_PASS` 52개, `VPS_PASS` 9개입니다. 즉 95개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 61개입니다. 실제 VPS 증거가 연결된 항목은 `EDGE-001`, `EDGE-002`, `EDGE-005`, `TLS-003`, `TLS-005`, `OPS-001`, `OPS-003`, `OPS-004`, `OPS-009`입니다. 현재 서버가 그 topology를 계속 사용한다는 뜻이 아니라 보존된 운영 증거 수준입니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -43,6 +43,8 @@ last_reviewed: 2026-07-16
 | `NFR-003`, `NFR-004`, `NFR-006` 일부 | edge/control 분리, 원자 state, versioned strict schema | integration·atomic store tests |
 | `NFR-007` | workspace `missing_docs = "deny"`, 모든 crate lint 상속, module `//!`, lint 우회 금지, private item 포함 rustdoc warning 거부 | docs gate·repository contract·CI rustdoc build |
 | `NFR-008` 계약 | 표준 protocol·DB driver는 외부 crate/client를 우선하고 project 고유 bounded 불변조건만 직접 구현하는 선택 기준 | ADR 0002; crate별 적용과 2GB binary·RSS 비교는 미완료 |
+| `NFR-009` | Python 표준 라이브러리 기반 argv runner·구조화 오류·redaction, Rust privileged transaction 경계, 얇은 Shell wrapper와 line-count 비증가 ratchet | Python unit·language policy·docs·requirements·ops harness; 실제 Rust `OperationDriver`로 남은 privileged Shell을 교체하는 작업은 후속 배치 |
+| `NFR-010` | dev/test incremental 비활성, dependency debug 정보 제거와 release/evidence 보존 정리 하네스 | Python profile·cleanup·symlink·hard-link 경계 unit와 전체 check; clean rebuild `target` 35.1GiB → 1.4GiB |
 | 요청·오류 상관 추적 | 재시작 고유 request ID를 응답·upstream·detail 저장에 전파하고 request·operation·event 통합 조회와 API cause·event ID 제공 | 실제 VPS journal·Nginx upstream 상관 조회는 미검증 |
 | 운영 로그 일부 | edge/control JSON stdout 로그를 systemd journal이 수집하고 공통 component·event/error code와 unit별 rate limit 적용 | host journald 보존 상태 UI는 미구현 |
 

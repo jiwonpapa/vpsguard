@@ -1,11 +1,24 @@
 # VPSGuard 운영 하네스
 
+거버넌스·fixture·evidence와 로컬·CI 오케스트레이션은 Python 표준 라이브러리를 사용하고, 운영 VPS의 privileged transaction은 Rust가 소유합니다. Shell은 호환 adapter와 bootstrap에만 유지합니다. 세부 경계는 [하네스 언어 아키텍처](HARNESS_ARCHITECTURE.md)를 따르며 운영 VPS에는 Python package나 pip dependency를 설치하지 않습니다.
+
 ## 안전 경계
 
 - 기본 설치와 `g7devops` 배포는 shadow port만 사용합니다.
 - public 80/443, Nginx, Cloudflare와 원본 firewall 변경은 별도 `--apply`와 정확한 확인 변수가 필요합니다.
 - SSH, `/etc/letsencrypt`, 사이트 data, `/etc/vps-guard`, `/var/lib/vps-guard`는 update·uninstall 대상이 아닙니다.
 - 모든 외부 전환은 plan, snapshot, apply, read-back probe, rollback 순서로 실행합니다.
+
+## 로컬 빌드 저장공간
+
+Cargo dev/test는 incremental을 끄고 dependency debug 정보를 제거해 반복 빌드의 디스크 누적을 제한합니다. 정리 하네스는 기본 plan-only이며 `--clean`에서 repository `target` 아래의 재생성 가능한 cache만 삭제합니다. 릴리스 번들과 검증 evidence, 알 수 없는 운영자 파일은 보존합니다.
+
+```bash
+bash scripts/build-storage.sh
+bash scripts/build-storage.sh --clean
+```
+
+2026-07-20 기준 전체 `scripts/check.sh` clean rebuild에서 `target`은 35.1GiB에서 1.4GiB로 감소했습니다. 검증 후 다시 `--clean`하면 보존된 release bundle 약 20MiB만 남습니다.
 
 ## 단일 운영 transaction과 시간 예산
 

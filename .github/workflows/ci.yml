@@ -43,6 +43,8 @@ jobs:
           fi
       - name: Repository contracts
         run: |
+          python3 -W error::ResourceWarning -m unittest discover -s tools/tests -p 'test_*.py'
+          bash scripts/harness-language-gate.sh
           bash scripts/docs-gate.sh
           bash scripts/requirements-gate.sh
           bash scripts/pr-contract-gate.sh

@@ -172,6 +172,8 @@
 - 메모리·map·queue·event와 UI 데이터는 무제한 성장할 수 없습니다.
 - control restart와 policy reload 중 정상 proxy 오류 0건을 목표가 아니라 필수 gate로 둡니다.
 - 성능 예산 변경은 benchmark artifact와 ADR을 요구합니다.
+- 로컬·CI의 Cargo dev/test 산출물은 낮은 debug 정보와 incremental 비활성 profile로 디스크 누적을 제한합니다.
+- 빌드 캐시 정리는 repository `target` 아래의 재생성 가능 항목만 삭제하며 release bundle과 검증 evidence는 보존합니다.
 
 ## 17. 외부 명령과 감사
 
@@ -180,6 +182,10 @@
 - stdin과 secret argument를 출력하지 않습니다.
 - command runner는 fake와 failure injection을 지원합니다.
 - shell, `sudo sh -c`와 임의 command template을 사용자 입력으로 만들지 않습니다.
+- repository 거버넌스, fixture·fault·evidence 생성과 로컬·CI 오케스트레이션은 Python 3.11 이상 표준 라이브러리를 주력 언어로 사용합니다.
+- public ingress, systemd, nftables와 root 소유 파일을 변경하는 production transaction은 Rust typed model과 `guard-system` adapter가 소유합니다. Python은 이를 직접 재구현하지 않습니다.
+- Shell은 portable bootstrap, packaging hook과 기존 호환 adapter의 얇은 진입점으로 제한하고 line-count ratchet으로 신규 상태 머신과 문자열 command 조합의 증가를 차단합니다.
+- 운영 VPS에는 Python package나 pip dependency를 설치하지 않으며 검증된 Rust release artifact만 production mutation을 수행합니다.
 
 ## 18. 설치·업데이트·릴리스
 

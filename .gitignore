@@ -57,6 +57,8 @@ fuzz/corpus/
 
 # Temporary files and caches
 .cache/
+__pycache__/
+*.py[cod]
 tmp/
 *.tmp
 *.swp

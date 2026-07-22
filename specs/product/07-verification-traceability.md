@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: verification-contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-16
+last_reviewed: 2026-07-20
 ---
 
 # 검증 추적표
@@ -125,6 +125,8 @@ last_reviewed: 2026-07-16
 | `NFR-005` | `crates/guard-control/src/api/tests.rs`, error snapshot tests | UI·CLI problem·cause·impact·next action·event ID report |
 | `NFR-007` | workspace lint 상속·module rustdoc gate·`cargo doc -D warnings` | CI rustdoc build artifact |
 | `NFR-008` | dependency decision record + audit·deny·machete | 2GB VPS binary·RSS dependency diff |
+| `NFR-009` | `tools/tests/test_runner.py`, `tools/tests/test_governance.py`, `tools/tests/test_policy.py`, `scripts/harness-language-gate.sh` | Python 없는 운영 VPS에서도 Rust artifact 기반 apply·restore가 동작하는 2GB VM report |
+| `NFR-010` | `tools/tests/test_build_artifacts.py`, `scripts/build-storage.sh`, Cargo dev/test profile gate | 정리 전후 disk 사용량과 release bundle·검증 evidence 보존 report |
 
 ## 4. 품질 게이트
 

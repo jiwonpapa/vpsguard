@@ -1,0 +1,9 @@
+[project]
+name = "vpsguard-harness"
+version = "0.1.0"
+description = "VPSGuard repository governance and verification harness"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.unittest]
+start-directory = "tools/tests"

@@ -103,3 +103,5 @@ NFR-005|AUTO_PASS|crates/guard-control/src/api.rs|crates/guard-control/src/api/t
 NFR-006|AUTO_PASS|crates/guard-core/src/config.rs|crates/guard-core/src/config/tests.rs|-
 NFR-007|AUTO_PASS|Cargo.toml|scripts/docs-gate.sh|-
 NFR-008|CODE_ONLY|docs/adr/0002-edge-integrations-and-service-observability.md|-|-
+NFR-009|AUTO_PASS|tools/vpsguard_harness/policy.py|tools/tests/test_policy.py|-
+NFR-010|AUTO_PASS|Cargo.toml|tools/tests/test_build_artifacts.py|-
