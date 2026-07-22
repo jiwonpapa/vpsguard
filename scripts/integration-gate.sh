@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 evidence_dir="${repo_root}/target-evidence/integration"
 mkdir -p "${evidence_dir}" /tmp/vps-guard-smoke
@@ -51,6 +50,7 @@ cleanup() {
     /tmp/vps-guard-smoke/admin.sock \
     "${evidence_dir}/session.headers" \
     "${evidence_dir}/session.json"
+  bash "${repo_root}/scripts/build-storage.sh" --auto || true
 }
 trap cleanup EXIT
 

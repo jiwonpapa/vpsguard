@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 
 use super::format::{IngressManifest, ServiceRecord};
 use super::{
-    ACTIVE_CONFIG, EDGE_SERVICE, IngressStateError, IngressStateStore, NGINX_SERVICE, io_error,
+    ACTIVE_CONFIG, APACHE_SERVICE, EDGE_SERVICE, IngressStateError, IngressStateStore,
+    NGINX_SERVICE, io_error,
 };
 use crate::OwnedProgram;
 
@@ -320,7 +321,7 @@ impl IngressStateStore {
 }
 
 fn validate_unit(unit: &str) -> Result<(), IngressStateError> {
-    if matches!(unit, EDGE_SERVICE | NGINX_SERVICE) {
+    if matches!(unit, EDGE_SERVICE | NGINX_SERVICE | APACHE_SERVICE) {
         Ok(())
     } else {
         Err(IngressStateError::Contract(format!(

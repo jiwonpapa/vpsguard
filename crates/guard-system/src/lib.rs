@@ -19,9 +19,11 @@ pub use deployment_state::{
     DeploymentStateError, DeploymentStateStore, deployment_restore_plan,
 };
 pub use ingress_state::{
+    ApacheIngressConfig, ApacheIngressDirection, ApacheIngressDriver,
     INGRESS_SNAPSHOT_SCHEMA_VERSION, IngressApplyDriver, IngressRestoreDriver, IngressStateConfig,
     IngressStateError, IngressStateStore, IngressSwitchConfig, IngressSwitchDirection,
-    IngressSwitchDriver, ingress_apply_plan, ingress_restore_plan, ingress_switch_plan,
+    IngressSwitchDriver, apache_ingress_plan, ingress_apply_plan, ingress_restore_plan,
+    ingress_switch_plan,
 };
 pub use nftables::{NftablesError, OriginFirewallPlan, VpsGuardNftables};
 pub use operation::{

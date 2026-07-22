@@ -103,6 +103,7 @@ last_reviewed: 2026-07-22
 | `OPS-008` | `crates/guard-system/tests/command_audit.rs` | masked command log |
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
 | `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh` | 2GB Ubuntu VM 20회 apply·restore의 100ms probe timeline과 단계별 duration report |
+| `OPS-011` | `crates/guard-system/src/ingress_state/apache/tests.rs`, `crates/guard-cli/tests/apache_ingress_cli.rs` | [`gnuboard5` Apache 전환·20회 왕복·rollback report](evidence/gnuboard5-apache-vm-20260722.md) |
 
 ### 3.6 UI, security and NFR
 
@@ -126,10 +127,11 @@ last_reviewed: 2026-07-22
 | `NFR-007` | workspace lint 상속·module rustdoc gate·`cargo doc -D warnings` | CI rustdoc build artifact |
 | `NFR-008` | dependency decision record + audit·deny·machete | 2GB VPS binary·RSS dependency diff |
 | `NFR-009` | `tools/tests/test_runner.py`, `tools/tests/test_governance.py`, `tools/tests/test_policy.py`, `scripts/state-common.sh`, `scripts/harness-language-gate.sh` | Python 없는 운영 VPS에서도 Rust artifact 기반 apply·restore가 동작하는 2GB VM report |
-| `NFR-010` | `tools/tests/test_build_artifacts.py`, `scripts/build-storage.sh`, Cargo dev/test profile gate | 정리 전후 disk 사용량과 release bundle·검증 evidence 보존 report |
+| `NFR-010` | `tools/tests/test_build_artifacts.py`, `scripts/build-storage.sh`, 주요 build gate의 `--auto`, Cargo dev/test profile gate | 임시 산출물 자동 정리 전후 disk 사용량, 4GiB 경고·debug/release/coverage/rustdoc warm cache와 release bundle·검증 evidence 보존 report |
 | `NFR-011` | `tools/tests/test_coverage.py`, `crates/guard-edge/src/response/tests.rs`, `crates/guard-edge/src/startup/tests.rs`, `crates/guard-control/src/provider/tests.rs`, `crates/guard-control/src/runtime/tests.rs`, `scripts/coverage-gate.sh` | versioned LCOV workspace·핵심 production file ratchet artifact |
 | `NFR-012` | `tools/tests/test_dev_check.py`, `tools/vpsguard_harness/dev_check.py`, `scripts/dev-check.sh` | crate/Python/Web scoped check 실행 시간과 merge 전체 gate 결과 |
 | `NFR-013` | `tools/tests/test_commit_contract.py`, `tools/vpsguard_harness/commit_contract.py`, `scripts/commit-contract-gate.sh`, `scripts/pr-contract-gate.sh` | GitHub PR·push event 전체 commit range gate log |
+| `NFR-014` | `tools/tests/test_vm_lab.py`, `tools/vpsguard_harness/vm_lab.py` | [`gnuboard5` host-to-VM direct/guarded 보안 시나리오 report](evidence/gnuboard5-apache-vm-20260722.md) |
 
 ## 4. 품질 게이트
 

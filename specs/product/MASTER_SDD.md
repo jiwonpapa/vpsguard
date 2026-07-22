@@ -48,7 +48,7 @@ VPS Guard 자체는 정상 상태에도 로컬 VPS 최앞단에 존재합니다.
 - Linux x86_64와 aarch64
 - Ubuntu 24.04를 1차 운영 검증 기준으로 사용
 - Nginx를 첫 공개 upstream으로 지원
-- Apache는 기존 월척웹 자산의 호환 시험을 거친 뒤 공개 지원 여부 결정
+- Apache는 `gnuboard5` 격리 VM에서 public TLS 유지형 loopback 체인과 20회 전환·복구 시험을 통과한 뒤 공개 지원 여부 결정
 - Cloudflare DNS zone과 API token을 선택적으로 사용
 - 로컬 방화벽은 nftables를 기준으로 사용
 
@@ -87,6 +87,8 @@ PHP-FPM                 |-- Cloudflare/nftables actions
   v                     +-- guard-agent collectors
 MySQL/Redis                  (OS/PHP/DB/Redis)
 ```
+
+Apache 파일럿에서는 기존 인증서와 public 80/443 소유권을 Apache에 남기고, public vhost가 loopback VPSGuard로 전달한 뒤 별도 loopback Apache origin vhost로 복귀합니다. 이 경로는 `OPS-011` 운영 증거를 얻기 위한 제한된 지원 후보이며 검증 완료 전 범용 Apache 지원으로 표시하지 않습니다.
 
 ### 5.1 `guard-edge`
 

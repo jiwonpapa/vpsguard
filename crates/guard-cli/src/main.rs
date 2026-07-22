@@ -14,10 +14,11 @@ use guard_core::{
     PolicySnapshot,
 };
 use guard_system::{
-    AtomicJsonStore, DeploymentRestoreDriver, DeploymentStateConfig, DeploymentStateStore,
-    IngressApplyDriver, IngressRestoreDriver, IngressStateConfig, IngressStateStore,
-    IngressSwitchConfig, IngressSwitchDirection, IngressSwitchDriver, IngressTopology,
-    MutationPlan, OperationKind, OperationPlan, OperationState, PlannedChange, SnapshotResource,
+    ApacheIngressConfig, ApacheIngressDirection, ApacheIngressDriver, AtomicJsonStore,
+    DeploymentRestoreDriver, DeploymentStateConfig, DeploymentStateStore, IngressApplyDriver,
+    IngressRestoreDriver, IngressStateConfig, IngressStateStore, IngressSwitchConfig,
+    IngressSwitchDirection, IngressSwitchDriver, IngressTopology, MutationPlan, OperationKind,
+    OperationPlan, OperationState, PlannedChange, SnapshotResource, apache_ingress_plan,
     deployment_restore_plan, execute_operation, ingress_apply_plan, ingress_restore_plan,
     ingress_switch_plan,
 };
@@ -130,6 +131,12 @@ enum OpsCommand {
         #[command(subcommand)]
         command: IngressSwitchCommand,
     },
+    /// Apache public TLS 유지형 request path를 typed transaction으로 전환합니다.
+    ApacheIngress {
+        /// Apache ingress 하위 명령입니다.
+        #[command(subcommand)]
+        command: ApacheIngressCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -206,6 +213,43 @@ enum IngressSwitchCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ApacheIngressCommand {
+    /// 변경 없이 방향·경로·시간 예산 plan을 출력합니다.
+    Plan {
+        /// 전환 방향입니다.
+        #[arg(long, value_enum)]
+        direction: ApacheIngressDirectionArg,
+    },
+    /// 후보를 적용하고 Apache configtest 또는 probe 실패 시 자동 rollback합니다.
+    Apply {
+        /// 전환 방향입니다.
+        #[arg(long, value_enum)]
+        direction: ApacheIngressDirectionArg,
+        /// 외부 Linux builder가 만든 `/tmp/vpsguard-apache.*` staging directory입니다.
+        #[arg(long)]
+        stage: Option<PathBuf>,
+        /// 재개에 사용할 선택 transaction 식별자입니다.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ApacheIngressDirectionArg {
+    ToEdge,
+    ToApache,
+}
+
+impl From<ApacheIngressDirectionArg> for ApacheIngressDirection {
+    fn from(value: ApacheIngressDirectionArg) -> Self {
+        match value {
+            ApacheIngressDirectionArg::ToEdge => Self::ToEdge,
+            ApacheIngressDirectionArg::ToApache => Self::ToApache,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum IngressSwitchDirectionArg {
     ToEdge,
@@ -246,6 +290,8 @@ impl From<OpsKindArg> for OperationKind {
 enum TopologyArg {
     NginxPublic,
     VpsGuardPublic,
+    ApachePublic,
+    ApacheGuarded,
 }
 
 impl From<TopologyArg> for IngressTopology {
@@ -253,6 +299,8 @@ impl From<TopologyArg> for IngressTopology {
         match value {
             TopologyArg::NginxPublic => Self::NginxPublic,
             TopologyArg::VpsGuardPublic => Self::VpsGuardPublic,
+            TopologyArg::ApachePublic => Self::ApachePublic,
+            TopologyArg::ApacheGuarded => Self::ApacheGuarded,
         }
     }
 }
@@ -314,6 +362,8 @@ enum CliError {
     MissingIngressRestoreConfirmation,
     #[error("VPS_GUARD_INGRESS_CONFIRM이 요청 방향과 일치해야 합니다: expected={0}")]
     MissingIngressSwitchConfirmation(&'static str),
+    #[error("VPS_GUARD_APACHE_INGRESS_CONFIRM이 요청 방향과 일치해야 합니다: expected={0}")]
+    MissingApacheIngressConfirmation(&'static str),
     #[error("VPS_GUARD_DIRECT_CONFIRM=g7devops:direct-tls 확인값이 필요합니다")]
     MissingDirectApplyConfirmation,
     #[error("deployment snapshot 이름이 UTF-8 deploy-* 식별자가 아닙니다: {0}")]
@@ -426,7 +476,67 @@ fn execute_ops(command: OpsCommand) -> Result<String, CliError> {
         OpsCommand::DeploymentState { command } => execute_deployment_state(command),
         OpsCommand::IngressState { command } => execute_ingress_state(command),
         OpsCommand::IngressSwitch { command } => execute_ingress_switch(command),
+        OpsCommand::ApacheIngress { command } => execute_apache_ingress(command),
     }
+}
+
+fn execute_apache_ingress(command: ApacheIngressCommand) -> Result<String, CliError> {
+    let (direction_arg, apply, stage, operation_id) = match command {
+        ApacheIngressCommand::Plan { direction } => (direction, false, None, None),
+        ApacheIngressCommand::Apply {
+            direction,
+            stage,
+            operation_id,
+        } => (direction, true, stage, operation_id),
+    };
+    let direction: ApacheIngressDirection = direction_arg.into();
+    let expected = match direction {
+        ApacheIngressDirection::ToEdge => "to-edge",
+        ApacheIngressDirection::ToApache => "to-apache",
+    };
+    let mut config = apache_ingress_config();
+    config.stage_root = stage;
+    let operation_id = operation_id.unwrap_or_else(|| {
+        format!(
+            "apache-ingress-{}-{}",
+            expected.trim_start_matches("to-"),
+            std::process::id()
+        )
+    });
+    let plan = apache_ingress_plan(&operation_id, direction, &config);
+    plan.validate()?;
+    if !apply {
+        return Ok(format!(
+            "driver=guard-system\ndirection={expected}\nactive={}\npublic_link={}\nguarded_candidate={}\nbypass_candidate={}\norigin={}\npreserve: SSH, certificate, site data, non-web listeners\nplan_sha256={}",
+            config.active_vhost.display(),
+            config.public_link.display(),
+            config.guarded_candidate.display(),
+            config.bypass_candidate.display(),
+            config.origin_vhost.display(),
+            plan.sha256()?
+        ));
+    }
+    if env::var("VPS_GUARD_APACHE_INGRESS_CONFIRM").as_deref() != Ok(expected) {
+        return Err(CliError::MissingApacheIngressConfirmation(expected));
+    }
+    let transaction = config.backup_root.join("transactions").join(&operation_id);
+    let state_path = transaction.join("state.json");
+    let checkpoint = transaction.join("rollback.json");
+    let lock_path = if config.state.test_root.is_some() {
+        config.backup_root.join("operation.lock")
+    } else {
+        PathBuf::from("/run/vps-guard/operation.lock")
+    };
+    let mut driver = ApacheIngressDriver::new(config, direction, checkpoint)?;
+    let state = execute_operation(&plan, &state_path, lock_path, &mut driver)?;
+    let rollback = driver
+        .rollback_snapshot()
+        .map_or_else(|| "none".to_owned(), |path| path.display().to_string());
+    Ok(format!(
+        "apache_ingress=pass\ndirection={expected}\ntransaction_status={:?}\ntransaction_state={}\nrollback_snapshot={rollback}",
+        state.status,
+        state_path.display()
+    ))
 }
 
 fn execute_ingress_switch(command: IngressSwitchCommand) -> Result<String, CliError> {
@@ -714,6 +824,39 @@ fn ingress_switch_config() -> IngressSwitchConfig {
         config.stage_root = Some(PathBuf::from(path));
     }
     if let Some(path) = env::var_os("VPS_GUARD_BACKUP_ROOT") {
+        config.backup_root = PathBuf::from(path);
+    }
+    config.fixture_probe_failure = env::var("VPS_GUARD_FAKE_CURL_FAIL").as_deref() == Ok("1");
+    config
+}
+
+fn apache_ingress_config() -> ApacheIngressConfig {
+    let probe_url = env::var("VPS_GUARD_APACHE_PROBE_URL").unwrap_or_default();
+    let mut config = match env::var_os("VPS_GUARD_TEST_ROOT") {
+        Some(root) => ApacheIngressConfig::fixture(
+            PathBuf::from(root),
+            env::var_os("VPS_GUARD_FAKE_STATE_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-fixture-state")),
+            env::var_os("VPS_GUARD_APACHE_BACKUP_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-apache-backups")),
+        ),
+        None => ApacheIngressConfig::production(probe_url),
+    };
+    if let Some(path) = env::var_os("VPS_GUARD_APACHE_ACTIVE") {
+        config.active_vhost = PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_APACHE_PUBLIC_LINK") {
+        config.public_link = PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_APACHE_CERTIFICATE") {
+        config.certificate = PathBuf::from(path);
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_APACHE_PROBE_CA") {
+        config.probe_ca_certificate = Some(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("VPS_GUARD_APACHE_BACKUP_ROOT") {
         config.backup_root = PathBuf::from(path);
     }
     config.fixture_probe_failure = env::var("VPS_GUARD_FAKE_CURL_FAIL").as_deref() == Ok("1");

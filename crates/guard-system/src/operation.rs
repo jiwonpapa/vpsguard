@@ -93,6 +93,10 @@ pub enum IngressTopology {
     NginxPublic,
     /// VPSGuard가 public HTTP/TLS를 소유합니다.
     VpsGuardPublic,
+    /// 기존 Apache가 public TLS와 application origin을 직접 제공합니다.
+    ApachePublic,
+    /// Apache가 public TLS를 유지하고 loopback VPSGuard를 요청 경로에 편입합니다.
+    ApacheGuarded,
 }
 
 /// transaction snapshot에 포함할 bounded resource입니다.
@@ -127,6 +131,16 @@ pub enum SnapshotResource {
     /// 승인된 ingress symlink입니다.
     IngressSymlink {
         /// `/etc/nginx/sites-enabled` 아래 symlink 경로입니다.
+        path: PathBuf,
+    },
+    /// 운영자가 승인한 단일 Apache ingress 파일입니다.
+    ApacheIngressFile {
+        /// `/etc/apache2`의 site 또는 conf allowlist 아래 파일입니다.
+        path: PathBuf,
+    },
+    /// 승인된 Apache ingress symlink입니다.
+    ApacheIngressSymlink {
+        /// `/etc/apache2`의 enabled allowlist 아래 symlink 경로입니다.
         path: PathBuf,
     },
     /// VPSGuard 또는 Nginx service 상태입니다.
@@ -290,10 +304,13 @@ impl SnapshotResource {
             }
             Self::IngressFile { path } => validate_ingress_path(path, false),
             Self::IngressSymlink { path } => validate_ingress_path(path, true),
+            Self::ApacheIngressFile { path } => validate_apache_ingress_path(path, false),
+            Self::ApacheIngressSymlink { path } => validate_apache_ingress_path(path, true),
             Self::Service { unit } => {
                 if matches!(
                     unit.as_str(),
                     "nginx.service"
+                        | "apache2.service"
                         | "php8.5-fpm.service"
                         | "mysql.service"
                         | "redis-server.service"
@@ -310,11 +327,17 @@ impl SnapshotResource {
             }
             Self::CertificateFingerprint { path } => {
                 validate_absolute_file(path)?;
-                let allowed_name = matches!(
+                let letsencrypt_name = matches!(
                     path.file_name().and_then(|name| name.to_str()),
                     Some("cert.pem" | "fullchain.pem")
                 );
-                if path.starts_with("/etc/letsencrypt/live/") && allowed_name {
+                let letsencrypt = path.starts_with("/etc/letsencrypt/live/") && letsencrypt_name;
+                let local_certificate = path.starts_with("/etc/ssl/")
+                    && matches!(
+                        path.extension().and_then(|extension| extension.to_str()),
+                        Some("pem" | "crt")
+                    );
+                if letsencrypt || local_certificate {
                     Ok(())
                 } else {
                     Err(OperationContractError::ForeignSnapshotPath(
@@ -1060,6 +1083,27 @@ fn validate_ingress_path(path: &Path, symlink: bool) -> Result<(), OperationCont
         path.starts_with("/etc/nginx/sites-available/")
             || path.starts_with("/etc/nginx/sites-enabled/")
             || path.starts_with("/etc/nginx/conf.d/")
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(OperationContractError::ForeignSnapshotPath(
+            path.display().to_string(),
+        ))
+    }
+}
+
+fn validate_apache_ingress_path(path: &Path, symlink: bool) -> Result<(), OperationContractError> {
+    validate_absolute_file(path)?;
+    let allowed = if symlink {
+        path.starts_with("/etc/apache2/sites-enabled/")
+            || path.starts_with("/etc/apache2/conf-enabled/")
+            || path.starts_with("/etc/apache2/mods-enabled/")
+    } else {
+        path.starts_with("/etc/apache2/sites-available/")
+            || path.starts_with("/etc/apache2/sites-enabled/")
+            || path.starts_with("/etc/apache2/conf-available/")
+            || path.starts_with("/etc/apache2/conf-enabled/")
     };
     if allowed {
         Ok(())

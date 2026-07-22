@@ -2,6 +2,9 @@
 Description=VPSGuard Pingora edge proxy
 After=network-online.target vps-guard-control.service
 Wants=network-online.target vps-guard-control.service
+# OPS-011: allow the required 20 rapid edge/bypass verification starts, then fail closed.
+StartLimitIntervalSec=60s
+StartLimitBurst=30
 
 [Service]
 Type=simple
@@ -17,6 +20,9 @@ LogRateLimitIntervalSec=30s
 LogRateLimitBurst=2000
 Restart=always
 RestartSec=2s
+# OPS-011: Pingora treats SIGINT as bounded fast shutdown for ingress rollback.
+KillSignal=SIGINT
+TimeoutStopSec=4s
 RuntimeDirectory=vps-guard
 RuntimeDirectoryMode=0750
 AmbientCapabilities=CAP_NET_BIND_SERVICE

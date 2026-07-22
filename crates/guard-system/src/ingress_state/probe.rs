@@ -161,8 +161,7 @@ impl IngressStateStore {
         let listeners = output
             .stdout
             .lines()
-            .filter(|line| !matches!(listener_port(line), Some(80 | 443)))
-            .map(str::to_owned)
+            .filter_map(protected_listener_endpoint)
             .collect();
         self.record_audit(output.audit);
         Ok(listeners)
@@ -193,4 +192,37 @@ fn listener_port(line: &str) -> Option<u16> {
         .nth(3)
         .and_then(|address| address.rsplit_once(':'))
         .and_then(|(_, port)| port.parse().ok())
+}
+
+fn protected_listener_endpoint(line: &str) -> Option<String> {
+    let endpoint = line.split_whitespace().nth(3)?;
+    let port = listener_port(line)?;
+    if matches!(port, 80 | 443 | 18080 | 18081) {
+        None
+    } else {
+        Some(endpoint.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::protected_listener_endpoint;
+
+    #[test]
+    fn ops_011_listener_identity_ignores_process_pid_and_owned_web_ports() {
+        let before = "LISTEN 0 511 *:22 *:* users:((\"sshd\",pid=101,fd=3))";
+        let after = "LISTEN 0 511 *:22 *:* users:((\"sshd\",pid=202,fd=3))";
+        assert_eq!(protected_listener_endpoint(before), Some("*:22".to_owned()));
+        assert_eq!(protected_listener_endpoint(after), Some("*:22".to_owned()));
+        assert_eq!(
+            protected_listener_endpoint("LISTEN 0 511 127.0.0.1:3306 0.0.0.0:*"),
+            Some("127.0.0.1:3306".to_owned())
+        );
+        for port in [80, 443, 18080, 18081] {
+            assert_eq!(
+                protected_listener_endpoint(&format!("LISTEN 0 511 127.0.0.1:{port} 0.0.0.0:*")),
+                None
+            );
+        }
+    }
 }

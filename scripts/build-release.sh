@@ -8,6 +8,7 @@ version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | he
 bundle="${repo_root}/target/release-bundle/${target}/vpsguard-${version}"
 
 cd "${repo_root}"
+trap 'bash scripts/build-storage.sh --auto || true' EXIT
 (cd web && bun ci && bun run check)
 "${build_tool}" build --locked --release --target "${target}" \
   -p guard-cli -p guard-control -p guard-edge
@@ -18,13 +19,12 @@ mkdir -p "${bundle}/bin" \
   "${bundle}/systemd-examples" \
   "${bundle}/tmpfiles" "${bundle}/certbot" "${bundle}/scripts" "${bundle}/sbom" \
   "${bundle}/g7devops/nginx" "${bundle}/g7devops/systemd" \
-  "${bundle}/g7devops/certbot"
+  "${bundle}/g7devops/certbot" "${bundle}/gnuboard5/apache"
 install -m 0755 "target/${target}/release/vps-guard" "${bundle}/bin/"
 install -m 0755 "target/${target}/release/vps-guard-control" "${bundle}/bin/"
 install -m 0755 "target/${target}/release/vps-guard-edge" "${bundle}/bin/"
 install -m 0644 packaging/systemd/*.service "${bundle}/systemd/"
-install -m 0644 \
-  packaging/systemd/vps-guard-control-cloudflare-credential.conf \
+install -m 0644 packaging/systemd/vps-guard-control-cloudflare-credential.conf \
   "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf"
 install -m 0644 packaging/systemd/*.conf.example "${bundle}/systemd-examples/"
 install -m 0644 packaging/tmpfiles/vps-guard.conf "${bundle}/tmpfiles/"
@@ -60,6 +60,18 @@ install -m 0644 configs/systemd/g7devops-edge-tls.conf \
   "${bundle}/g7devops/systemd/edge-tls.conf"
 install -m 0755 configs/certbot/g7devops-deploy-hook \
   "${bundle}/g7devops/certbot/deploy-hook"
+install -m 0644 configs/vps-guard.gnuboard5.observe.toml \
+  "${bundle}/gnuboard5/vps-guard.observe.toml"
+install -m 0644 configs/vps-guard.gnuboard5.enforce.toml \
+  "${bundle}/gnuboard5/vps-guard.enforce.toml"
+install -m 0644 configs/apache/gnuboard5-guarded.conf \
+  "${bundle}/gnuboard5/apache/gnuboard5-guarded.conf"
+install -m 0644 configs/apache/gnuboard5-bypass.conf \
+  "${bundle}/gnuboard5/apache/gnuboard5-bypass.conf"
+install -m 0644 configs/apache/vpsguard-origin.conf \
+  "${bundle}/gnuboard5/apache/vpsguard-origin.conf"
+install -m 0644 configs/apache/vpsguard-origin-ports.conf \
+  "${bundle}/gnuboard5/apache/vpsguard-origin-ports.conf"
 install -m 0644 docs/OPERATIONS.md "${bundle}/"
 
 if command -v cargo-cyclonedx >/dev/null 2>&1; then

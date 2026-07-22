@@ -46,6 +46,8 @@ bun test
 
 TLS, provider, ingress, bypass와 성능 변경은 단위 테스트만으로 완료하지 않고 관련 E2E·fault·2GB VPS 증거를 요구합니다.
 
+Cargo build·test·doc·coverage와 project gate를 마친 뒤 `bash scripts/build-storage.sh --auto`를 실행합니다. 진행 중인 Cargo lock이 있으면 빌드 종료 후 다시 실행하며 `target`을 직접 삭제하지 않습니다.
+
 ## 문체
 
 - 코드 식별자는 영어를 사용합니다.

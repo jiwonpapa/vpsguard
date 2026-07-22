@@ -3,7 +3,7 @@
   "files": {
     "scripts/build-release.sh": 96,
     "scripts/build-storage.sh": 5,
-    "scripts/check.sh": 19,
+    "scripts/check.sh": 18,
     "scripts/coverage-gate.sh": 16,
     "scripts/cutover-g7devops-direct-remote.sh": 16,
     "scripts/cutover-g7devops-direct.sh": 65,

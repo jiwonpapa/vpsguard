@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 evidence_dir="${repo_root}/target-evidence/load"
 mkdir -p "${evidence_dir}"
@@ -10,6 +9,7 @@ edge_pid=""
 cleanup() {
   [[ -z "${edge_pid}" ]] || kill "${edge_pid}" 2>/dev/null || true
   [[ -z "${origin_pid}" ]] || kill "${origin_pid}" 2>/dev/null || true
+  bash "${repo_root}/scripts/build-storage.sh" --auto || true
 }
 trap cleanup EXIT
 

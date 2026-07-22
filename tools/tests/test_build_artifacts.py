@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from tools.vpsguard_harness.build_artifacts import (
     BuildArtifactError,
+    auto_clean_build_artifacts,
     clean_build_artifacts,
     validate_build_profiles,
 )
@@ -62,6 +64,65 @@ class BuildArtifactTests(unittest.TestCase):
                 clean_build_artifacts(root, apply=True)
 
             self.assertEqual(raised.exception.code, "BUILD_TARGET_BOUNDARY_INVALID")
+
+    def test_auto_cleanup_removes_only_transient_outputs_and_keeps_warm_caches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            (target / "debug").mkdir(parents=True)
+            (target / "debug/cache.bin").write_bytes(b"d" * 4096)
+            (target / "llvm-cov-target").mkdir()
+            (target / "llvm-cov-target/coverage.bin").write_bytes(b"c" * 4096)
+            (target / "tmp").mkdir()
+            (target / "tmp/throwaway.bin").write_bytes(b"t" * 4096)
+
+            result = auto_clean_build_artifacts(root, warning_bytes=1024**2)
+
+            self.assertFalse(result.over_budget)
+            self.assertTrue((target / "debug/cache.bin").exists())
+            self.assertTrue((target / "llvm-cov-target/coverage.bin").exists())
+            self.assertFalse((target / "tmp").exists())
+            self.assertGreater(result.cleanup.reclaimed_bytes, 0)
+
+    def test_auto_cleanup_warns_but_keeps_warm_cache_after_threshold_is_exceeded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            (target / "debug").mkdir(parents=True)
+            (target / "debug/cache.bin").write_bytes(b"d" * 4096)
+            (target / "release-bundle/demo").mkdir(parents=True)
+            (target / "release-bundle/demo/checksums.txt").write_text(
+                "preserve\n", encoding="utf-8"
+            )
+
+            result = auto_clean_build_artifacts(root, warning_bytes=1)
+
+            self.assertTrue(result.over_budget)
+            self.assertTrue((target / "debug/cache.bin").exists())
+            self.assertTrue((target / "release-bundle/demo/checksums.txt").exists())
+
+    def test_auto_cleanup_rejects_a_non_positive_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(BuildArtifactError) as raised:
+                auto_clean_build_artifacts(Path(directory), warning_bytes=0)
+
+            self.assertEqual(raised.exception.code, "BUILD_CACHE_BUDGET_INVALID")
+
+    def test_cleanup_refuses_to_delete_an_active_cargo_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target/debug"
+            target.mkdir(parents=True)
+            lock_path = target / ".cargo-build-lock"
+            lock_path.touch()
+            with lock_path.open("rb") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+                with self.assertRaises(BuildArtifactError) as raised:
+                    clean_build_artifacts(root, apply=True)
+
+            self.assertEqual(raised.exception.code, "BUILD_TARGET_BUSY")
+            self.assertTrue(target.exists())
 
     def test_plan_does_not_double_count_hardlinks_preserved_elsewhere(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -18,6 +18,8 @@ pub enum OwnedProgram {
     Systemctl,
     /// Nginx 후보 설정 검사입니다.
     Nginx,
+    /// Apache 후보 설정 검사입니다.
+    Apache2ctl,
     /// VPSGuard 설정 검사 CLI입니다.
     VpsGuard,
     /// bounded public HTTP read-back client입니다.
@@ -42,6 +44,7 @@ impl OwnedProgram {
             Self::Nft => "/usr/sbin/nft",
             Self::Systemctl => "/usr/bin/systemctl",
             Self::Nginx => "/usr/sbin/nginx",
+            Self::Apache2ctl => "/usr/sbin/apache2ctl",
             Self::VpsGuard => "/usr/local/bin/vps-guard",
             Self::Curl => "/usr/bin/curl",
             Self::Openssl => "/usr/bin/openssl",
@@ -198,6 +201,7 @@ mod tests {
     fn program_paths_are_fixed_and_audit_is_serializable() -> Result<(), Box<dyn std::error::Error>>
     {
         assert_eq!(OwnedProgram::Nft.path(), "/usr/sbin/nft");
+        assert_eq!(OwnedProgram::Apache2ctl.path(), "/usr/sbin/apache2ctl");
         assert_eq!(OwnedProgram::VpsGuard.path(), "/usr/local/bin/vps-guard");
         assert_eq!(OwnedProgram::Curl.path(), "/usr/bin/curl");
         assert_eq!(OwnedProgram::Openssl.path(), "/usr/bin/openssl");

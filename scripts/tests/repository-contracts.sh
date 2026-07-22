@@ -120,6 +120,12 @@ for unit in packaging/systemd/vps-guard-edge.service packaging/systemd/vps-guard
   grep -Fq 'LogRateLimitIntervalSec=30s' "${unit}"
   grep -Fq 'LogRateLimitBurst=2000' "${unit}"
 done
+grep -Fq 'KillSignal=SIGINT' packaging/systemd/vps-guard-edge.service
+grep -Fq 'TimeoutStopSec=4s' packaging/systemd/vps-guard-edge.service
+grep -Fq 'StartLimitIntervalSec=60s' packaging/systemd/vps-guard-edge.service
+grep -Fq 'StartLimitBurst=30' packaging/systemd/vps-guard-edge.service
+grep -Fq 'RemoteIPHeader X-Forwarded-For' configs/apache/vpsguard-origin.conf
+grep -Fq 'RemoteIPInternalProxy 127.0.0.1' configs/apache/vpsguard-origin.conf
 
 # SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
 # 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.

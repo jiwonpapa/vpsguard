@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "target": {
+    "url": "https://gnuboard5.local/",
+    "host": "gnuboard5.local",
+    "ip": "192.168.122.9"
+  },
+  "ca_certificate": "/home/neojins/vpsguard-lab/rootCA.pem",
+  "images": {
+    "oha": "ghcr.io/hatoo/oha@sha256:57c2247792c1466c88ecc83ddb9253aa0b58dcb852b1d7f2026a0acf7744c965",
+    "slowhttptest": "shekyan/slowhttptest@sha256:36655254ac7a3b5859b74cfe370767d4f553d5fc2926ff46ce870c8ae698779b",
+    "nmap": "instrumentisto/nmap@sha256:96f6ed194519b62421a1a1c57809e65a7f94d2aa1c8c25676f247e5e148c0827"
+  },
+  "scenarios": [
+    {
+      "name": "normal-browser",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-z", "15s", "-q", "5", "-c", "4", "{target_url}"],
+      "timeout_seconds": 30,
+      "output_format": "json"
+    },
+    {
+      "name": "anonymous-burst",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "600", "-c", "40", "{target_url}"],
+      "timeout_seconds": 45,
+      "output_format": "json"
+    },
+    {
+      "name": "strict-search-burst",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "180", "-c", "20", "https://gnuboard5.local/bbs/search.php?stx=vpsguard"],
+      "timeout_seconds": 45,
+      "output_format": "json"
+    },
+    {
+      "name": "meta-bot-visible",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "40", "-c", "4", "-H", "User-Agent: facebookexternalhit/1.1", "{target_url}"],
+      "timeout_seconds": 30,
+      "output_format": "json"
+    },
+    {
+      "name": "spoofed-forwarded-burst",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "240", "-c", "20", "-H", "X-Forwarded-For: 8.8.8.8", "{target_url}"],
+      "timeout_seconds": 45,
+      "output_format": "json"
+    },
+    {
+      "name": "trace-method",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "1", "-c", "1", "--method", "TRACE", "{target_url}"],
+      "timeout_seconds": 15,
+      "output_format": "json"
+    },
+    {
+      "name": "slow-headers",
+      "tool": "slowhttptest",
+      "arguments": ["-H", "-c", "40", "-r", "10", "-i", "5", "-l", "20", "-p", "5", "-u", "{target_url}", "-v", "2"],
+      "timeout_seconds": 35,
+      "output_format": "text"
+    },
+    {
+      "name": "listener-surface",
+      "tool": "nmap",
+      "arguments": ["-Pn", "-n", "-sT", "-p", "22,80,443,18080,18081,7727,3306", "192.168.122.9"],
+      "timeout_seconds": 60,
+      "output_format": "text"
+    }
+  ]
+}

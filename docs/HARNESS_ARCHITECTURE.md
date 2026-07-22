@@ -39,6 +39,8 @@ Cargo의 dev/test profile은 `debug = 1`, `incremental = false`를 사용하고 
 
 정리 시 `target/release-bundle`, `target/evidence`와 분류되지 않은 파일은 보존합니다. target 자체가 symlink이면 실패하고 어떤 외부 경로도 따라가 삭제하지 않습니다.
 
+전체 check, 범위 check, coverage, integration, load와 release gate는 종료 시 자동 저장공간 정책을 실행합니다. `tmp`·임시 다운로드·timing처럼 재사용 가치 없는 항목만 회수하고 debug·release·coverage·rustdoc cache는 자동 삭제하지 않습니다. 활성 cache가 기본 4GiB 경고 기준을 넘으면 상태만 보고하고, 전체 cache 정리는 운영자가 `--clean`을 명시한 경우로 제한합니다. `--max-gib`로 장비별 경고 기준을 지정할 수 있습니다.
+
 초기 적용 측정은 전체 repository gate의 clean rebuild 기준 35.1GiB에서 1.4GiB로 감소했습니다. 정리 plan의 용량 계산은 hard-link inode를 중복 합산하지 않으며 보존 항목과 공유된 inode를 회수 가능 용량으로 표시하지 않습니다.
 
 ## 실행

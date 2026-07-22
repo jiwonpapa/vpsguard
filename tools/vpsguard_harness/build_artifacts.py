@@ -2,20 +2,35 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
 import re
 import shutil
 import stat
 import tomllib
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from .errors import HarnessError
 
 PRESERVED_TARGET_ENTRIES = frozenset({"CACHEDIR.TAG", "evidence", "release-bundle"})
+AUTOMATIC_TARGET_ENTRIES = frozenset(
+    {
+        "cargo-timings",
+        "integration-trace.log",
+        "package",
+        "release-download",
+        "tmp",
+    }
+)
+DEFAULT_BUILD_CACHE_WARNING_BYTES = 4 * 1024**3
 REGENERABLE_TARGET_ENTRIES = frozenset(
     {
         ".rustc_info.json",
+        "cargo-timings",
         "debug",
         "doc",
         "integration-trace.log",
@@ -55,6 +70,28 @@ class BuildArtifactSummary:
             f"reclaimed={_format_bytes(self.reclaimed_bytes)} "
             f"candidates={len(self.candidates)} preserved={len(self.preserved)} "
             f"skipped={len(self.skipped)}"
+        )
+
+
+@dataclass(frozen=True)
+class BuildBudgetSummary:
+    """Automatic transient-output cleanup with a warm-cache warning threshold."""
+
+    budget_bytes: int
+    projected_bytes: int
+    over_budget: bool
+    cleanup: BuildArtifactSummary
+
+    def display(self) -> str:
+        """Return the automatic policy decision and reclaimed capacity."""
+
+        cache_state = "over-threshold" if self.over_budget else "warm"
+        return (
+            f"build storage auto: mode=ephemeral-only cache={cache_state} "
+            f"warning-threshold={_format_bytes(self.budget_bytes)} "
+            f"before={_format_bytes(self.cleanup.target_bytes)} "
+            f"after={_format_bytes(self.projected_bytes)} "
+            f"reclaimed={_format_bytes(self.cleanup.reclaimed_bytes)}"
         )
 
 
@@ -113,6 +150,47 @@ def validate_build_profiles(root: Path) -> None:
 def clean_build_artifacts(root: Path, *, apply: bool) -> BuildArtifactSummary:
     """Plan or remove regenerable target entries while preserving release evidence."""
 
+    return _clean_build_artifacts(root, apply=apply, automatic_only=False)
+
+
+def auto_clean_build_artifacts(
+    root: Path,
+    *,
+    warning_bytes: int = DEFAULT_BUILD_CACHE_WARNING_BYTES,
+) -> BuildBudgetSummary:
+    """Remove transient outputs without invalidating any reusable Cargo cache."""
+
+    if warning_bytes <= 0:
+        raise BuildArtifactError(
+            code="BUILD_CACHE_BUDGET_INVALID",
+            problem="빌드 cache 저장공간 경고 기준이 올바르지 않습니다.",
+            cause=f"warning_bytes must be positive: {warning_bytes}",
+            impact="어떤 빌드 산출물도 삭제하지 않았습니다.",
+            next_action="0보다 큰 byte 경고 기준을 지정하십시오.",
+        )
+
+    cleanup = _clean_build_artifacts(
+        root,
+        apply=True,
+        automatic_only=True,
+    )
+    projected_bytes = cleanup.target_bytes - cleanup.reclaimed_bytes
+    return BuildBudgetSummary(
+        budget_bytes=warning_bytes,
+        projected_bytes=projected_bytes,
+        over_budget=projected_bytes > warning_bytes,
+        cleanup=cleanup,
+    )
+
+
+def _clean_build_artifacts(
+    root: Path,
+    *,
+    apply: bool,
+    automatic_only: bool,
+) -> BuildArtifactSummary:
+    """Apply one explicit candidate policy inside the repository target boundary."""
+
     repository = root.resolve()
     target = repository / "target"
     if not target.exists():
@@ -127,7 +205,15 @@ def clean_build_artifacts(root: Path, *, apply: bool) -> BuildArtifactSummary:
         )
 
     entries = sorted(target.iterdir(), key=lambda path: path.name)
-    candidates = tuple(entry for entry in entries if _is_regenerable(entry.name))
+    candidates = tuple(
+        entry
+        for entry in entries
+        if (
+            _is_automatic(entry.name)
+            if automatic_only
+            else _is_regenerable(entry.name)
+        )
+    )
     preserved = tuple(entry for entry in entries if entry.name in PRESERVED_TARGET_ENTRIES)
     skipped = tuple(entry for entry in entries if entry not in candidates and entry not in preserved)
     candidate_names = {entry.name for entry in candidates}
@@ -150,18 +236,19 @@ def clean_build_artifacts(root: Path, *, apply: bool) -> BuildArtifactSummary:
         and (usage.is_directory or usage.occurrences >= usage.link_count)
     )
 
-    if apply:
-        for candidate in candidates:
-            try:
-                _remove(candidate)
-            except OSError as error:
-                raise BuildArtifactError(
-                    code="BUILD_ARTIFACT_CLEAN_FAILED",
-                    problem="재생성 가능한 빌드 산출물을 모두 정리하지 못했습니다.",
-                    cause=f"path={candidate}, error={error}",
-                    impact="앞선 항목 일부는 삭제됐을 수 있지만 보존 항목은 건드리지 않았습니다.",
-                    next_action="파일 사용 프로세스와 권한을 확인한 뒤 정리 계획을 다시 실행하십시오.",
-                ) from error
+    if apply and candidates:
+        with _hold_cargo_locks(target):
+            for candidate in candidates:
+                try:
+                    _remove(candidate)
+                except OSError as error:
+                    raise BuildArtifactError(
+                        code="BUILD_ARTIFACT_CLEAN_FAILED",
+                        problem="재생성 가능한 빌드 산출물을 모두 정리하지 못했습니다.",
+                        cause=f"path={candidate}, error={error}",
+                        impact="앞선 항목 일부는 삭제됐을 수 있지만 보존 항목은 건드리지 않았습니다.",
+                        next_action="파일 사용 프로세스와 권한을 확인한 뒤 정리 계획을 다시 실행하십시오.",
+                    ) from error
 
     return BuildArtifactSummary(
         applied=apply,
@@ -180,6 +267,10 @@ def _is_regenerable(name: str) -> bool:
         or name.startswith("ci-run-")
         or TARGET_TRIPLE_PATTERN.fullmatch(name) is not None
     ) and name not in PRESERVED_TARGET_ENTRIES
+
+
+def _is_automatic(name: str) -> bool:
+    return name in AUTOMATIC_TARGET_ENTRIES or name.startswith("ci-run-")
 
 
 def _scan_path(
@@ -227,6 +318,36 @@ def _scan_path(
 def _metadata_bytes(metadata: os.stat_result) -> int:
     blocks = getattr(metadata, "st_blocks", 0)
     return blocks * 512 if blocks else metadata.st_size
+
+
+@contextlib.contextmanager
+def _hold_cargo_locks(target: Path) -> Iterator[None]:
+    """Refuse cleanup while Cargo owns any known artifact or build lock."""
+
+    locks = sorted(target.rglob(".cargo-lock"))
+    locks.extend(sorted(target.rglob(".cargo-build-lock")))
+    locks.extend(sorted(target.rglob(".cargo-artifact-lock")))
+    handles: list[BinaryIO] = []
+    try:
+        for path in locks:
+            handle = path.open("rb")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                handle.close()
+                raise BuildArtifactError(
+                    code="BUILD_TARGET_BUSY",
+                    problem="Cargo 빌드 중에는 산출물을 자동 정리하지 않습니다.",
+                    cause=f"active lock={path}",
+                    impact="어떤 빌드 산출물도 삭제하지 않았습니다.",
+                    next_action="진행 중인 VPSGuard 빌드가 끝난 뒤 자동 정리를 다시 실행하십시오.",
+                ) from error
+            handles.append(handle)
+        yield
+    finally:
+        for handle in reversed(handles):
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
 
 
 def _remove(path: Path) -> None:

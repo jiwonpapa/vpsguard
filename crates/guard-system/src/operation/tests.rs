@@ -139,6 +139,39 @@ fn restore_plan_may_preserve_the_current_ingress_topology() {
 }
 
 #[test]
+fn apache_ingress_resources_are_bounded_to_apache_configuration() {
+    let apache = OperationPlan::new(
+        "apache-to-edge",
+        OperationKind::BypassDisable,
+        "ops-011",
+        IngressTopology::ApachePublic,
+        IngressTopology::ApacheGuarded,
+        vec![
+            SnapshotResource::ApacheIngressFile {
+                path: "/etc/apache2/sites-available/gnuboard5.conf".into(),
+            },
+            SnapshotResource::ApacheIngressSymlink {
+                path: "/etc/apache2/sites-enabled/gnuboard5.conf".into(),
+            },
+            SnapshotResource::Service {
+                unit: "apache2.service".to_owned(),
+            },
+            SnapshotResource::CertificateFingerprint {
+                path: "/etc/ssl/gnuboard5/gnuboard5.local.pem".into(),
+            },
+            SnapshotResource::ListenerInventory,
+        ],
+    );
+    assert!(apache.validate().is_ok());
+
+    let mut escaped = apache;
+    escaped.resources.push(SnapshotResource::ApacheIngressFile {
+        path: "/home/gnuboard5/public_html/index.php".into(),
+    });
+    assert!(escaped.validate().is_err());
+}
+
+#[test]
 fn successful_apply_records_ordered_progress_and_releases_lock()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;

@@ -4,6 +4,7 @@
 //! Nginx/VPSGuard service만 변경합니다. 인증서는 fingerprint만 읽고 SSH, site와
 //! 80/443 외 listener는 복원 전후 동일해야 합니다.
 
+mod apache;
 mod apply;
 mod candidate;
 mod files;
@@ -41,6 +42,7 @@ pub(crate) const SITE_CERTBOT_HOOK: &str = "/etc/letsencrypt/renewal-hooks/deplo
 pub(crate) const CERTIFICATE: &str = "/etc/letsencrypt/live/g7devops.com/fullchain.pem";
 pub(crate) const EDGE_SERVICE: &str = "vps-guard-edge.service";
 pub(crate) const NGINX_SERVICE: &str = "nginx.service";
+pub(crate) const APACHE_SERVICE: &str = "apache2.service";
 
 pub(crate) const FILE_SPECS: [FileSpec; 5] = [
     FileSpec::required(ACTIVE_NGINX, "g7.conf"),
@@ -161,6 +163,9 @@ pub struct IngressStateStore {
     pub(crate) fail_after_first_mutation: bool,
 }
 
+pub use apache::{
+    ApacheIngressConfig, ApacheIngressDirection, ApacheIngressDriver, apache_ingress_plan,
+};
 pub use apply::IngressApplyDriver;
 pub use switch::{
     IngressSwitchConfig, IngressSwitchDirection, IngressSwitchDriver, ingress_switch_plan,

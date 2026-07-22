@@ -62,7 +62,7 @@ cargo xtask coverage
 cargo xtask web
 ```
 
-`build-storage.sh`는 기본적으로 정리 계획만 표시합니다. `--clean`은 재생성 가능한 Cargo debug·test·coverage cache만 제거하며 `target/release-bundle`, `target/evidence`와 알 수 없는 파일은 보존합니다.
+`build-storage.sh`는 기본적으로 정리 계획만 표시합니다. `--clean`은 명시적으로 요청할 때만 재생성 가능한 Cargo cache를 전부 제거합니다. 주요 개발 gate의 `--auto`는 `tmp`·임시 다운로드·timing 같은 재사용 가치 없는 항목만 회수하며 debug·release·coverage·rustdoc cache는 빌드 속도를 위해 삭제하지 않습니다. 활성 cache가 기본 4GiB 경고 기준을 넘어도 상태만 보고합니다. 두 정책 모두 `target/release-bundle`, `target/evidence`와 알 수 없는 파일을 보존합니다.
 
 `dev-check.sh`는 명시한 Rust crate, Python 하네스 또는 Web만 빠르게 검사합니다. merge 판단은 계속 `check.sh` 전체 gate를 사용하며 범위 검증 결과로 대체하지 않습니다. CI는 PR의 모든 비-merge 커밋과 PR 본문에 요구사항 ID가 있는지도 검사합니다.
 

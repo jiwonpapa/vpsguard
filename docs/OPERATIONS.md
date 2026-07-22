@@ -11,10 +11,11 @@
 
 ## 로컬 빌드 저장공간
 
-Cargo dev/test는 incremental을 끄고 dependency debug 정보를 제거해 반복 빌드의 디스크 누적을 제한합니다. 정리 하네스는 기본 plan-only이며 `--clean`에서 repository `target` 아래의 재생성 가능한 cache만 삭제합니다. 릴리스 번들과 검증 evidence, 알 수 없는 운영자 파일은 보존합니다.
+Cargo dev/test는 incremental을 끄고 dependency debug 정보를 제거해 반복 빌드의 디스크 누적을 제한합니다. 정리 하네스는 기본 plan-only이며 `--clean`에서만 repository `target` 아래의 재생성 가능한 cache를 전부 삭제합니다. 주요 개발 gate의 `--auto`는 재사용 가치 없는 임시 산출물만 회수하고 debug·release·coverage·rustdoc cache는 보존하며, 기본 4GiB 경고 기준을 넘어도 자동 초기화하지 않습니다. 릴리스 번들과 검증 evidence, 알 수 없는 운영자 파일은 보존합니다.
 
 ```bash
 bash scripts/build-storage.sh
+bash scripts/build-storage.sh --auto
 bash scripts/build-storage.sh --clean
 ```
 
