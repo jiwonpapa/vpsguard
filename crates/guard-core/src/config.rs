@@ -8,6 +8,8 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::crawler::{CrawlerNetwork, CrawlerProvider};
+
 /// 현재 지원하는 설정 schema 버전입니다.
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 
@@ -26,11 +28,20 @@ pub struct GuardConfig {
     pub tls: TlsConfig,
     /// 관리 UI 설정입니다.
     pub ui: UiConfig,
+    /// host firewall 소유권과 standalone backend 설정입니다.
+    #[serde(default)]
+    pub firewall: FirewallConfig,
     /// 탐지 profile과 초기 모드입니다.
     pub detection: DetectionConfig,
+    /// declared bot과 verified crawler 정책입니다.
+    #[serde(default)]
+    pub bot_policy: BotPolicyConfig,
     /// 애플리케이션 앞단 보안 정책입니다.
     #[serde(default)]
     pub security: SecurityConfig,
+    /// 외부 ModSecurity·OWASP CRS adapter 정책입니다.
+    #[serde(default)]
+    pub waf: WafConfig,
     /// Cloudflare provider 설정입니다.
     #[serde(default)]
     pub cloudflare: CloudflareConfig,
@@ -79,6 +90,15 @@ pub struct EdgeConfig {
     pub upload_upstream_read_timeout_ms: u64,
     /// limiter가 추적할 최대 client 수입니다.
     pub max_tracked_clients: usize,
+    /// client limit에 곱할 IPv4 /24·IPv6 /64 prefix 예산입니다.
+    #[serde(default = "default_prefix_rate_limit_multiplier")]
+    pub prefix_rate_limit_multiplier: u32,
+    /// client limit에 곱할 route class aggregate 예산입니다.
+    #[serde(default = "default_route_rate_limit_multiplier")]
+    pub route_rate_limit_multiplier: u32,
+    /// client limit에 곱할 전체 listener aggregate 예산입니다.
+    #[serde(default = "default_global_rate_limit_multiplier")]
+    pub global_rate_limit_multiplier: u32,
     /// 일반 경로 client별 분당 한도입니다. `None`이면 적용하지 않습니다.
     #[serde(default)]
     pub rate_limit_rpm: Option<u32>,
@@ -181,15 +201,136 @@ pub struct UiConfig {
     /// Edge가 이 listener로만 전달할 별도 HTTPS 관리 Host입니다.
     #[serde(default)]
     pub public_host: Option<String>,
+    /// 관리 Host의 외부 HTTPS port입니다.
+    #[serde(default = "default_https_port")]
+    pub public_port: u16,
+    /// 관리 Host의 public TLS 종료 위치입니다.
+    #[serde(default)]
+    pub tls_termination: UiTlsTermination,
+    /// 관리자 credential을 검증할 provider입니다.
+    #[serde(default)]
+    pub auth_provider: AdminAuthProvider,
+    /// PAM client가 사용할 `/etc/pam.d` service 이름입니다.
+    #[serde(default = "default_pam_service")]
+    pub pam_service: String,
+    /// PAM 인증 뒤 허용할 Unix group입니다.
+    #[serde(default = "default_pam_allowed_group")]
+    pub pam_allowed_group: String,
     /// local 관리자 명령을 받는 peer-credential Unix socket입니다.
     #[serde(default = "default_admin_socket")]
     pub admin_socket: PathBuf,
+    /// PAM·UFW를 root helper에 위임하는 Unix socket입니다.
+    #[serde(default = "default_privileged_socket")]
+    pub privileged_socket: PathBuf,
     /// client별 단회 로그인 시도의 분당 상한입니다.
     #[serde(default = "default_login_rate_limit_rpm")]
     pub login_rate_limit_rpm: u32,
     /// 기본 언어입니다.
     #[serde(default = "default_language")]
     pub language: String,
+}
+
+/// 관리 Host의 HTTPS 종료 소유자입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiTlsTermination {
+    /// Pingora edge가 직접 public TLS를 종료합니다.
+    #[default]
+    Edge,
+    /// trusted loopback Apache·Nginx가 public TLS를 종료하고 edge로 전달합니다.
+    TrustedExternal,
+}
+
+/// 관리 UI가 사용할 credential provider입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminAuthProvider {
+    /// 기존 VPSGuard 전용 Argon2id 계정을 사용하는 호환 mode입니다.
+    #[default]
+    Local,
+    /// Linux-PAM 서버 계정과 allowlisted group을 사용합니다.
+    Pam,
+}
+
+/// host firewall 변경 소유권 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallConfig {
+    /// 설치 topology에 따른 firewall mutation mode입니다.
+    #[serde(default)]
+    pub mode: FirewallMode,
+    /// 절대로 deny하지 않고 전후 연결성을 확인할 관리 SSH port입니다.
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+}
+
+impl Default for FirewallConfig {
+    fn default() -> Self {
+        Self {
+            mode: FirewallMode::Disabled,
+            ssh_port: default_ssh_port(),
+        }
+    }
+}
+
+/// host firewall mutation 소유자입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirewallMode {
+    /// VPSGuard standalone 설치가 typed UFW rule을 소유합니다.
+    StandaloneUfw,
+    /// JW-agent가 host firewall을 소유하고 VPSGuard는 변경을 거부합니다.
+    JwAgentDelegated,
+    /// host firewall 기능을 사용하지 않습니다.
+    #[default]
+    Disabled,
+}
+
+/// 외부 WAF adapter 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WafConfig {
+    /// off, detection-only 또는 GnuBoard 조정 후 차단 mode입니다.
+    #[serde(default)]
+    pub mode: WafMode,
+    /// 지원하는 외부 engine입니다.
+    #[serde(default)]
+    pub adapter: WafAdapter,
+    /// app별 rule 제외 파일입니다.
+    #[serde(default)]
+    pub exclusions_file: Option<PathBuf>,
+}
+
+impl Default for WafConfig {
+    fn default() -> Self {
+        Self {
+            mode: WafMode::Off,
+            adapter: WafAdapter::ModSecurityOwaspCrs,
+            exclusions_file: None,
+        }
+    }
+}
+
+/// 외부 WAF enforcement 단계입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WafMode {
+    /// 외부 WAF를 사용하지 않습니다.
+    #[default]
+    Off,
+    /// 사건만 기록하고 요청은 통과시킵니다.
+    Detection,
+    /// 검증된 app 예외를 적용한 뒤 차단합니다.
+    TunedEnforce,
+}
+
+/// 지원하는 외부 WAF engine입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WafAdapter {
+    /// Apache ModSecurity v2와 배포판 OWASP CRS package입니다.
+    #[default]
+    ModSecurityOwaspCrs,
 }
 
 /// 탐지 profile과 첫 설치 모드입니다.
@@ -314,6 +455,24 @@ pub enum DetectionMode {
     Observe,
     /// 명시적으로 허용된 자동 보호를 수행합니다.
     Enforce,
+}
+
+/// declared bot 차단과 검색 crawler allowlist입니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotPolicyConfig {
+    /// enforce mode에서 미허용 declared bot과 위조 crawler를 거부합니다.
+    #[serde(default)]
+    pub block_unapproved_declared_bots: bool,
+    /// 허용할 검색 crawler provider입니다.
+    #[serde(default)]
+    pub allowed_crawlers: Vec<CrawlerProvider>,
+    /// 공식 provider feed에서 가져와 pin한 network입니다.
+    #[serde(default)]
+    pub crawler_networks: Vec<CrawlerNetwork>,
+    /// install-time updater가 만든 공식 network JSON입니다.
+    #[serde(default)]
+    pub crawler_networks_file: Option<PathBuf>,
 }
 
 /// Cloudflare provider 설정입니다.
@@ -573,6 +732,15 @@ impl GuardConfig {
         if self.edge.max_tracked_clients == 0 {
             return invalid("edge.max_tracked_clients", "0보다 커야 합니다");
         }
+        if self.edge.prefix_rate_limit_multiplier == 0
+            || self.edge.route_rate_limit_multiplier < self.edge.prefix_rate_limit_multiplier
+            || self.edge.global_rate_limit_multiplier < self.edge.route_rate_limit_multiplier
+        {
+            return invalid(
+                "edge.rate_limit_multiplier",
+                "prefix > 0, prefix <= route <= global 순서여야 합니다",
+            );
+        }
         if self.edge.policy_reload_interval_ms < 100 || self.edge.clearance_ttl_seconds == 0 {
             return invalid(
                 "edge.policy_runtime",
@@ -593,10 +761,54 @@ impl GuardConfig {
         if self.security.hsts_max_age_seconds > 63_072_000 {
             return invalid("security.hsts_max_age_seconds", "0부터 2년 사이여야 합니다");
         }
+        let mut crawler_providers = HashSet::new();
+        for provider in &self.bot_policy.allowed_crawlers {
+            if !crawler_providers.insert(*provider) {
+                return invalid("bot_policy.allowed_crawlers", "중복 provider가 있습니다");
+            }
+        }
+        let mut network_providers = HashSet::new();
+        for entry in &self.bot_policy.crawler_networks {
+            if entry.cidrs.is_empty() || !network_providers.insert(entry.provider) {
+                return invalid(
+                    "bot_policy.crawler_networks",
+                    "provider별 비어 있지 않은 network 목록 하나가 필요합니다",
+                );
+            }
+        }
+        if self.bot_policy.block_unapproved_declared_bots
+            && self
+                .bot_policy
+                .allowed_crawlers
+                .iter()
+                .any(|provider| !network_providers.contains(provider))
+            && self.bot_policy.crawler_networks_file.is_none()
+        {
+            return invalid(
+                "bot_policy.crawler_networks",
+                "허용 crawler의 공식 network 목록이 필요합니다",
+            );
+        }
+        if let Some(path) = &self.bot_policy.crawler_networks_file
+            && !path.is_absolute()
+        {
+            return invalid("bot_policy.crawler_networks_file", "절대 경로가 필요합니다");
+        }
         if self.security.auth_rate_limit_rpm > 600 {
             return invalid(
                 "security.auth_rate_limit_rpm",
                 "0 또는 1..=600 범위여야 합니다",
+            );
+        }
+        if let Some(path) = &self.waf.exclusions_file
+            && (!path.is_absolute() || path.as_os_str().is_empty())
+        {
+            return invalid("waf.exclusions_file", "절대 경로가 필요합니다");
+        }
+        if self.waf.mode == WafMode::TunedEnforce && self.waf.exclusions_file.is_none() {
+            return invalid(
+                "waf.exclusions_file",
+                "tuned_enforce에는 검증된 app 예외 파일이 필요합니다",
             );
         }
         if self.security.csp_mode == CspMode::Off && self.security.csp_policy.is_some() {
@@ -633,6 +845,9 @@ impl GuardConfig {
         }
         if !self.ui.admin_socket.is_absolute() {
             return invalid("ui.admin_socket", "절대 경로가 필요합니다");
+        }
+        if !self.ui.privileged_socket.is_absolute() {
+            return invalid("ui.privileged_socket", "절대 경로가 필요합니다");
         }
         if self.ui.login_rate_limit_rpm == 0 || self.ui.login_rate_limit_rpm > 60 {
             return invalid("ui.login_rate_limit_rpm", "1..=60 범위여야 합니다");
@@ -685,13 +900,18 @@ impl GuardConfig {
                 validate_host_rule(domain, "tls.certificates.domains")?;
             }
         }
+        if self.ui.tls_termination == UiTlsTermination::TrustedExternal
+            && self.ui.public_host.is_none()
+        {
+            return invalid(
+                "ui.tls_termination",
+                "trusted external TLS에는 별도 관리 Host가 필요합니다",
+            );
+        }
         if let Some(public_host) = self.ui.public_host.as_deref() {
             validate_host_rule(public_host, "ui.public_host")?;
             if public_host.starts_with("*.") {
                 return invalid("ui.public_host", "정확한 관리 hostname이 필요합니다");
-            }
-            if self.edge.https_bind.is_none() {
-                return invalid("ui.public_host", "HTTPS listener가 필요합니다");
             }
             if self
                 .edge
@@ -704,18 +924,60 @@ impl GuardConfig {
                     "애플리케이션 canonical Host와 분리해야 합니다",
                 );
             }
-            let covered = self.tls.certificates.iter().any(|certificate| {
-                certificate
-                    .domains
-                    .iter()
-                    .any(|rule| host_rule_matches(rule, public_host))
-            });
-            if !covered {
+            match self.ui.tls_termination {
+                UiTlsTermination::Edge => {
+                    if self.edge.https_bind.is_none() {
+                        return invalid("ui.public_host", "HTTPS listener가 필요합니다");
+                    }
+                    let covered = self.tls.certificates.iter().any(|certificate| {
+                        certificate
+                            .domains
+                            .iter()
+                            .any(|rule| host_rule_matches(rule, public_host))
+                    });
+                    if !covered {
+                        return invalid(
+                            "ui.public_host",
+                            "관리 Host를 포함하는 TLS 인증서가 필요합니다",
+                        );
+                    }
+                }
+                UiTlsTermination::TrustedExternal => {
+                    if !self
+                        .edge
+                        .trusted_proxy_cidrs
+                        .iter()
+                        .any(|network| network.addr().is_loopback())
+                    {
+                        return invalid(
+                            "ui.tls_termination",
+                            "trusted external TLS peer의 loopback CIDR가 필요합니다",
+                        );
+                    }
+                }
+            }
+        }
+        if self.ui.public_host.is_some() && self.ui.public_port == 0 {
+            return invalid("ui.public_port", "1..=65535 범위여야 합니다");
+        }
+        if self.ui.auth_provider == AdminAuthProvider::Pam {
+            if !is_safe_identity_name(&self.ui.pam_service) {
                 return invalid(
-                    "ui.public_host",
-                    "관리 Host를 포함하는 TLS 인증서가 필요합니다",
+                    "ui.pam_service",
+                    "영문자·숫자·점·밑줄·하이픈으로 된 안전한 이름이 필요합니다",
                 );
             }
+            if !is_safe_identity_name(&self.ui.pam_allowed_group)
+                || self.ui.pam_allowed_group.eq_ignore_ascii_case("root")
+            {
+                return invalid(
+                    "ui.pam_allowed_group",
+                    "root가 아닌 전용 Unix group 이름이 필요합니다",
+                );
+            }
+        }
+        if self.firewall.ssh_port == 0 {
+            return invalid("firewall.ssh_port", "1..=65535 범위여야 합니다");
         }
         if self.cloudflare.enabled
             && (self.cloudflare.zone_id.trim().is_empty()
@@ -1097,6 +1359,15 @@ fn is_safe_relative_path(path: &Path, max_components: usize) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+fn is_safe_identity_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && !matches!(value, "." | "..")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 fn invalid<T>(field: &'static str, reason: impl Into<String>) -> Result<T, ConfigError> {
     Err(ConfigError::Invalid {
         field,
@@ -1112,12 +1383,32 @@ fn default_admin_socket() -> PathBuf {
     PathBuf::from("/run/vps-guard/admin.sock")
 }
 
+fn default_privileged_socket() -> PathBuf {
+    PathBuf::from("/run/vps-guard-privileged/control.sock")
+}
+
+fn default_pam_service() -> String {
+    "vps-guard".to_owned()
+}
+
+fn default_pam_allowed_group() -> String {
+    "vpsguard-admin".to_owned()
+}
+
 const fn default_login_rate_limit_rpm() -> u32 {
     10
 }
 
+const fn default_https_port() -> u16 {
+    443
+}
+
 const fn default_auth_rate_limit_rpm() -> u32 {
     10
+}
+
+const fn default_ssh_port() -> u16 {
+    22
 }
 
 const fn default_true() -> bool {
@@ -1138,6 +1429,18 @@ const fn default_policy_reload_interval_ms() -> u64 {
 
 const fn default_clearance_ttl_seconds() -> u64 {
     600
+}
+
+const fn default_prefix_rate_limit_multiplier() -> u32 {
+    32
+}
+
+const fn default_route_rate_limit_multiplier() -> u32 {
+    128
+}
+
+const fn default_global_rate_limit_multiplier() -> u32 {
+    256
 }
 
 const fn default_collector_timeout_ms() -> u64 {

@@ -66,6 +66,9 @@ export function OverviewPage() {
                 앱 보안 {state.security.app_layer_active ? "활성" : "비활성"} · CSP {state.security.csp_mode} · 인증 한도{" "}
                 {state.security.auth_rate_limit_rpm === null ? "미적용" : `${state.security.auth_rate_limit_rpm}회/분`}
               </div>
+              <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
+                외부 WAF {state.security.waf_mode} · {state.security.waf_adapter.replaceAll("_", " ")}
+              </div>
             </div>
           </div>
           <Badge variant={state.mode === "NORMAL" ? "live" : state.mode === "EMERGENCY_PROXY" ? "danger" : "warning"}>

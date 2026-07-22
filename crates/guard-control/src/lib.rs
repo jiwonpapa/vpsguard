@@ -4,11 +4,15 @@ mod admin_socket;
 mod api;
 mod auth;
 mod auth_store;
+mod firewall;
+mod pam_auth;
+mod privileged;
 mod provider;
 mod runtime;
 mod storage;
 pub mod telemetry;
 
+pub use privileged::{PrivilegedError, run_privileged_from_path};
 pub use runtime::{ControlError, run_from_path};
 
 /// 초기 control 프로세스가 agent library를 포함하는지 반환합니다.

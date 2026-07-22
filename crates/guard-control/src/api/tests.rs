@@ -11,7 +11,9 @@ use axum::http::{Request, StatusCode};
 use guard_agent::cgroup::CgroupSnapshot;
 use guard_agent::services::ServiceSemanticSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
-use guard_core::config::{DetectionMode, InspectionMode, SecurityConfig, UiConfig};
+use guard_core::config::{
+    AdminAuthProvider, DetectionMode, InspectionMode, SecurityConfig, UiConfig, UiTlsTermination,
+};
 use guard_core::correlation::is_valid_request_id;
 use guard_core::{GuardMode, GuardState};
 use guard_system::{AtomicJsonStore, inspect_tls_management};
@@ -23,6 +25,7 @@ use super::{AppState, ProviderActionLease, router};
 use crate::auth::{
     AuthError, BootstrapStore, IssuedSession, SessionStore, UiAccessPolicy, unix_seconds,
 };
+use crate::firewall::FirewallManager;
 use crate::storage::SqliteStore;
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
@@ -53,7 +56,13 @@ fn app_with_options(
     let ui = UiConfig {
         bind: LOOPBACK_HOST.parse()?,
         public_host: public_host.map(ToOwned::to_owned),
+        public_port: 443,
+        tls_termination: UiTlsTermination::Edge,
+        auth_provider: AdminAuthProvider::Local,
+        pam_service: "vps-guard".to_owned(),
+        pam_allowed_group: "vpsguard-admin".to_owned(),
         admin_socket: "/tmp/vps-guard-admin-test.sock".into(),
+        privileged_socket: "/tmp/vps-guard-privileged-test.sock".into(),
         login_rate_limit_rpm: 10,
         language: "ko".to_owned(),
     };
@@ -66,6 +75,7 @@ fn app_with_options(
         inspection_mode: InspectionMode::Profiled,
         detection_mode: DetectionMode::Observe,
         security: SecurityConfig::default(),
+        waf: guard_core::config::WafConfig::default(),
         tls_management: RwLock::new(inspect_tls_management(
             &guard_core::config::TlsConfig::default(),
         )),
@@ -77,6 +87,11 @@ fn app_with_options(
         events,
         sessions: Arc::new(SessionStore::in_memory(10)?),
         access: UiAccessPolicy::from_config(&ui),
+        firewall: Arc::new(FirewallManager::system(
+            guard_core::config::FirewallMode::Disabled,
+            22,
+            "/tmp/vps-guard-privileged-test.sock".into(),
+        )),
         provider: Arc::new(Mutex::new(None)),
         provider_action_active: Arc::new(AtomicBool::new(false)),
         request_ids: guard_core::correlation::RequestIdGenerator::new(),
@@ -390,6 +405,56 @@ async fn status_exposes_effective_application_security_posture()
     assert_eq!(json["security"]["csp_mode"], "enforce");
     assert_eq!(json["security"]["hsts_max_age_seconds"], 86_400);
     assert_eq!(json["security"]["auth_rate_limit_rpm"], 6);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delegated_firewall_is_visible_and_rejects_mutation_without_ufw()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mut state = app(&directory.path().join("state.json"))?;
+    Arc::get_mut(&mut state)
+        .ok_or("exclusive app state unavailable")?
+        .firewall = Arc::new(FirewallManager::system(
+        guard_core::config::FirewallMode::JwAgentDelegated,
+        22,
+        "/tmp/vps-guard-privileged-test.sock".into(),
+    ));
+    let issued = issue_session(&state)?;
+    let status = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/api/v1/firewall")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(status.status(), StatusCode::OK);
+    let body = to_bytes(status.into_body(), 4_096).await?;
+    let json = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(json["mode"], "jw_agent_delegated");
+    assert_eq!(json["backend"], "jw-agent");
+    assert_eq!(json["mutable"], false);
+
+    let response = router(state)
+        .oneshot(
+            Request::post("/api/v1/firewall/plan")
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("cookie", session_cookie(&issued))
+                .header("x-csrf-token", &issued.csrf_token)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"kind":"add","rule":{"id":"web","action":"allow","source":null,"destination_port":443,"protocol":"tcp"}}"#,
+                ))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = to_bytes(response.into_body(), 4_096).await?;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body)?["error"]["code"],
+        "FIREWALL_OWNERSHIP_DELEGATED"
+    );
     Ok(())
 }
 

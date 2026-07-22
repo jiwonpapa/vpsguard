@@ -7,8 +7,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use guard_core::Decision;
 use guard_core::correlation::{LOG_SCHEMA_VERSION, RequestIdGenerator};
+use guard_core::{Decision, DeclaredBotDisposition, declared_bot_disposition};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_error::{
     Error, ErrorSource,
@@ -28,7 +28,7 @@ use crate::response::{
     add_common_headers, respond_redirect, respond_text, respond_text_with_headers,
 };
 use crate::runtime::{EdgeRuntimeConfig, UpstreamKind};
-use crate::security::rejects_method;
+use crate::security::{rejects_method, validate_request_framing};
 use crate::telemetry::{DecisionKind, RequestTelemetry, TelemetrySink};
 
 const LIVE_PATH: &str = "/health/live";
@@ -96,7 +96,7 @@ impl GuardEdge {
         session: &mut Session,
         context: &mut RequestContext,
     ) -> pingora_core::Result<bool> {
-        let (method, path, target, host, forwarded_for, content_length, cookie) = {
+        let (method, path, target, host, forwarded_for, content_length, cookie, user_agent) = {
             let request = session.req_header();
             (
                 request.method.as_str().to_owned(),
@@ -109,6 +109,7 @@ impl GuardEdge {
                 header_value(request, "x-forwarded-for"),
                 header_value(request, "content-length").and_then(|value| value.parse::<u64>().ok()),
                 header_value(request, "cookie"),
+                header_value(request, "user-agent"),
             )
         };
         context.started_at = Instant::now();
@@ -141,6 +142,28 @@ impl GuardEdge {
         context.upstream_connection_reused = None;
         context.telemetry_emitted = false;
 
+        let raw_header = session.as_downstream().to_h1_raw();
+        if let Err(violation) = validate_request_framing(&raw_header, session.req_header()) {
+            warn!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                event_code = "EDGE_REQUEST_FRAMING_REJECTED",
+                request_id = %context.request_id,
+                violation = ?violation,
+                "ambiguous request framing rejected before origin"
+            );
+            respond_text(
+                session,
+                400,
+                b"invalid request framing\n",
+                &context.request_id,
+                None,
+            )
+            .await?;
+            self.emit_telemetry(context, 400, DecisionKind::Deny);
+            return Ok(true);
+        }
+
         if !host_allowed(host.as_deref(), &self.config.allowed_hosts) {
             warn!(
                 log_schema_version = LOG_SCHEMA_VERSION,
@@ -168,6 +191,37 @@ impl GuardEdge {
             )
             .await?;
             self.emit_telemetry(context, 405, DecisionKind::Deny);
+            return Ok(true);
+        }
+        let bot_disposition = declared_bot_disposition(
+            user_agent.as_deref(),
+            context.client_ip,
+            &self.config.bot_policy.allowed_crawlers,
+            &self.config.bot_policy.crawler_networks,
+        );
+        if bot_disposition != DeclaredBotDisposition::Undeclared {
+            info!(
+                log_schema_version = LOG_SCHEMA_VERSION,
+                component = "guard-edge",
+                event_code = "EDGE_DECLARED_BOT_CLASSIFIED",
+                request_id = %context.request_id,
+                disposition = ?bot_disposition,
+                "declared bot classified without trusting user-agent alone"
+            );
+        }
+        if self.config.enforces_dynamic_protection()
+            && self.config.bot_policy.block_unapproved_declared_bots
+            && bot_disposition.blocked()
+        {
+            respond_text(
+                session,
+                403,
+                b"automated client denied\n",
+                &context.request_id,
+                None,
+            )
+            .await?;
+            self.emit_telemetry(context, 403, DecisionKind::Deny);
             return Ok(true);
         }
         if path == LIVE_PATH {
@@ -322,12 +376,14 @@ impl GuardEdge {
             } else {
                 context.route_class
             };
-            match self
-                .rate_limiter
-                .check(client_ip, limiter_class, limit, SystemTime::now())
-            {
+            match self.rate_limiter.check(
+                client_ip,
+                limiter_class,
+                self.config.rate_limit_policy(limit),
+                SystemTime::now(),
+            ) {
                 LimitDecision::Allow => {}
-                LimitDecision::Deny => {
+                LimitDecision::Deny(scope) => {
                     warn!(
                         log_schema_version = LOG_SCHEMA_VERSION,
                         component = "guard-edge",
@@ -335,6 +391,7 @@ impl GuardEdge {
                         request_id = %context.request_id,
                         path = %context.path,
                         client_ip = %client_ip,
+                        limit_scope = ?scope,
                         "request rate limited"
                     );
                     respond_text(
@@ -348,13 +405,13 @@ impl GuardEdge {
                     self.emit_telemetry(context, 429, DecisionKind::Throttle);
                     return Ok(true);
                 }
-                LimitDecision::CapacityReached => {
+                LimitDecision::AllowFallback => {
                     warn!(
                         log_schema_version = LOG_SCHEMA_VERSION,
                         component = "guard-edge",
-                        error_code = "EDGE_RATE_LIMIT_CAPACITY_REACHED",
+                        event_code = "EDGE_RATE_LIMIT_AGGREGATE_FALLBACK",
                         request_id = %context.request_id,
-                        "rate limiter capacity reached; request allowed"
+                        "client limiter capacity reached; aggregate budgets remain active"
                     );
                 }
             }

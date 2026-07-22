@@ -5,9 +5,10 @@
 use std::net::IpAddr;
 
 use super::{
-    ConfigError, CspMode, DetectionProfile, GuardConfig, InspectionMode, ServiceCollectorKind,
-    TlsManagementMode,
+    AdminAuthProvider, ConfigError, CspMode, DetectionProfile, FirewallMode, GuardConfig,
+    InspectionMode, ServiceCollectorKind, TlsManagementMode, UiTlsTermination,
 };
+use crate::crawler::CrawlerProvider;
 
 const VALID_CONFIG: &str = r#"
 schema_version = 1
@@ -61,9 +62,100 @@ fn parses_valid_observe_only_config() {
     assert!(config.security.strip_origin_headers);
     assert_eq!(config.security.csp_mode, CspMode::ReportOnly);
     assert_eq!(config.security.auth_rate_limit_rpm, 10);
+    assert_eq!(config.ui.tls_termination, UiTlsTermination::Edge);
+    assert_eq!(config.ui.auth_provider, AdminAuthProvider::Local);
+    assert_eq!(config.firewall.mode, FirewallMode::Disabled);
+    assert_eq!(config.firewall.ssh_port, 22);
+    assert_eq!(config.edge.prefix_rate_limit_multiplier, 32);
+    assert_eq!(config.edge.route_rate_limit_multiplier, 128);
+    assert_eq!(config.edge.global_rate_limit_multiplier, 256);
     assert_eq!(config.retention.audit_days, 365);
     assert_eq!(config.storage.max_database_bytes, 512 * 1_024 * 1_024);
     assert_eq!(config.storage.min_disk_free_bytes, 256 * 1_024 * 1_024);
+}
+
+#[test]
+fn accepts_trusted_external_tls_management_host_without_edge_https() {
+    let input = VALID_CONFIG.replace(
+        "bind = \"127.0.0.1:7727\"",
+        "bind = \"127.0.0.1:7727\"\npublic_host = \"vpsguard.gnuboard5.local\"\ntls_termination = \"trusted_external\"",
+    );
+    let config = GuardConfig::from_toml(&input).expect("trusted Apache TLS should parse");
+    assert_eq!(config.ui.tls_termination, UiTlsTermination::TrustedExternal);
+}
+
+#[test]
+fn external_tls_management_requires_a_trusted_loopback_peer() {
+    let input = VALID_CONFIG
+        .replace("trusted_proxy_cidrs = [\"127.0.0.1/32\"]", "trusted_proxy_cidrs = []")
+        .replace(
+            "bind = \"127.0.0.1:7727\"",
+            "bind = \"127.0.0.1:7727\"\npublic_host = \"vpsguard.gnuboard5.local\"\ntls_termination = \"trusted_external\"",
+        );
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "ui.tls_termination",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn validates_pam_authentication_and_firewall_ownership() {
+    let input = VALID_CONFIG
+        .replace(
+            "bind = \"127.0.0.1:7727\"",
+            "bind = \"127.0.0.1:7727\"\nauth_provider = \"pam\"\npam_service = \"vps-guard\"\npam_allowed_group = \"vpsguard-admin\"",
+        )
+        .replace(
+            "[detection]",
+            "[firewall]\nmode = \"jw_agent_delegated\"\nssh_port = 2222\n\n[detection]",
+        );
+    let config = GuardConfig::from_toml(&input).expect("PAM and delegated firewall should parse");
+    assert_eq!(config.ui.auth_provider, AdminAuthProvider::Pam);
+    assert_eq!(config.firewall.mode, FirewallMode::JwAgentDelegated);
+    assert_eq!(config.firewall.ssh_port, 2222);
+
+    let root_group = input.replace(
+        "pam_allowed_group = \"vpsguard-admin\"",
+        "pam_allowed_group = \"root\"",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&root_group),
+        Err(ConfigError::Invalid {
+            field: "ui.pam_allowed_group",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn validates_declared_bot_policy_with_official_crawler_networks() {
+    let input = VALID_CONFIG.replace(
+        "[detection]",
+        "[bot_policy]\nblock_unapproved_declared_bots = true\nallowed_crawlers = [\"google\", \"naver\", \"bing\"]\n\n[[bot_policy.crawler_networks]]\nprovider = \"google\"\ncidrs = [\"66.249.64.0/19\"]\n\n[[bot_policy.crawler_networks]]\nprovider = \"naver\"\ncidrs = [\"125.209.192.0/18\"]\n\n[[bot_policy.crawler_networks]]\nprovider = \"bing\"\ncidrs = [\"157.55.0.0/16\"]\n\n[detection]",
+    );
+    let config = GuardConfig::from_toml(&input).expect("verified crawler policy should parse");
+    assert!(config.bot_policy.block_unapproved_declared_bots);
+    assert!(
+        config
+            .bot_policy
+            .allowed_crawlers
+            .contains(&CrawlerProvider::Google)
+    );
+
+    let missing_network = input.replace(
+        "allowed_crawlers = [\"google\", \"naver\", \"bing\"]",
+        "allowed_crawlers = [\"google\", \"naver\", \"bing\", \"google\"]",
+    );
+    assert!(matches!(
+        GuardConfig::from_toml(&missing_network),
+        Err(ConfigError::Invalid {
+            field: "bot_policy.allowed_crawlers",
+            ..
+        })
+    ));
 }
 
 #[test]

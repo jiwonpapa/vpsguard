@@ -8,6 +8,8 @@ export interface StatusResponse {
     csp_mode: "off" | "report_only" | "enforce";
     hsts_max_age_seconds: number;
     auth_rate_limit_rpm: number | null;
+    waf_mode: "off" | "detection" | "tuned_enforce";
+    waf_adapter: "mod_security_owasp_crs";
   };
   mode: string;
   manual_hold: boolean;
@@ -237,4 +239,62 @@ export interface ActionResponse {
   applied: boolean;
   mode: string;
   operation_id: string;
+}
+
+export type FirewallMode = "standalone_ufw" | "jw_agent_delegated" | "disabled";
+export type UfwAction = "allow" | "deny";
+export type UfwProtocol = "tcp" | "udp" | "any";
+
+export interface UfwObservedRule {
+  number: number;
+  id: string;
+  summary: string;
+}
+
+export interface UfwSnapshot {
+  active: boolean;
+  fingerprint: string;
+  owned_rules: UfwObservedRule[];
+  foreign_rules: string[];
+}
+
+export interface FirewallStatus {
+  mode: FirewallMode;
+  backend: "ufw" | "jw-agent" | "disabled";
+  mutable: boolean;
+  snapshot: UfwSnapshot | null;
+}
+
+export interface UfwRule {
+  id: string;
+  action: UfwAction;
+  source: string | null;
+  destination_port: number | null;
+  protocol: UfwProtocol;
+}
+
+export type UfwMutation =
+  | { kind: "add"; rule: UfwRule }
+  | { kind: "remove"; rule: UfwRule };
+
+export interface UfwPlan {
+  before_fingerprint: string;
+  mutation: UfwMutation;
+  ssh_port: number;
+}
+
+export interface PendingFirewallPlan {
+  operation_id: string;
+  plan: UfwPlan;
+}
+
+export interface FirewallApplyResult {
+  operation_id: string;
+  audits: Array<{
+    occurred_at: string;
+    program: string;
+    argv: string[];
+    exit_code: number | null;
+    duration_ms: number;
+  }>;
 }

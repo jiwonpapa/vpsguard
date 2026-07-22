@@ -123,7 +123,11 @@ def run_ops_harness(root: Path) -> OpsHarnessSummary:
 
     analyzer = shutil.which("systemd-analyze")
     if analyzer is not None:
-        units = tuple(str(path.relative_to(root)) for path in sorted((root / "packaging/systemd").glob("*.service")))
+        units = tuple(
+            str(path.relative_to(root))
+            for pattern in ("*.service", "*.socket")
+            for path in sorted((root / "packaging/systemd").glob(pattern))
+        )
         result = execute(
             "systemd unit verification",
             (analyzer, "verify", *units),
@@ -150,6 +154,10 @@ def run_ops_harness(root: Path) -> OpsHarnessSummary:
     _require_contains(
         root / "packaging/systemd/vps-guard-edge.service",
         "ExecStart=/" + "usr/local/bin/vps-guard-edge",
+    )
+    _require_contains(
+        root / "packaging/systemd/vps-guard-privileged.socket",
+        "SocketMode=0660",
     )
     return OpsHarnessSummary(results=tuple(results), evidence_directory=evidence)
 

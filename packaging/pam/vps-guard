@@ -1,0 +1,5 @@
+# SEC-015: server password first, mandatory TOTP second, account lock/expiry last.
+auth    requisite pam_succeed_if.so uid >= 1000 quiet
+auth    required  pam_unix.so
+auth    required  pam_google_authenticator.so user=root secret=/var/lib/vps-guard/pam/${USER}
+account required  pam_unix.so

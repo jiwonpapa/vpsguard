@@ -11,6 +11,7 @@ pub mod operation;
 pub mod plan;
 pub mod secret;
 pub mod tls;
+pub mod ufw;
 
 pub use atomic_store::{AtomicJsonStore, StoreError};
 pub use command::{CommandAudit, CommandError, CommandOutput, OwnedProgram, SystemCommandRunner};
@@ -37,4 +38,8 @@ pub use tls::{
     CertbotAssistedPlan, CertbotPlanError, CertbotPlanStep, CertificateInspection, TlsHealth,
     TlsManagementSnapshot, TlsOwnership, TlsRenewalState, build_certbot_assisted_plan,
     inspect_tls_management, resolve_tls_credential_path, validate_certificate,
+};
+pub use ufw::{
+    SystemUfwExecutor, UfwAction, UfwController, UfwError, UfwExecutor, UfwMutation,
+    UfwObservedRule, UfwPlan, UfwProtocol, UfwRule, UfwSnapshot, validate_ufw_add_arguments,
 };

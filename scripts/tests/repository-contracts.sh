@@ -47,10 +47,10 @@ grep -Fq 'VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot' scripts/update-
 grep -Fq 'systemd/vps-guard-control.service.d/20-cloudflare-credential.conf' scripts/build-release.sh
 grep -Fq 'systemd-examples' scripts/build-release.sh
 grep -Fq 'g7devops/nginx' scripts/build-release.sh
-grep -Fq 'scripts/cutover-g7devops-remote.sh' scripts/build-release.sh
-grep -Fq 'scripts/cutover-g7devops-direct.sh' scripts/build-release.sh
-grep -Fq 'scripts/cutover-g7devops-direct-remote.sh' scripts/build-release.sh
-grep -Fq 'scripts/state-common.sh' scripts/build-release.sh
+grep -Fq 'cutover-g7devops-remote' scripts/build-release.sh
+grep -Fq 'cutover-g7devops-direct' scripts/build-release.sh
+grep -Fq 'cutover-g7devops-direct-remote' scripts/build-release.sh
+grep -Fq 'state-common' scripts/build-release.sh
 grep -Fq 'configs/vps-guard.g7devops.direct.toml' scripts/build-release.sh
 grep -Fq 'configs/nginx/g7devops-origin-only.conf' scripts/build-release.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
@@ -108,8 +108,6 @@ grep -Fq 'rejects_method(&context.method)' crates/guard-edge/src/proxy.rs
 grep -Fq 'VPSGUARD_INTEGRATION_BODY_SECRET' scripts/integration-gate.sh
 grep -Fq '계정·session·device별 한도' docs/APP_SECURITY.md
 
-# OBS-012, OBS-013, NFR-005: request 상관관계와 운영 로그 공통 field가
-# hot path·Control API·systemd journal 계약에서 함께 유지돼야 합니다.
 grep -Fq 'RequestIdGenerator' crates/guard-edge/src/proxy.rs
 grep -Fq 'traffic_request_id_idx' crates/guard-control/src/storage.rs
 grep -Fq '/api/v1/correlations/{correlation_id}' crates/guard-control/src/api.rs
@@ -127,8 +125,6 @@ grep -Fq 'StartLimitBurst=30' packaging/systemd/vps-guard-edge.service
 grep -Fq 'RemoteIPHeader X-Forwarded-For' configs/apache/vpsguard-origin.conf
 grep -Fq 'RemoteIPInternalProxy 127.0.0.1' configs/apache/vpsguard-origin.conf
 
-# SEC-001, SEC-004, ACT-006: Cloudflare 비밀값은 config/env가 아닌 root-only
-# 원본과 systemd credential로 전달하고, 변경 대상은 명시적 record ID로 고정합니다.
 grep -Fq 'LoadCredential=cloudflare-token:/etc/vps-guard/secrets/cloudflare-token' packaging/systemd/vps-guard-control-cloudflare-credential.conf
 grep -Fq 'LoadCredential=mysql-monitor-url:/etc/vps-guard/secrets/mysql-monitor-url' packaging/systemd/vps-guard-control-service-credentials.conf.example
 grep -Fq 'LoadCredential=redis-monitor-url:/etc/vps-guard/secrets/redis-monitor-url' packaging/systemd/vps-guard-control-service-credentials.conf.example
@@ -141,8 +137,6 @@ if grep -Rq --exclude-dir=target --exclude='repository-contracts.sh' 'record_nam
   exit 1
 fi
 
-# TLS-001, TLS-006, SEC-001: startup은 검증만 하고 private key는 edge
-# credential로만 전달하며 control에는 공개 certificate만 전달합니다.
 grep -Fq 'management = "auto"' configs/vps-guard.example.toml
 grep -Fq 'LoadCredential=tls-cert.pem:@CERT_FILE@' packaging/systemd/vps-guard-control-tls-certificate.conf.example
 if grep -Fq 'tls-key.pem' packaging/systemd/vps-guard-control-tls-certificate.conf.example; then

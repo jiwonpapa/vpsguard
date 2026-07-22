@@ -12,7 +12,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use guard_core::config::UiConfig;
+use guard_core::config::{AdminAuthProvider, UiConfig};
 use hmac::{Hmac, Mac};
 use secrecy::zeroize::Zeroize;
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
@@ -24,6 +24,7 @@ use totp_rs::{Algorithm, TOTP};
 use crate::auth_store::{
     AuthRepository, AuthStoreError, NewAdminAccount, NewStoredSession, StoredAdminAccount,
 };
+use crate::pam_auth::{PamAuthenticator, PamCredentials, privileged_authenticator};
 
 const SESSION_COOKIE: &str = "vps_guard_session";
 const SECURE_SESSION_COOKIE: &str = "__Host-vps_guard_session";
@@ -62,6 +63,9 @@ pub enum AuthError {
     /// 등록 session이 없거나 만료됐습니다.
     #[error("관리자 등록 session이 없거나 만료됐습니다")]
     EnrollmentUnavailable,
+    /// 선택한 provider가 VPSGuard password 등록을 사용하지 않습니다.
+    #[error("PAM mode에서는 VPSGuard password 등록을 사용하지 않습니다")]
+    EnrollmentDisabled,
     /// TOTP code 형식 또는 값이 잘못됐습니다.
     #[error("2단계 인증 code가 올바르지 않습니다")]
     InvalidTotp,
@@ -77,6 +81,9 @@ pub enum AuthError {
     /// system clock을 UNIX timestamp로 변환하지 못했습니다.
     #[error("관리자 인증 system clock이 올바르지 않습니다")]
     Clock,
+    /// PAM credential·계정·group 검증 실패입니다.
+    #[error("Linux-PAM 인증 또는 계정 검증에 실패했습니다")]
+    Pam,
 }
 
 /// 새로 만든 단회 로그인 코드입니다.
@@ -173,7 +180,15 @@ impl UiAccessPolicy {
             },
             |host| Self {
                 expected_host: host.to_ascii_lowercase(),
-                allowed_origin: format!("https://{}", host.to_ascii_lowercase()),
+                allowed_origin: if config.public_port == 443 {
+                    format!("https://{}", host.to_ascii_lowercase())
+                } else {
+                    format!(
+                        "https://{}:{}",
+                        host.to_ascii_lowercase(),
+                        config.public_port
+                    )
+                },
                 secure_cookie: true,
             },
         )
@@ -217,6 +232,8 @@ pub(crate) enum AuthenticationMethod {
     PasswordTotp,
     /// 관리자 비밀번호와 일회용 복구 코드를 확인했습니다.
     PasswordRecovery,
+    /// Linux-PAM password와 PAM stack의 두 번째 factor를 확인했습니다.
+    PamMfa,
     /// root local 단회 code를 사용한 break-glass session입니다.
     BreakGlass,
 }
@@ -226,6 +243,7 @@ impl AuthenticationMethod {
         match self {
             Self::PasswordTotp => "password_totp",
             Self::PasswordRecovery => "password_recovery",
+            Self::PamMfa => "pam_mfa",
             Self::BreakGlass => "break_glass",
         }
     }
@@ -341,13 +359,48 @@ pub(crate) struct SessionStore {
     pending_enrollment: Mutex<Option<PendingEnrollment>>,
     dummy_password_hash: String,
     login_limiter: LoginRateLimiter,
+    authenticator: AccountAuthenticator,
+}
+
+enum AccountAuthenticator {
+    Local,
+    Pam(std::sync::Arc<dyn PamAuthenticator>),
 }
 
 impl SessionStore {
     /// 운영 인증 service를 만들고 timing equalization용 Argon2id verifier를 준비합니다.
+    #[cfg(test)]
     pub(crate) fn new(
         repository: std::sync::Arc<AuthRepository>,
         login_rate_limit_rpm: u32,
+    ) -> Result<Self, AuthError> {
+        Self::with_authenticator(
+            repository,
+            login_rate_limit_rpm,
+            AccountAuthenticator::Local,
+        )
+    }
+
+    /// UI 설정에 따라 local 또는 Linux-PAM 인증 service를 만듭니다.
+    pub(crate) fn from_ui_config(
+        repository: std::sync::Arc<AuthRepository>,
+        config: &UiConfig,
+    ) -> Result<Self, AuthError> {
+        let authenticator = match config.auth_provider {
+            AdminAuthProvider::Local => AccountAuthenticator::Local,
+            AdminAuthProvider::Pam => AccountAuthenticator::Pam(privileged_authenticator(
+                config.privileged_socket.clone(),
+                &config.pam_service,
+                &config.pam_allowed_group,
+            )),
+        };
+        Self::with_authenticator(repository, config.login_rate_limit_rpm, authenticator)
+    }
+
+    fn with_authenticator(
+        repository: std::sync::Arc<AuthRepository>,
+        login_rate_limit_rpm: u32,
+        authenticator: AccountAuthenticator,
     ) -> Result<Self, AuthError> {
         let dummy_password =
             SecretString::from("vpsguard-dummy-password-not-an-account".to_owned());
@@ -356,6 +409,7 @@ impl SessionStore {
             pending_enrollment: Mutex::new(None),
             dummy_password_hash: hash_password(&dummy_password)?,
             login_limiter: LoginRateLimiter::new(login_rate_limit_rpm),
+            authenticator,
         })
     }
 
@@ -370,7 +424,23 @@ impl SessionStore {
 
     /// 최초 관리자 등록 필요 여부를 반환합니다.
     pub(crate) fn setup_required(&self) -> Result<bool, AuthError> {
-        Ok(!self.repository.is_configured()?)
+        match &self.authenticator {
+            AccountAuthenticator::Local => Ok(!self.repository.is_configured()?),
+            AccountAuthenticator::Pam(_) => Ok(false),
+        }
+    }
+
+    /// VPSGuard 전용 password/TOTP 등록 화면이 활성인지 반환합니다.
+    pub(crate) const fn enrollment_enabled(&self) -> bool {
+        matches!(&self.authenticator, AccountAuthenticator::Local)
+    }
+
+    /// UI에 노출할 활성 credential provider를 반환합니다.
+    pub(crate) const fn auth_provider(&self) -> AdminAuthProvider {
+        match &self.authenticator {
+            AccountAuthenticator::Local => AdminAuthProvider::Local,
+            AccountAuthenticator::Pam(_) => AdminAuthProvider::Pam,
+        }
     }
 
     /// 단회 bootstrap 검증 후 실행할 관리자 ID·비밀번호 정책 검사입니다.
@@ -389,6 +459,9 @@ impl SessionStore {
         password: SecretString,
         now: i64,
     ) -> Result<EnrollmentStart, AuthError> {
+        if !self.enrollment_enabled() {
+            return Err(AuthError::EnrollmentDisabled);
+        }
         if self.repository.is_configured()? {
             return Err(AuthError::AlreadyConfigured);
         }
@@ -424,6 +497,9 @@ impl SessionStore {
         secure_cookie: bool,
         now: i64,
     ) -> Result<EnrollmentComplete, AuthError> {
+        if !self.enrollment_enabled() {
+            return Err(AuthError::EnrollmentDisabled);
+        }
         validate_totp_shape(totp_code)?;
         let mut pending_slot = self.lock_pending();
         let Some(pending) = pending_slot.as_ref() else {
@@ -494,6 +570,24 @@ impl SessionStore {
         secure_cookie: bool,
         now: i64,
     ) -> Result<IssuedSession, AuthError> {
+        if let AccountAuthenticator::Pam(authenticator) = &self.authenticator {
+            let second_factor = match second_factor {
+                LoginSecondFactor::Totp(code) | LoginSecondFactor::RecoveryCode(code) => code,
+            };
+            let identity = authenticator
+                .authenticate(PamCredentials {
+                    username,
+                    password,
+                    second_factor: SecretString::from(second_factor),
+                })
+                .map_err(|_error| AuthError::Pam)?;
+            return self.issue_session(
+                identity.actor,
+                AuthenticationMethod::PamMfa,
+                secure_cookie,
+                now,
+            );
+        }
         let normalized =
             normalize_username(&username).unwrap_or_else(|_| username.to_ascii_lowercase());
         let account = self.repository.account(&normalized)?;

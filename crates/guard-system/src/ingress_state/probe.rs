@@ -197,7 +197,7 @@ fn listener_port(line: &str) -> Option<u16> {
 fn protected_listener_endpoint(line: &str) -> Option<String> {
     let endpoint = line.split_whitespace().nth(3)?;
     let port = listener_port(line)?;
-    if matches!(port, 80 | 443 | 18080 | 18081) {
+    if matches!(port, 80 | 443 | 7443 | 18080 | 18081) {
         None
     } else {
         Some(endpoint.to_owned())
@@ -218,7 +218,7 @@ mod tests {
             protected_listener_endpoint("LISTEN 0 511 127.0.0.1:3306 0.0.0.0:*"),
             Some("127.0.0.1:3306".to_owned())
         );
-        for port in [80, 443, 18080, 18081] {
+        for port in [80, 443, 7443, 18080, 18081] {
             assert_eq!(
                 protected_listener_endpoint(&format!("LISTEN 0 511 127.0.0.1:{port} 0.0.0.0:*")),
                 None

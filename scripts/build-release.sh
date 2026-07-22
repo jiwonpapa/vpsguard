@@ -6,74 +6,46 @@ build_tool="${CARGO_BUILD_TOOL:-cargo}"
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | head -1)"
 [[ -n "${version}" ]] || version="0.1.0"
 bundle="${repo_root}/target/release-bundle/${target}/vpsguard-${version}"
-
 cd "${repo_root}"
 trap 'bash scripts/build-storage.sh --auto || true' EXIT
 (cd web && bun ci && bun run check)
 "${build_tool}" build --locked --release --target "${target}" \
-  -p guard-cli -p guard-control -p guard-edge
-
+  -p guard-cli -p guard-control -p guard-edge --bins
 rm -rf "${bundle}"
 mkdir -p "${bundle}/bin" \
   "${bundle}/systemd/vps-guard-control.service.d" \
   "${bundle}/systemd-examples" \
-  "${bundle}/tmpfiles" "${bundle}/certbot" "${bundle}/scripts" "${bundle}/sbom" \
+  "${bundle}/tmpfiles" "${bundle}/certbot" "${bundle}/pam" "${bundle}/scripts" "${bundle}/sbom" \
   "${bundle}/g7devops/nginx" "${bundle}/g7devops/systemd" \
   "${bundle}/g7devops/certbot" "${bundle}/gnuboard5/apache"
-install -m 0755 "target/${target}/release/vps-guard" "${bundle}/bin/"
-install -m 0755 "target/${target}/release/vps-guard-control" "${bundle}/bin/"
-install -m 0755 "target/${target}/release/vps-guard-edge" "${bundle}/bin/"
-install -m 0644 packaging/systemd/*.service "${bundle}/systemd/"
+install -m 0755 target/${target}/release/vps-guard{,-control,-privileged,-edge} "${bundle}/bin/"
+install -m 0644 packaging/systemd/*.service packaging/systemd/*.socket "${bundle}/systemd/"
 install -m 0644 packaging/systemd/vps-guard-control-cloudflare-credential.conf \
   "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf"
 install -m 0644 packaging/systemd/*.conf.example "${bundle}/systemd-examples/"
 install -m 0644 packaging/tmpfiles/vps-guard.conf "${bundle}/tmpfiles/"
 install -m 0644 packaging/ownership-manifest.txt "${bundle}/"
 install -m 0755 packaging/certbot/vps-guard-deploy-hook "${bundle}/certbot/"
-install -m 0755 \
-  scripts/deployment-state.sh \
-  scripts/state-common.sh \
-  scripts/operation-lock.sh \
-  scripts/g7devops-direct-state.sh \
-  scripts/restore-g7devops-direct.sh \
-  scripts/cutover-g7devops-direct.sh \
-  scripts/cutover-g7devops-remote.sh \
-  scripts/cutover-g7devops-direct-remote.sh \
-  scripts/ingress-transaction.sh \
-  scripts/update-release.sh \
-  scripts/uninstall.sh \
-  "${bundle}/scripts/"
+install -m 0644 packaging/pam/vps-guard "${bundle}/pam/"
+install -m 0755 scripts/{deployment-state,state-common,operation-lock,g7devops-direct-state,restore-g7devops-direct,cutover-g7devops-direct,cutover-g7devops-remote,cutover-g7devops-direct-remote,ingress-transaction,update-release,uninstall}.sh "${bundle}/scripts/"
+install -m 0755 tools/vm/{pam-login-probe,standalone-security-probe}.sh "${bundle}/scripts/"
 install -m 0644 configs/vps-guard.example.toml "${bundle}/"
-install -m 0644 configs/vps-guard.g7devops.shadow.toml \
-  "${bundle}/g7devops/vps-guard.shadow.toml"
-install -m 0644 configs/vps-guard.g7devops.ingress.toml \
-  "${bundle}/g7devops/vps-guard.ingress.toml"
-install -m 0644 configs/vps-guard.g7devops.direct.toml \
-  "${bundle}/g7devops/vps-guard.direct.toml"
-install -m 0644 configs/nginx/g7devops-edge.conf \
-  "${bundle}/g7devops/nginx/edge.conf"
-install -m 0644 configs/nginx/g7devops-bypass.conf \
-  "${bundle}/g7devops/nginx/bypass.conf"
-install -m 0644 configs/nginx/g7devops-origin-only.conf \
-  "${bundle}/g7devops/nginx/origin-only.conf"
-install -m 0644 configs/systemd/g7devops-edge-tls.conf \
-  "${bundle}/g7devops/systemd/edge-tls.conf"
-install -m 0755 configs/certbot/g7devops-deploy-hook \
-  "${bundle}/g7devops/certbot/deploy-hook"
-install -m 0644 configs/vps-guard.gnuboard5.observe.toml \
-  "${bundle}/gnuboard5/vps-guard.observe.toml"
-install -m 0644 configs/vps-guard.gnuboard5.enforce.toml \
-  "${bundle}/gnuboard5/vps-guard.enforce.toml"
-install -m 0644 configs/apache/gnuboard5-guarded.conf \
-  "${bundle}/gnuboard5/apache/gnuboard5-guarded.conf"
-install -m 0644 configs/apache/gnuboard5-bypass.conf \
-  "${bundle}/gnuboard5/apache/gnuboard5-bypass.conf"
-install -m 0644 configs/apache/vpsguard-origin.conf \
-  "${bundle}/gnuboard5/apache/vpsguard-origin.conf"
-install -m 0644 configs/apache/vpsguard-origin-ports.conf \
-  "${bundle}/gnuboard5/apache/vpsguard-origin-ports.conf"
+install -m 0644 configs/vps-guard.g7devops.shadow.toml "${bundle}/g7devops/vps-guard.shadow.toml"
+install -m 0644 configs/vps-guard.g7devops.ingress.toml "${bundle}/g7devops/vps-guard.ingress.toml"
+install -m 0644 configs/vps-guard.g7devops.direct.toml "${bundle}/g7devops/vps-guard.direct.toml"
+install -m 0644 configs/nginx/g7devops-edge.conf "${bundle}/g7devops/nginx/edge.conf"
+install -m 0644 configs/nginx/g7devops-bypass.conf "${bundle}/g7devops/nginx/bypass.conf"
+install -m 0644 configs/nginx/g7devops-origin-only.conf "${bundle}/g7devops/nginx/origin-only.conf"
+install -m 0644 configs/systemd/g7devops-edge-tls.conf "${bundle}/g7devops/systemd/edge-tls.conf"
+install -m 0755 configs/certbot/g7devops-deploy-hook "${bundle}/g7devops/certbot/deploy-hook"
+install -m 0644 configs/vps-guard.gnuboard5.observe.toml "${bundle}/gnuboard5/vps-guard.observe.toml"
+install -m 0644 configs/vps-guard.gnuboard5.enforce.toml "${bundle}/gnuboard5/vps-guard.enforce.toml"
+install -m 0644 configs/crawler-networks.json "${bundle}/gnuboard5/crawler-networks.json"
+install -m 0644 configs/apache/{gnuboard5-guarded,gnuboard5-bypass,vpsguard-origin,vpsguard-origin-ports}.conf "${bundle}/gnuboard5/apache/"
+install -m 0644 configs/apache/waf-*.conf configs/apache/gnuboard5-crs-exclusions.conf \
+  "${bundle}/gnuboard5/apache/"
 install -m 0644 docs/OPERATIONS.md "${bundle}/"
-
+install -m 0644 docs/THIRD_PARTY_NOTICES.md "${bundle}/"
 if command -v cargo-cyclonedx >/dev/null 2>&1; then
   for package in guard-cli guard-control guard-edge; do
     cargo cyclonedx \

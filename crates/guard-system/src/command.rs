@@ -12,6 +12,8 @@ use time::format_description::well_known::Rfc3339;
 /// 실행할 수 있는 OS program allowlist입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnedProgram {
+    /// Ubuntu Uncomplicated Firewall CLI입니다.
+    Ufw,
     /// nftables CLI입니다.
     Nft,
     /// VPSGuard-owned systemd unit 제어입니다.
@@ -41,6 +43,7 @@ pub enum OwnedProgram {
 impl OwnedProgram {
     fn path(self) -> &'static str {
         match self {
+            Self::Ufw => "/usr/sbin/ufw",
             Self::Nft => "/usr/sbin/nft",
             Self::Systemctl => "/usr/bin/systemctl",
             Self::Nginx => "/usr/sbin/nginx",
@@ -74,7 +77,8 @@ pub struct CommandAudit {
 }
 
 /// command stdout과 감사 결과입니다.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandOutput {
     /// UTF-8 lossy stdout입니다.
     pub stdout: String,
@@ -200,6 +204,7 @@ mod tests {
     #[test]
     fn program_paths_are_fixed_and_audit_is_serializable() -> Result<(), Box<dyn std::error::Error>>
     {
+        assert_eq!(OwnedProgram::Ufw.path(), "/usr/sbin/ufw");
         assert_eq!(OwnedProgram::Nft.path(), "/usr/sbin/nft");
         assert_eq!(OwnedProgram::Apache2ctl.path(), "/usr/sbin/apache2ctl");
         assert_eq!(OwnedProgram::VpsGuard.path(), "/usr/local/bin/vps-guard");

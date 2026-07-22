@@ -7,6 +7,7 @@ import {
 import { AppShell } from "./app-shell";
 import { ClientsPage } from "./pages/clients";
 import { IncidentsPage } from "./pages/incidents";
+import { FirewallPage } from "./pages/firewall";
 import { OverviewPage } from "./pages/overview";
 import { ResourcesPage } from "./pages/resources";
 import { RoutesPage } from "./pages/routes";
@@ -50,6 +51,12 @@ const resourcesRoute = createRoute({
   component: ResourcesPage,
 });
 
+const firewallRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/firewall",
+  component: FirewallPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   trafficRoute,
@@ -57,6 +64,7 @@ const routeTree = rootRoute.addChildren([
   routesRoute,
   incidentsRoute,
   resourcesRoute,
+  firewallRoute,
 ]);
 
 export const router = createRouter({

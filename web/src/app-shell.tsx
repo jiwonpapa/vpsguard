@@ -12,6 +12,7 @@ import {
   Network,
   Route,
   ShieldCheck,
+  ShieldEllipsis,
   ShieldX,
   Sun,
   Users,
@@ -29,6 +30,7 @@ const navigation = [
   ["/routes", "경로", Route],
   ["/incidents", "사건", BookOpenCheck],
   ["/resources", "자원", Cpu],
+  ["/firewall", "방화벽", ShieldEllipsis],
 ] as const;
 
 export function AppShell() {

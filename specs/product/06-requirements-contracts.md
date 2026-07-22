@@ -272,6 +272,7 @@ language = "ko"
 
 [firewall]
 mode = "standalone_ufw"
+ssh_port = 22
 
 [detection]
 profile = "gnuboard7"

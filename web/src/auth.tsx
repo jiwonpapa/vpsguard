@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStatus(authStatus);
         setSession(restored);
         if (restored) void queryClient.invalidateQueries();
-        if (authStatus.setup_required && !restored) {
+        if (authStatus.enrollment_enabled && authStatus.setup_required && !restored) {
           setView("setup-account");
           setOpen(true);
         }
@@ -81,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const showLogin = () => {
     setMessage(null);
-    setView(status?.setup_required ? "setup-account" : "login");
+    setView(status?.enrollment_enabled && status.setup_required ? "setup-account" : "login");
     setOpen(true);
   };
 
@@ -264,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               <div>
                 <KeyRound className="mb-4 size-5 text-orange-400" aria-hidden="true" />
                 <h2 id="auth-title" className="text-lg font-semibold">{authTitle(view)}</h2>
-                <p className="mt-2 text-sm leading-6 text-zinc-500">{authDescription(view)}</p>
+                <p className="mt-2 text-sm leading-6 text-zinc-500">{authDescription(view, status?.auth_provider)}</p>
               </div>
               {view !== "recovery-codes" ? (
                 <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="닫기"><X className="size-4" /></Button>
@@ -390,11 +390,12 @@ function authTitle(view: AuthView): string {
   return "VPSGuard 관리자 로그인";
 }
 
-function authDescription(view: AuthView): string {
+function authDescription(view: AuthView, provider?: AuthStatus["auth_provider"]): string {
   if (view === "setup-account") return "Linux·SSH 계정과 분리된 VPSGuard 전용 관리자를 만듭니다.";
   if (view === "setup-totp") return "인증 앱에 VPSGuard 계정을 추가한 뒤 현재 코드를 확인합니다.";
   if (view === "recovery-codes") return "인증기를 잃었을 때 비밀번호와 함께 사용할 일회용 코드입니다.";
   if (view === "break-glass") return "터미널은 최초 설정과 계정 복구 때만 사용합니다.";
+  if (provider === "pam") return "서버 계정·비밀번호와 PAM이 요구하는 2차 인증 코드를 입력하십시오.";
   return "관리자 ID·비밀번호와 인증기 코드를 입력하십시오.";
 }
 

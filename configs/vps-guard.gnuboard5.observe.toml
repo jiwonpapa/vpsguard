@@ -31,14 +31,30 @@ certificates = []
 
 [ui]
 bind = "127.0.0.1:7727"
+public_host = "192.168.0.143"
+public_port = 7443
+tls_termination = "trusted_external"
+auth_provider = "pam"
+pam_service = "vps-guard"
+pam_allowed_group = "vpsguard-admin"
 admin_socket = "/run/vps-guard/admin.sock"
+privileged_socket = "/run/vps-guard-privileged/control.sock"
 login_rate_limit_rpm = 10
 language = "ko"
+
+[firewall]
+mode = "standalone_ufw"
+ssh_port = 22
 
 [detection]
 profile = "gnuboard5"
 inspection = "profiled"
 mode = "observe"
+
+[bot_policy]
+block_unapproved_declared_bots = true
+allowed_crawlers = ["google", "bing", "naver"]
+crawler_networks_file = "/etc/vps-guard/crawler-networks.json"
 
 [security]
 baseline_response_headers = true
@@ -46,6 +62,10 @@ strip_origin_headers = true
 csp_mode = "report_only"
 hsts_max_age_seconds = 0
 auth_rate_limit_rpm = 6
+
+[waf]
+mode = "detection"
+adapter = "mod_security_owasp_crs"
 
 [cloudflare]
 enabled = false

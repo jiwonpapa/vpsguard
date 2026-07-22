@@ -24,14 +24,17 @@ use crate::{
 /// 기존 Shell snapshot과 호환되는 deployment snapshot schema입니다.
 pub const DEPLOYMENT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-pub(crate) const OWNED_FILES: [&str; 16] = [
+pub(crate) const OWNED_FILES: [&str; 23] = [
     "/usr/local/bin/vps-guard",
     "/usr/local/bin/vps-guard-control",
+    "/usr/local/bin/vps-guard-privileged",
     "/usr/local/bin/vps-guard-edge",
     "/usr/local/lib/vps-guard/current",
     "/usr/local/libexec/vps-guard/deployment-state",
     "/usr/local/libexec/vps-guard/state-common.sh",
     "/etc/systemd/system/vps-guard-control.service",
+    "/etc/systemd/system/vps-guard-privileged.service",
+    "/etc/systemd/system/vps-guard-privileged.socket",
     "/etc/systemd/system/vps-guard-edge.service",
     "/etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf",
     "/etc/systemd/system/vps-guard-control.service.d/20-service-credentials.conf",
@@ -39,24 +42,34 @@ pub(crate) const OWNED_FILES: [&str; 16] = [
     "/etc/systemd/system/vps-guard-edge.service.d/30-tls-credentials.conf",
     "/usr/lib/tmpfiles.d/vps-guard.conf",
     "/etc/vps-guard/config.toml",
+    "/etc/vps-guard/crawler-networks.json",
+    "/etc/vps-guard/apache/waf-active.conf",
+    "/etc/vps-guard/apache/gnuboard5-crs-exclusions.conf",
     "/etc/vps-guard/secrets/cloudflare-token",
+    "/etc/pam.d/vps-guard",
     "/var/lib/vps-guard/ownership-manifest.txt",
 ];
 
-pub(crate) const OWNED_DIRECTORIES: [&str; 9] = [
+pub(crate) const OWNED_DIRECTORIES: [&str; 11] = [
     "/usr/local/lib/vps-guard/releases",
     "/usr/local/lib/vps-guard",
     "/usr/local/libexec/vps-guard",
     "/etc/systemd/system/vps-guard-control.service.d",
     "/etc/systemd/system/vps-guard-edge.service.d",
     "/etc/vps-guard/secrets",
+    "/etc/vps-guard/apache",
     "/etc/vps-guard",
     "/run/vps-guard",
+    "/run/vps-guard-privileged",
     "/var/lib/vps-guard",
 ];
 
-pub(crate) const OWNED_SERVICES: [&str; 2] =
-    ["vps-guard-control.service", "vps-guard-edge.service"];
+pub(crate) const OWNED_SERVICES: [&str; 4] = [
+    "vps-guard-control.service",
+    "vps-guard-privileged.service",
+    "vps-guard-privileged.socket",
+    "vps-guard-edge.service",
+];
 
 pub(crate) const PROTECTED_SERVICES: [&str; 7] = [
     "nginx.service",

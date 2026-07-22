@@ -10,6 +10,8 @@ const status = {
     baseline_response_headers: true,
     strip_origin_headers: true,
     csp_mode: "report_only",
+    waf_mode: "tuned_enforce",
+    waf_adapter: "mod_security_owasp_crs",
     hsts_max_age_seconds: 0,
     auth_rate_limit_rpm: null,
   },
@@ -187,6 +189,17 @@ async function mockApi(page: Page) {
       "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, request_body_bytes: 2048, response_body_bytes: 16384, last_seen_unix_ms: 1784000000000 }] },
       "/api/v1/routes": { items: [] },
       "/api/v1/incidents": { items: [] },
+      "/api/v1/firewall": {
+        mode: "standalone_ufw",
+        backend: "ufw",
+        mutable: true,
+        snapshot: {
+          active: true,
+          fingerprint: "fixture-fingerprint",
+          owned_rules: [],
+          foreign_rules: Array.from({ length: 8 }, (_, index) => `foreign-${index}`),
+        },
+      },
       "/api/v1/traffic/series": {
         items: [
           {
@@ -255,6 +268,35 @@ test("switches between live and persisted traffic resolutions", async ({ page })
   await expect(page.getByRole("img", { name: "1m 요청 추이" })).toBeVisible();
   await page.getByLabel("시계열 해상도").selectOption("1s");
   await expect(page.getByRole("img", { name: "1s 요청 추이" })).toBeVisible();
+});
+
+test("renders typed standalone UFW controls without exposing raw commands", async ({ page }) => {
+  await page.goto("/firewall");
+  await expect(page.getByRole("heading", { name: "UFW 방화벽" })).toBeVisible();
+  await expect(page.getByText("VPSGuard 소유", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Rule ID")).toHaveValue("public_https");
+  await expect(page.getByLabel("Source IP/CIDR (선택)")).toBeVisible();
+  await expect(page.getByText("foreign rules preserved 8")).toBeVisible();
+  await expect(page.getByText(/ufw allow|sudo|shell/i)).toHaveCount(0);
+});
+
+test("renders JW-agent delegated firewall as read-only", async ({ page }) => {
+  await page.route("**/api/v1/firewall", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "jw_agent_delegated",
+        backend: "jw-agent",
+        mutable: false,
+        snapshot: null,
+      }),
+    });
+  });
+  await page.goto("/firewall");
+  await expect(page.getByText("외부 위임", { exact: true })).toBeVisible();
+  await expect(page.getByText(/JW-agent가 host firewall의 단일 소유자/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "계획 만들기" })).toHaveCount(0);
 });
 
 test("mutation opens administrator two-factor login dialog", async ({ page }) => {

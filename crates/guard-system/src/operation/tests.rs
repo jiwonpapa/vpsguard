@@ -7,9 +7,9 @@ use std::time::Duration;
 use tempfile::tempdir;
 
 use super::{
-    IngressTopology, OperationDriver, OperationEngineError, OperationIssue, OperationKind,
-    OperationPhase, OperationPlan, OperationState, OperationStatus, PhaseReport, SnapshotResource,
-    execute_operation,
+    IngressTopology, OperationContractError, OperationDriver, OperationEngineError, OperationIssue,
+    OperationKind, OperationPhase, OperationPlan, OperationState, OperationStatus, PhaseReport,
+    SnapshotResource, execute_operation,
 };
 
 #[derive(Debug)]
@@ -128,6 +128,24 @@ fn plan_rejects_site_tree_and_excessive_budgets() {
         .validate()
         .map_or_else(|error| error.to_string(), |()| String::new());
     assert!(error.contains("public ingress 순단"));
+}
+
+#[test]
+fn plan_allows_only_the_vpsguard_pam_service_file() {
+    let mut pam_plan = plan("op-pam", OperationKind::Apply);
+    pam_plan.resources.push(SnapshotResource::OwnedPath {
+        path: "/etc/pam.d/vps-guard".into(),
+    });
+    assert!(pam_plan.validate().is_ok());
+
+    pam_plan.resources.pop();
+    pam_plan.resources.push(SnapshotResource::OwnedPath {
+        path: "/etc/pam.d/sshd".into(),
+    });
+    assert!(matches!(
+        pam_plan.validate(),
+        Err(OperationContractError::ForeignSnapshotPath(_))
+    ));
 }
 
 #[test]

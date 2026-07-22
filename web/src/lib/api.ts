@@ -4,21 +4,50 @@ import type {
   ClientRow,
   CorrelationResponse,
   EventRow,
+  FirewallApplyResult,
+  FirewallStatus,
   ListResponse,
+  PendingFirewallPlan,
   ResourcesResponse,
   RouteRow,
   SeriesPoint,
   StatusResponse,
   TrafficSummary,
+  UfwMutation,
 } from "./types";
 
 let csrfToken = "";
 
 export interface AuthStatus {
+  auth_provider: "local" | "pam";
   setup_required: boolean;
+  enrollment_enabled: boolean;
   password_login_enabled: boolean;
   totp_required: boolean;
   break_glass_available: boolean;
+}
+
+async function authenticatedJson<T>(path: string, body: unknown): Promise<T> {
+  if (!csrfToken) {
+    throw new ApiError("운영 session 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
+  }
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify(body),
+  });
+  try {
+    return await parseResponse<T>(response);
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.code === "CSRF_AUTH_REQUIRED")) {
+      csrfToken = "";
+    }
+    throw error;
+  }
 }
 
 export interface SessionInfo {
@@ -244,6 +273,16 @@ export async function requestTlsAssistedPlan(email: string): Promise<CertbotAssi
   return parseResponse<CertbotAssistedPlan>(response);
 }
 
+export function requestFirewallPlan(mutation: UfwMutation): Promise<PendingFirewallPlan> {
+  return authenticatedJson<PendingFirewallPlan>("/api/v1/firewall/plan", mutation);
+}
+
+export function applyFirewallPlan(operationId: string): Promise<FirewallApplyResult> {
+  return authenticatedJson<FirewallApplyResult>("/api/v1/firewall/apply", {
+    operation_id: operationId,
+  });
+}
+
 export const api = {
   status: () => getJson<StatusResponse>("/api/v1/status"),
   summary: () => getJson<TrafficSummary>("/api/v1/traffic/summary"),
@@ -266,5 +305,8 @@ export const api = {
   correlation: (correlationId: string) =>
     getJson<CorrelationResponse>(correlationPath(correlationId)),
   resources: () => getJson<ResourcesResponse>("/api/v1/resources"),
+  firewall: () => getJson<FirewallStatus>("/api/v1/firewall"),
+  firewallPlan: requestFirewallPlan,
+  firewallApply: applyFirewallPlan,
   tlsAssistedPlan: requestTlsAssistedPlan,
 };

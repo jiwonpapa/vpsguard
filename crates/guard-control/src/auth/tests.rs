@@ -4,14 +4,32 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::http::{HeaderMap, HeaderValue};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use totp_rs::{Algorithm, Secret, TOTP};
 
 use super::{
-    AuthError, BootstrapStore, LoginRateLimiter, LoginSecondFactor, SessionStore, UiAccessPolicy,
-    session_cookie,
+    AccountAuthenticator, AuthError, BootstrapStore, LoginRateLimiter, LoginSecondFactor,
+    SessionStore, UiAccessPolicy, session_cookie,
 };
 use crate::auth_store::AuthRepository;
+use crate::pam_auth::{PamAuthError, PamAuthenticator, PamCredentials, PamIdentity};
+
+struct FakePam;
+
+impl PamAuthenticator for FakePam {
+    fn authenticate(&self, credentials: PamCredentials) -> Result<PamIdentity, PamAuthError> {
+        if credentials.username == "operator"
+            && credentials.password.expose_secret() == "server-password"
+            && credentials.second_factor.expose_secret() == "123456"
+        {
+            Ok(PamIdentity {
+                actor: credentials.username,
+            })
+        } else {
+            Err(PamAuthError::InvalidCredentials)
+        }
+    }
+}
 
 fn totp_code(secret_base32: &str, username: &str, now: i64) -> Result<String, AuthError> {
     let secret = Secret::Encoded(secret_base32.to_owned())
@@ -110,6 +128,38 @@ fn account_totp_and_recovery_login_are_distinct_and_one_time()
         unknown_account,
         Err(AuthError::InvalidCredentials)
     ));
+    Ok(())
+}
+
+#[test]
+fn pam_login_issues_session_without_a_local_password_verifier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let repository = Arc::new(AuthRepository::in_memory()?);
+    let store = SessionStore::with_authenticator(
+        Arc::clone(&repository),
+        10,
+        AccountAuthenticator::Pam(Arc::new(FakePam)),
+    )?;
+    assert!(!store.setup_required()?);
+    assert!(!store.enrollment_enabled());
+    assert!(matches!(
+        store.start_enrollment(
+            "operator".to_owned(),
+            SecretString::from("not-stored-password".to_owned()),
+            1_784_108_000,
+        ),
+        Err(AuthError::EnrollmentDisabled)
+    ));
+    let issued = store.login(
+        "operator".to_owned(),
+        SecretString::from("server-password".to_owned()),
+        LoginSecondFactor::Totp("123456".to_owned()),
+        true,
+        1_784_108_000,
+    )?;
+    assert_eq!(issued.actor, "operator");
+    assert_eq!(issued.authentication_method.as_str(), "pam_mfa");
+    assert!(!repository.is_configured()?);
     Ok(())
 }
 
@@ -227,7 +277,13 @@ fn public_ui_policy_requires_exact_host_and_origin() -> Result<(), Box<dyn std::
     let config = guard_core::config::UiConfig {
         bind: "127.0.0.1:7727".parse()?,
         public_host: Some("guard.example.com".to_owned()),
+        public_port: 443,
+        tls_termination: guard_core::config::UiTlsTermination::Edge,
+        auth_provider: guard_core::config::AdminAuthProvider::Local,
+        pam_service: "vps-guard".to_owned(),
+        pam_allowed_group: "vpsguard-admin".to_owned(),
         admin_socket: "/tmp/admin.sock".into(),
+        privileged_socket: "/tmp/privileged.sock".into(),
         login_rate_limit_rpm: 10,
         language: "ko".to_owned(),
     };

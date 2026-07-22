@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .errors import HarnessError
+from .runner import CommandRunner, CommandScope, CommandSpec
 
 NEW_SHELL_MAX_LINES = 40
 PROTECTED_PREFIXES = (
@@ -73,7 +74,7 @@ def _validate_shell(root: Path) -> list[str]:
         return ["invalid Shell baseline schema"]
     files: dict[str, int] = baseline["files"]
     violations: list[str] = []
-    current_paths = {str(path.relative_to(root)): path for path in sorted((root / "scripts").rglob("*.sh"))}
+    current_paths = _shell_paths(root)
     for relative, path in current_paths.items():
         line_count = len(path.read_text(encoding="utf-8").splitlines())
         limit = files.get(relative)
@@ -90,6 +91,25 @@ def _validate_shell(root: Path) -> list[str]:
     stale = sorted(set(files) - set(current_paths))
     violations.extend(f"{relative}: stale Shell baseline entry" for relative in stale)
     return violations
+
+
+def _shell_paths(root: Path) -> dict[str, Path]:
+    """Return repository-owned Shell files, falling back to all fixture files outside Git."""
+
+    if not (root / ".git").exists():
+        paths = sorted((root / "scripts").rglob("*.sh"))
+    else:
+        result = CommandRunner().run(
+            CommandSpec(
+                label="tracked shell inventory",
+                argv=("git", "ls-files", "--cached", "--", "scripts"),
+                cwd=root,
+                timeout_seconds=10,
+                scope=CommandScope.GOVERNANCE,
+            )
+        )
+        paths = [root / relative for relative in result.stdout.splitlines() if relative.endswith(".sh")]
+    return {str(path.relative_to(root)): path for path in paths}
 
 
 def _top_level_imports(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:

@@ -17,12 +17,13 @@ use axum::{Json, Router};
 use guard_agent::os::OsSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::{
-    CspMode, DetectionMode, InspectionMode, SecurityConfig, TlsManagementMode,
+    AdminAuthProvider, CspMode, DetectionMode, InspectionMode, SecurityConfig, TlsManagementMode,
 };
 use guard_core::correlation::{LOG_SCHEMA_VERSION, RequestIdGenerator, is_valid_request_id};
 use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
 use guard_system::{
-    AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, build_certbot_assisted_plan,
+    AtomicJsonStore, CertbotPlanError, TlsManagementSnapshot, UfwError, UfwMutation,
+    build_certbot_assisted_plan,
 };
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,7 @@ use crate::auth::{
     AuthError, BootstrapStore, IssuedSession, LoginSecondFactor, SessionStore, UiAccessPolicy,
     unix_seconds,
 };
+use crate::firewall::{FirewallError, FirewallOperations};
 use crate::provider::ProviderController;
 use crate::storage::{
     AuditActionRow, ClientRow, EventRow, RequestTraceRow, RouteRow, SqliteStore,
@@ -56,6 +58,7 @@ pub(crate) struct AppState {
     pub(crate) inspection_mode: InspectionMode,
     pub(crate) detection_mode: DetectionMode,
     pub(crate) security: SecurityConfig,
+    pub(crate) waf: guard_core::config::WafConfig,
     pub(crate) tls_management: RwLock<TlsManagementSnapshot>,
     pub(crate) tls_plan_mode: TlsManagementMode,
     pub(crate) tls_plan_domains: Vec<String>,
@@ -65,6 +68,7 @@ pub(crate) struct AppState {
     pub(crate) events: broadcast::Sender<GuardEvent>,
     pub(crate) sessions: Arc<SessionStore>,
     pub(crate) access: UiAccessPolicy,
+    pub(crate) firewall: Arc<dyn FirewallOperations>,
     pub(crate) provider: Arc<Mutex<Option<ProviderController>>>,
     pub(crate) provider_action_active: Arc<AtomicBool>,
     pub(crate) request_ids: RequestIdGenerator,
@@ -97,6 +101,8 @@ struct SecurityStatus {
     csp_mode: CspMode,
     hsts_max_age_seconds: u64,
     auth_rate_limit_rpm: Option<u32>,
+    waf_mode: guard_core::config::WafMode,
+    waf_adapter: guard_core::config::WafAdapter,
 }
 
 /// resource endpoint 응답입니다.
@@ -214,7 +220,9 @@ struct EnrollmentConfirmRequest {
 
 #[derive(Debug, Serialize)]
 struct AuthStatusResponse {
+    auth_provider: AdminAuthProvider,
     setup_required: bool,
+    enrollment_enabled: bool,
     password_login_enabled: bool,
     totp_required: bool,
     break_glass_available: bool,
@@ -246,6 +254,12 @@ struct TlsPlanRequest {
     email: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FirewallApplyRequest {
+    operation_id: String,
+}
+
 pub(crate) fn router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/api/v1/status", get(status))
@@ -257,6 +271,9 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/correlations/{correlation_id}", get(correlation))
         .route("/api/v1/events", get(event_stream))
         .route("/api/v1/resources", get(resources))
+        .route("/api/v1/firewall", get(firewall_status))
+        .route("/api/v1/firewall/plan", post(firewall_plan))
+        .route("/api/v1/firewall/apply", post(firewall_apply))
         .route("/api/v1/tls/assisted-plan", post(tls_assisted_plan))
         .route("/api/v1/actions/manual-hold", post(manual_hold))
         .route("/api/v1/actions/resume-auto", post(resume_auto))
@@ -484,6 +501,8 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
             },
             hsts_max_age_seconds: app.security.hsts_max_age_seconds,
             auth_rate_limit_rpm,
+            waf_mode: app.waf.mode,
+            waf_adapter: app.waf.adapter,
         },
         mode: state.current_mode,
         manual_hold: state.manual_hold,
@@ -516,6 +535,131 @@ async fn resources(State(app): State<Arc<AppState>>) -> Json<ResourcesResponse> 
         services,
         storage: app.storage.health(),
     })
+}
+
+async fn firewall_status(State(app): State<Arc<AppState>>) -> Response {
+    let firewall = Arc::clone(&app.firewall);
+    match tokio::task::spawn_blocking(move || firewall.status()).await {
+        Ok(Ok(status)) => Json(status).into_response(),
+        Ok(Err(error)) => firewall_error_response(error),
+        Err(error) => {
+            tracing::warn!(
+                error_code = "FIREWALL_STATUS_TASK_FAILED",
+                error = %error,
+                "firewall status task failed"
+            );
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "FIREWALL_STATUS_TASK_FAILED",
+                "방화벽 상태 작업이 종료됐습니다.",
+                "방화벽 규칙을 변경하지 않았습니다.",
+                "Control 로그와 UFW 상태를 확인하십시오.",
+            )
+        }
+    }
+}
+
+async fn firewall_plan(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(mutation): Json<UfwMutation>,
+) -> Response {
+    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+        return error;
+    }
+    let firewall = Arc::clone(&app.firewall);
+    match tokio::task::spawn_blocking(move || firewall.plan(mutation)).await {
+        Ok(Ok(plan)) => Json(plan).into_response(),
+        Ok(Err(error)) => firewall_error_response(error),
+        Err(_) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "FIREWALL_PLAN_TASK_FAILED",
+            "방화벽 plan 작업이 종료됐습니다.",
+            "방화벽 규칙을 변경하지 않았습니다.",
+            "Control 로그와 UFW 상태를 확인하십시오.",
+        ),
+    }
+}
+
+async fn firewall_apply(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<FirewallApplyRequest>,
+) -> Response {
+    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+        return error;
+    }
+    if request.operation_id.trim().is_empty() || request.operation_id.len() > 64 {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "FIREWALL_OPERATION_ID_INVALID",
+            "방화벽 operation ID가 올바르지 않습니다.",
+            "방화벽 규칙을 변경하지 않았습니다.",
+            "plan 응답의 operation ID를 사용하십시오.",
+        );
+    }
+    let firewall = Arc::clone(&app.firewall);
+    match tokio::task::spawn_blocking(move || firewall.apply(&request.operation_id)).await {
+        Ok(Ok(result)) => Json(result).into_response(),
+        Ok(Err(error)) => firewall_error_response(error),
+        Err(_) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "FIREWALL_APPLY_TASK_FAILED",
+            "방화벽 apply 작업이 종료됐습니다.",
+            "적용 결과를 확정하지 못했습니다.",
+            "UFW read-back과 SSH 연결을 확인하십시오.",
+        ),
+    }
+}
+
+fn firewall_error_response(error: FirewallError) -> Response {
+    tracing::warn!(error_code = "FIREWALL_OPERATION_FAILED", error = %error);
+    match error {
+        FirewallError::Ufw(UfwError::OwnershipDenied) => api_error(
+            StatusCode::CONFLICT,
+            "FIREWALL_OWNERSHIP_DELEGATED",
+            "VPSGuard가 host firewall 변경 소유자가 아닙니다.",
+            "UFW와 nftables를 변경하지 않았습니다.",
+            "JW-agent 또는 설치 topology의 firewall 소유자를 사용하십시오.",
+        ),
+        FirewallError::Ufw(UfwError::Inactive) => api_error(
+            StatusCode::CONFLICT,
+            "UFW_INACTIVE",
+            "UFW가 비활성 상태입니다.",
+            "VPSGuard가 UFW를 자동 활성화하지 않았습니다.",
+            "SSH 허용 rule을 확인한 뒤 운영자가 UFW를 활성화하십시오.",
+        ),
+        FirewallError::Ufw(UfwError::SnapshotChanged) => api_error(
+            StatusCode::CONFLICT,
+            "UFW_SNAPSHOT_CHANGED",
+            "승인 뒤 UFW 상태가 변경됐습니다.",
+            "오래된 plan을 적용하지 않았습니다.",
+            "새 snapshot으로 plan을 다시 생성하십시오.",
+        ),
+        FirewallError::PlanNotFound => api_error(
+            StatusCode::NOT_FOUND,
+            "FIREWALL_PLAN_NOT_FOUND",
+            "승인 대기 중인 방화벽 plan이 없습니다.",
+            "방화벽 규칙을 변경하지 않았습니다.",
+            "새 plan을 생성해 검토한 뒤 적용하십시오.",
+        ),
+        FirewallError::Ufw(
+            UfwError::InvalidRule(_) | UfwError::SshInvariant | UfwError::RuleIdentity(_),
+        ) => api_error(
+            StatusCode::BAD_REQUEST,
+            "FIREWALL_RULE_REJECTED",
+            "방화벽 규칙이 안전 계약을 위반했습니다.",
+            "SSH와 기존 UFW 규칙을 보존했습니다.",
+            "rule ID, source, port와 action을 확인하십시오.",
+        ),
+        FirewallError::Ufw(_) => api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "FIREWALL_OPERATION_FAILED",
+            "방화벽 변경을 검증하지 못했습니다.",
+            "검증 실패 시 VPSGuard 소유 변경을 원복했습니다.",
+            "UFW read-back, audit와 SSH 연결을 확인하십시오.",
+        ),
+    }
 }
 
 async fn tls_assisted_plan(
@@ -683,10 +827,14 @@ async fn current_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -
 }
 
 async fn auth_status(State(app): State<Arc<AppState>>) -> Response {
+    let auth_provider = app.sessions.auth_provider();
+    let enrollment_enabled = app.sessions.enrollment_enabled();
     let sessions = Arc::clone(&app.sessions);
     match tokio::task::spawn_blocking(move || sessions.setup_required()).await {
         Ok(Ok(setup_required)) => Json(AuthStatusResponse {
+            auth_provider,
             setup_required,
+            enrollment_enabled,
             password_login_enabled: !setup_required,
             totp_required: !setup_required,
             break_glass_available: true,
@@ -1262,6 +1410,13 @@ fn auth_error_response(error: AuthError) -> Response {
             "관리자 계정과 TOTP를 저장하지 않았습니다.",
             "새 단회 설정 code로 등록을 다시 시작하십시오.",
         ),
+        AuthError::EnrollmentDisabled => api_error(
+            StatusCode::CONFLICT,
+            "ADMIN_ENROLLMENT_DISABLED",
+            "PAM mode에서는 VPSGuard 비밀번호 등록을 사용하지 않습니다.",
+            "서버 계정과 PAM MFA 설정을 변경하지 않았습니다.",
+            "vpsguard-admin 그룹과 서버의 PAM MFA를 먼저 설정하십시오.",
+        ),
         AuthError::InvalidTotp => api_error(
             StatusCode::UNAUTHORIZED,
             "ADMIN_TOTP_REJECTED",
@@ -1282,7 +1437,7 @@ fn auth_error_response(error: AuthError) -> Response {
                 .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
             response
         }
-        AuthError::InvalidCredentials => invalid_login_error(),
+        AuthError::InvalidCredentials | AuthError::Pam => invalid_login_error(),
         AuthError::Store(_) | AuthError::Crypto | AuthError::Clock => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "ADMIN_AUTH_UNAVAILABLE",

@@ -1,5 +1,6 @@
 //! 검증된 core 설정을 hot path 친화적인 runtime 값으로 변환합니다.
 
+use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -7,12 +8,13 @@ use std::time::Duration;
 use guard_core::config::{
     DetectionMode, DetectionProfile, GuardConfig, InspectionMode, OriginProtocol,
 };
+use guard_core::crawler::PinnedCrawlerNetworks;
 use guard_profiles::{ApplicationProfile, RouteKind, classify};
 use ipnet::IpNet;
 use thiserror::Error;
 
 use crate::policy::path_matches_any;
-use crate::rate_limit::RouteClass;
+use crate::rate_limit::{RateLimitPolicy, RouteClass};
 use crate::security::ResponseSecurityPolicy;
 
 /// 한 TLS listener에 적용할 PEM 경로입니다.
@@ -88,6 +90,9 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) upstream_read_timeout: Duration,
     pub(crate) upload_upstream_read_timeout: Duration,
     pub(crate) max_tracked_clients: usize,
+    pub(crate) prefix_rate_limit_multiplier: u32,
+    pub(crate) route_rate_limit_multiplier: u32,
+    pub(crate) global_rate_limit_multiplier: u32,
     pub(crate) rate_limit_rpm: Option<u32>,
     pub(crate) strict_rate_limit_rpm: Option<u32>,
     pub(crate) upload_rate_limit_rpm: Option<u32>,
@@ -101,6 +106,7 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) auth_rate_limit_rpm: u32,
     pub(crate) inspection_mode: InspectionMode,
     pub(crate) detection_mode: DetectionMode,
+    pub(crate) bot_policy: guard_core::config::BotPolicyConfig,
 }
 
 /// core 설정은 유효하지만 현재 edge runtime이 지원하지 못하는 조합입니다.
@@ -115,6 +121,15 @@ pub enum RuntimeConfigError {
     /// systemd TLS credential 경로를 해석하지 못했습니다.
     #[error(transparent)]
     TlsCredential(#[from] guard_system::tls::CertificateValidationError),
+    /// 공식 crawler network pin 파일을 읽지 못했습니다.
+    #[error("crawler network 파일 읽기 실패: {0}")]
+    CrawlerNetworksRead(#[source] std::io::Error),
+    /// 공식 crawler network pin 파일 계약이 깨졌습니다.
+    #[error("crawler network 파일 parsing 실패: {0}")]
+    CrawlerNetworksParse(#[source] serde_json::Error),
+    /// crawler file schema 또는 provider coverage가 올바르지 않습니다.
+    #[error("crawler network 파일 검증 실패: {0}")]
+    CrawlerNetworksInvalid(&'static str),
 }
 
 impl EdgeRuntimeConfig {
@@ -162,6 +177,29 @@ impl EdgeRuntimeConfig {
             DetectionProfile::Gnuboard7 => ApplicationProfile::Gnuboard7,
             DetectionProfile::Wordpress => ApplicationProfile::Wordpress,
         };
+        let mut bot_policy = config.bot_policy.clone();
+        if let Some(path) = &bot_policy.crawler_networks_file {
+            let source =
+                fs::read_to_string(path).map_err(RuntimeConfigError::CrawlerNetworksRead)?;
+            let pinned = serde_json::from_str::<PinnedCrawlerNetworks>(&source)
+                .map_err(RuntimeConfigError::CrawlerNetworksParse)?;
+            if pinned.schema_version != 1 || pinned.networks.is_empty() {
+                return Err(RuntimeConfigError::CrawlerNetworksInvalid(
+                    "schema_or_empty",
+                ));
+            }
+            bot_policy.crawler_networks.extend(pinned.networks);
+            if bot_policy.allowed_crawlers.iter().any(|provider| {
+                !bot_policy
+                    .crawler_networks
+                    .iter()
+                    .any(|entry| entry.provider == *provider && !entry.cidrs.is_empty())
+            }) {
+                return Err(RuntimeConfigError::CrawlerNetworksInvalid(
+                    "provider_missing",
+                ));
+            }
+        }
         Ok(Self {
             listen_addr: config.edge.http_bind.to_string(),
             tls,
@@ -185,6 +223,9 @@ impl EdgeRuntimeConfig {
                 config.edge.upload_upstream_read_timeout_ms,
             ),
             max_tracked_clients: config.edge.max_tracked_clients,
+            prefix_rate_limit_multiplier: config.edge.prefix_rate_limit_multiplier,
+            route_rate_limit_multiplier: config.edge.route_rate_limit_multiplier,
+            global_rate_limit_multiplier: config.edge.global_rate_limit_multiplier,
             rate_limit_rpm: config.edge.rate_limit_rpm,
             strict_rate_limit_rpm: config.edge.strict_rate_limit_rpm,
             upload_rate_limit_rpm: config.edge.upload_rate_limit_rpm,
@@ -202,6 +243,7 @@ impl EdgeRuntimeConfig {
             auth_rate_limit_rpm: config.security.auth_rate_limit_rpm,
             inspection_mode: config.detection.inspection,
             detection_mode: config.detection.mode,
+            bot_policy,
         })
     }
 
@@ -326,6 +368,15 @@ impl EdgeRuntimeConfig {
     pub(crate) fn authentication_rate_limit(&self) -> Option<u32> {
         (self.enforces_dynamic_protection() && self.auth_rate_limit_rpm > 0)
             .then_some(self.auth_rate_limit_rpm)
+    }
+
+    pub(crate) const fn rate_limit_policy(&self, client_rpm: u32) -> RateLimitPolicy {
+        RateLimitPolicy::from_multipliers(
+            client_rpm,
+            self.prefix_rate_limit_multiplier,
+            self.route_rate_limit_multiplier,
+            self.global_rate_limit_multiplier,
+        )
     }
 
     /// observe-only 설치에서 동적 throttle·challenge·deny를 실행하지 않습니다.

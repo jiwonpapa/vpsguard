@@ -1,0 +1,15 @@
+[Unit]
+Description=VPSGuard privileged helper socket
+Requires=systemd-tmpfiles-setup.service
+After=systemd-tmpfiles-setup.service
+
+[Socket]
+ListenStream=/run/vps-guard-privileged/control.sock
+SocketUser=root
+SocketGroup=vps-guard
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

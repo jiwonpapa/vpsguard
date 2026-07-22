@@ -41,6 +41,7 @@ use crate::admin_socket::spawn_admin_socket;
 use crate::api::{AppState, router};
 use crate::auth::{AuthError, BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::auth_store::{AuthRepository, AuthStoreError};
+use crate::firewall::FirewallManager;
 use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{RetentionCutoffs, SqliteStore, StorageError, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
@@ -114,7 +115,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         config.retention.raw_ip_days > 0,
     )?);
     let auth_repository = Arc::new(AuthRepository::open(&config.storage.database_path)?);
-    let sessions = SessionStore::new(auth_repository, config.ui.login_rate_limit_rpm)?;
+    let sessions = SessionStore::from_ui_config(auth_repository, &config.ui)?;
     let provider = Arc::new(Mutex::new(ProviderController::from_config(&config)?));
     let initial_tls = {
         let tls = config.tls.clone();
@@ -135,6 +136,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         inspection_mode: config.detection.inspection,
         detection_mode: config.detection.mode,
         security: config.security.clone(),
+        waf: config.waf.clone(),
         tls_management: RwLock::new(initial_tls),
         tls_plan_mode: config.tls.management,
         tls_plan_domains: tls_plan_domains(&config),
@@ -144,6 +146,11 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         events,
         sessions: Arc::new(sessions),
         access: UiAccessPolicy::from_config(&config.ui),
+        firewall: Arc::new(FirewallManager::system(
+            config.firewall.mode,
+            config.firewall.ssh_port,
+            config.ui.privileged_socket.clone(),
+        )),
         provider,
         provider_action_active: Arc::new(AtomicBool::new(false)),
         request_ids: guard_core::correlation::RequestIdGenerator::new(),

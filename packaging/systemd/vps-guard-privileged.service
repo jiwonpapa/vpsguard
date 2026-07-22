@@ -1,0 +1,40 @@
+[Unit]
+Description=VPSGuard standalone PAM and UFW privileged helper
+Requires=vps-guard-privileged.socket
+After=vps-guard-privileged.socket network-pre.target
+Before=vps-guard-control.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/vps-guard-privileged
+Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
+Environment=RUST_LOG=guard_control=info
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-guard-privileged
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/ufw -/run/ufw /var/lib/vps-guard
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_READ_SEARCH
+SystemCallArchitectures=native
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

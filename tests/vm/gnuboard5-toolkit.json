@@ -41,6 +41,20 @@
       "output_format": "json"
     },
     {
+      "name": "gptbot-visible",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "10", "-c", "2", "-H", "User-Agent: Mozilla/5.0 compatible; GPTBot/1.2", "{target_url}"],
+      "timeout_seconds": 20,
+      "output_format": "json"
+    },
+    {
+      "name": "spoofed-googlebot",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "10", "-c", "2", "-H", "User-Agent: Googlebot/2.1 (+http://www.google.com/bot.html)", "{target_url}"],
+      "timeout_seconds": 20,
+      "output_format": "json"
+    },
+    {
       "name": "spoofed-forwarded-burst",
       "tool": "oha",
       "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "240", "-c", "20", "-H", "X-Forwarded-For: 8.8.8.8", "{target_url}"],
@@ -55,6 +69,27 @@
       "output_format": "json"
     },
     {
+      "name": "auth-route-burst",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "10", "-c", "1", "https://gnuboard5.local/bbs/login.php"],
+      "timeout_seconds": 20,
+      "output_format": "json"
+    },
+    {
+      "name": "waf-sqli",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "1", "-c", "1", "https://gnuboard5.local/bbs/search.php?stx=%27%20OR%201%3D1--"],
+      "timeout_seconds": 15,
+      "output_format": "json"
+    },
+    {
+      "name": "waf-xss",
+      "tool": "oha",
+      "arguments": ["--no-tui", "--output-format", "json", "--cacert", "/lab-ca/rootCA.pem", "-n", "1", "-c", "1", "https://gnuboard5.local/bbs/search.php?stx=%3Cscript%3Ealert%281%29%3C%2Fscript%3E"],
+      "timeout_seconds": 15,
+      "output_format": "json"
+    },
+    {
       "name": "slow-headers",
       "tool": "slowhttptest",
       "arguments": ["-H", "-c", "40", "-r", "10", "-i", "5", "-l", "20", "-p", "5", "-u", "{target_url}", "-v", "2"],
@@ -64,7 +99,7 @@
     {
       "name": "listener-surface",
       "tool": "nmap",
-      "arguments": ["-Pn", "-n", "-sT", "-p", "22,80,443,18080,18081,7727,3306", "192.168.122.9"],
+      "arguments": ["-Pn", "-n", "-sT", "-p", "22,80,443,7443,18080,18081,7727,3306", "192.168.122.9"],
       "timeout_seconds": 60,
       "output_format": "text"
     }

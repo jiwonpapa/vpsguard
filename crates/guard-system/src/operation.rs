@@ -318,6 +318,8 @@ impl SnapshotResource {
                         | "g7-scheduler.service"
                         | "g7-reverb.service"
                         | "vps-guard-control.service"
+                        | "vps-guard-privileged.service"
+                        | "vps-guard-privileged.socket"
                         | "vps-guard-edge.service"
                 ) {
                     Ok(())
@@ -1024,9 +1026,11 @@ fn validate_owned_path(path: &Path) -> Result<(), OperationContractError> {
     let exact = [
         "/usr/local/bin/vps-guard",
         "/usr/local/bin/vps-guard-control",
+        "/usr/local/bin/vps-guard-privileged",
         "/usr/local/bin/vps-guard-edge",
         "/usr/local/lib/vps-guard/current",
         "/usr/lib/tmpfiles.d/vps-guard.conf",
+        "/etc/pam.d/vps-guard",
         "/etc/letsencrypt/renewal-hooks/deploy/vps-guard",
     ];
     if allowed.iter().any(|prefix| text.starts_with(prefix)) || exact.contains(&text.as_str()) {
@@ -1045,8 +1049,10 @@ fn validate_owned_directory(path: &Path) -> Result<(), OperationContractError> {
         "/etc/systemd/system/vps-guard-control.service.d",
         "/etc/systemd/system/vps-guard-edge.service.d",
         "/etc/vps-guard/secrets",
+        "/etc/vps-guard/apache",
         "/etc/vps-guard",
         "/run/vps-guard",
+        "/run/vps-guard-privileged",
         "/var/lib/vps-guard",
     ];
     if allowed.contains(&path.to_string_lossy().as_ref()) {

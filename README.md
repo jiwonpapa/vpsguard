@@ -4,14 +4,14 @@
 
 ## 현재 상태
 
-현재는 **pre-MVP 개발용 수직 슬라이스**입니다. Pingora edge, 정책 hot reload, telemetry, SQLite/SSE control plane, Bun/React 운영 SPA와 provider adapter의 기본 코드가 있으나, 실제 Cloudflare 전환·복구, public 80/443, fault·2GB VPS·rollback 증거는 아직 없습니다. 현재 검증 단계는 [`verification-status.tsv`](specs/product/verification-status.tsv)가 정본입니다.
+현재는 **pre-MVP 파일럿**입니다. Pingora edge, 정책 hot reload, telemetry, SQLite/SSE control plane, Bun/React 운영 SPA, Linux-PAM/TOTP, standalone UFW와 선택형 ModSecurity·OWASP CRS를 구현했습니다. `gnuboard5` VM의 public 80/443, 직접 웹 관리자, 공격 replay와 실제 2GB 검증은 통과했지만 Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증은 남아 있습니다. 현재 검증 단계는 [`verification-status.tsv`](specs/product/verification-status.tsv)가 정본입니다.
 
 ## 제품 핵심
 
 ```text
 평상시: DNS only -> VPSGuard -> Nginx -> Application
 비상시: Cloudflare proxied -> VPSGuard -> Nginx -> Application
-관리면: guard.example.com:443 -> VPSGuard -> loopback Control
+관리면: admin.example.com:443 또는 전용 7443 -> trusted TLS terminator -> loopback Control
 ```
 
 - 평상시에는 해외 프록시를 상시 통과하지 않습니다.
@@ -19,6 +19,8 @@
 - 검색봇, AI 학습봇, AI 검색봇과 스크래퍼를 포함한 자원 고갈형 자동화 트래픽을 다룹니다.
 - 모든 자동 조치는 이유, 실제 적용 상태와 복구 방법을 남깁니다.
 - 독립 웹 UI에서 실시간 트래픽, 외부 IP, 서버 자원과 사건을 확인합니다.
+- 단독 설치는 Linux-PAM+TOTP로 로그인하고 VPSGuard 소유 UFW 규칙만 typed transaction으로 관리합니다.
+- JW-agent 연동 설치는 방화벽 소유권을 JW-agent에 위임하고 VPSGuard의 중복 서버 유지보수 기능을 비활성화합니다.
 
 ## 구현 정본
 
@@ -82,7 +84,8 @@ sudo vps-guard issue-login-code
 - Certbot HTTP-01 발급·갱신과 실제 served certificate 비교
 - Cloudflare test zone의 실제 proxied 전환·복구와 `cf-ray` 증거
 - `g7devops` public ingress cutover·bypass 왕복
-- 2GB VPS 성능·장애·복구 파일럿과 multi-architecture artifact 실행 smoke
+- 실제 여러 source의 high-cardinality 2GB soak와 authenticated upload WAF 오탐 replay
+- multi-architecture artifact 실행 smoke
 
 ## 라이선스
 

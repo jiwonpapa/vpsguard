@@ -17,6 +17,8 @@ source_state: uncommitted-lab
 
 `OPS-011`과 `NFR-014`는 **VPS_PASS**입니다. Ubuntu 24.04 `gnuboard5` 격리 VM에서 Apache public TLS -> VPSGuard loopback -> Apache loopback origin 전환, bypass, 실패 자동 rollback, 20회 왕복과 호스트 기반 direct/guarded A/B 시나리오를 완료했습니다.
 
+> 이 문서의 crawler gap은 최초 Apache 파일럿 당시 결과입니다. 이후 standalone UFW·PAM·AI bot·WAF·2GB 검증은 [standalone 보안 증거](gnuboard5-standalone-security-20260722.md)가 이어받습니다.
+
 Apache 파일럿은 승인하지만 전체 봇 방어 완료를 뜻하지 않습니다. 공개 Meta bot User-Agent 요청은 guarded에서도 40/40이 origin까지 통과했습니다. verified crawler 판별과 관리자가 허용한 검색봇 외 기본 거부는 `DET-003`, `DET-004` 후속 구현 대상입니다.
 
 ## 환경과 최종 구성

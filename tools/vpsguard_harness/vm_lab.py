@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import subprocess
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -252,6 +251,7 @@ def run_public_probe_timeline(
         )
     evidence.parent.mkdir(parents=True, exist_ok=True)
     command = public_probe_command(manifest)
+    runner = CommandRunner()
     started = time.monotonic()
     deadline = started + duration_seconds
     sequence = 0
@@ -262,26 +262,29 @@ def run_public_probe_timeline(
             remaining = scheduled - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
-            sample_started = time.monotonic()
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                check=False,
+            completed = runner.run(
+                CommandSpec(
+                    label=f"vm-probe {sequence}",
+                    argv=command,
+                    cwd=root,
+                    timeout_seconds=3,
+                    scope=CommandScope.TEST,
+                    accepted_exit_codes=tuple(range(-64, 101)),
+                    max_output_bytes=4_096,
+                )
             )
             fields = completed.stdout.strip().split("\t", maxsplit=1)
             status = int(fields[0]) if fields and fields[0].isdigit() else 0
-            if completed.returncode != 0 or not 200 <= status < 500:
+            if completed.exit_code != 0 or not 200 <= status < 500:
                 failures += 1
             sample = {
                 "schema_version": 1,
                 "sequence": sequence,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "scheduled_ms": sequence * interval_ms,
-                "elapsed_ms": round((time.monotonic() - sample_started) * 1_000, 3),
+                "elapsed_ms": completed.elapsed_ms,
                 "http_status": status,
-                "curl_exit": completed.returncode,
+                "curl_exit": completed.exit_code,
             }
             stream.write(json.dumps(sample, ensure_ascii=False, separators=(",", ":")) + "\n")
             stream.flush()

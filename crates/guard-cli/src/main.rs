@@ -910,20 +910,30 @@ fn default_operation_resources() -> Vec<SnapshotResource> {
     [
         "/usr/local/bin/vps-guard",
         "/usr/local/bin/vps-guard-control",
+        "/usr/local/bin/vps-guard-privileged",
         "/usr/local/bin/vps-guard-edge",
         "/usr/local/lib/vps-guard/current",
         "/etc/vps-guard/config.toml",
+        "/etc/vps-guard/crawler-networks.json",
+        "/etc/pam.d/vps-guard",
         "/etc/systemd/system/vps-guard-control.service",
+        "/etc/systemd/system/vps-guard-privileged.service",
+        "/etc/systemd/system/vps-guard-privileged.socket",
         "/etc/systemd/system/vps-guard-edge.service",
     ]
     .into_iter()
     .map(|path| SnapshotResource::OwnedPath {
         path: PathBuf::from(path),
     })
+    .chain(std::iter::once(SnapshotResource::OwnedDirectoryPresence {
+        path: PathBuf::from("/etc/vps-guard/apache"),
+    }))
     .chain(
         [
             "nginx.service",
             "vps-guard-control.service",
+            "vps-guard-privileged.service",
+            "vps-guard-privileged.socket",
             "vps-guard-edge.service",
         ]
         .into_iter()

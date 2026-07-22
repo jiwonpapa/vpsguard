@@ -42,10 +42,54 @@ impl RouteClass {
 pub enum LimitDecision {
     /// 한도 안이므로 허용합니다.
     Allow,
-    /// 현재 window 한도를 초과했습니다.
-    Deny,
-    /// cardinality 상한에 도달해 새 client를 추적하지 못했습니다.
-    CapacityReached,
+    /// client cardinality 대신 상위 aggregate fallback으로 허용했습니다.
+    AllowFallback,
+    /// 현재 window의 계층별 한도를 초과했습니다.
+    Deny(LimitScope),
+}
+
+/// 요청을 거부한 limiter 계층입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitScope {
+    /// client IP별 예산입니다.
+    Client,
+    /// IPv4 /24 또는 IPv6 /64 prefix별 예산입니다.
+    Prefix,
+    /// route class aggregate 예산입니다.
+    Route,
+    /// 전체 listener aggregate 예산입니다.
+    Global,
+}
+
+/// 한 요청에 적용할 계층별 분당 예산입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitPolicy {
+    /// client IP별 예산입니다.
+    pub client_rpm: u32,
+    /// network prefix별 예산입니다.
+    pub prefix_rpm: u32,
+    /// route class aggregate 예산입니다.
+    pub route_rpm: u32,
+    /// 전체 listener aggregate 예산입니다.
+    pub global_rpm: u32,
+}
+
+impl RateLimitPolicy {
+    /// client 예산과 설정 multiplier로 saturating aggregate 예산을 만듭니다.
+    #[must_use]
+    pub const fn from_multipliers(
+        client_rpm: u32,
+        prefix_multiplier: u32,
+        route_multiplier: u32,
+        global_multiplier: u32,
+    ) -> Self {
+        Self {
+            client_rpm,
+            prefix_rpm: client_rpm.saturating_mul(prefix_multiplier),
+            route_rpm: client_rpm.saturating_mul(route_multiplier),
+            global_rpm: client_rpm.saturating_mul(global_multiplier),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,16 +104,49 @@ struct LimitWindow {
     request_count: u32,
 }
 
+impl LimitWindow {
+    fn consume(&mut self, minute_bucket: u64, limit: u32) -> bool {
+        if self.minute_bucket != minute_bucket {
+            self.minute_bucket = minute_bucket;
+            self.request_count = 0;
+        }
+        if self.request_count >= limit {
+            return false;
+        }
+        self.request_count = self.request_count.saturating_add(1);
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PrefixKey {
+    V4(u32),
+    V6(u64),
+}
+
+impl From<IpAddr> for PrefixKey {
+    fn from(address: IpAddr) -> Self {
+        match address {
+            IpAddr::V4(value) => Self::V4(u32::from(value) & 0xffff_ff00),
+            IpAddr::V6(value) => Self::V6((u128::from(value) >> 64) as u64),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct LimitState {
     last_cleanup_bucket: Option<u64>,
     windows: HashMap<LimitKey, LimitWindow>,
+    prefixes: HashMap<PrefixKey, LimitWindow>,
+    routes: HashMap<RouteClass, LimitWindow>,
+    global: Option<LimitWindow>,
 }
 
 /// 명시적 cardinality 상한을 갖는 fixed-window limiter입니다.
 #[derive(Debug)]
 pub struct BoundedRateLimiter {
     max_entries: usize,
+    max_prefixes: usize,
     state: Mutex<LimitState>,
 }
 
@@ -81,6 +158,7 @@ impl BoundedRateLimiter {
     pub fn new(max_entries: usize) -> Self {
         Self {
             max_entries,
+            max_prefixes: max_entries.div_ceil(4).max(1),
             state: Mutex::new(LimitState::default()),
         }
     }
@@ -91,7 +169,7 @@ impl BoundedRateLimiter {
         &self,
         client_ip: IpAddr,
         route_class: RouteClass,
-        limit: u32,
+        policy: RateLimitPolicy,
         now: SystemTime,
     ) -> LimitDecision {
         let current_bucket = minute_bucket(now);
@@ -100,7 +178,47 @@ impl BoundedRateLimiter {
             state
                 .windows
                 .retain(|_, window| window.minute_bucket == current_bucket);
+            state
+                .prefixes
+                .retain(|_, window| window.minute_bucket == current_bucket);
+            state
+                .routes
+                .retain(|_, window| window.minute_bucket == current_bucket);
+            if state
+                .global
+                .is_some_and(|window| window.minute_bucket != current_bucket)
+            {
+                state.global = None;
+            }
             state.last_cleanup_bucket = Some(current_bucket);
+        }
+
+        let global = state.global.get_or_insert(LimitWindow {
+            minute_bucket: current_bucket,
+            request_count: 0,
+        });
+        if !global.consume(current_bucket, policy.global_rpm) {
+            return LimitDecision::Deny(LimitScope::Global);
+        }
+
+        let route = state.routes.entry(route_class).or_insert(LimitWindow {
+            minute_bucket: current_bucket,
+            request_count: 0,
+        });
+        if !route.consume(current_bucket, policy.route_rpm) {
+            return LimitDecision::Deny(LimitScope::Route);
+        }
+
+        let prefix_key = PrefixKey::from(client_ip);
+        let prefix_tracked = state.prefixes.contains_key(&prefix_key);
+        if prefix_tracked || state.prefixes.len() < self.max_prefixes {
+            let prefix = state.prefixes.entry(prefix_key).or_insert(LimitWindow {
+                minute_bucket: current_bucket,
+                request_count: 0,
+            });
+            if !prefix.consume(current_bucket, policy.prefix_rpm) {
+                return LimitDecision::Deny(LimitScope::Prefix);
+            }
         }
 
         let key = LimitKey {
@@ -108,17 +226,16 @@ impl BoundedRateLimiter {
             route_class,
         };
         if !state.windows.contains_key(&key) && state.windows.len() >= self.max_entries {
-            return LimitDecision::CapacityReached;
+            return LimitDecision::AllowFallback;
         }
 
         let window = state.windows.entry(key).or_insert(LimitWindow {
             minute_bucket: current_bucket,
             request_count: 0,
         });
-        if window.request_count >= limit {
-            return LimitDecision::Deny;
+        if !window.consume(current_bucket, policy.client_rpm) {
+            return LimitDecision::Deny(LimitScope::Client);
         }
-        window.request_count = window.request_count.saturating_add(1);
         LimitDecision::Allow
     }
 

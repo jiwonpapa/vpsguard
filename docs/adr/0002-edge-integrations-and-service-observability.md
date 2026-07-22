@@ -56,6 +56,8 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 | 관리자 비밀번호 | PHC·salt·Argon2id 구현은 `argon2` crate를 사용하고 password hash/KDF를 직접 구현하지 않음 |
 | 관리자 TOTP | RFC 호환 code·`otpauth` URI는 `totp-rs`를 사용하고 QR dependency는 추가하지 않음 |
 | TOTP seed 봉인 | password 유래 key와 `XChaCha20Poly1305` AEAD는 RustCrypto `chacha20poly1305`를 사용하고 암호 primitive를 직접 구현하지 않음 |
+| Linux-PAM | `pam-client`의 safe API로 `pam_authenticate`·`pam_acct_mgmt`를 호출하고 C FFI를 직접 구현하지 않음 |
+| systemd socket activation | `listenfd`로 systemd가 소유한 inherited Unix listener만 받고 runtime world-writable socket bind를 금지 |
 
 새 crate를 고르는 것 자체가 목적은 아닙니다. protocol·crypto·database driver처럼 재구현 위험이 큰 곳은 외부 구현을 우선하고, 작은 고정 형식과 제품 고유 상태 전이는 의존성 fanout·RSS·공격면을 비교해 결정합니다.
 
@@ -80,6 +82,8 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 - `protocol_only`는 새 dependency 없이 typed config와 기존 edge 분기만 사용합니다. inspection status를 포함한 Control macOS release binary는 9,343,696 bytes에서 9,343,712 bytes로 16 bytes 증가했고 SHA-256은 `1f364592cbbda38eb7411878c1785aae9d5cc0d1cc3a13bff5b5cd3a167b8826`입니다.
 - 범용 HTTP 보안 코어와 G7 overlay는 새 dependency 없이 기존 typed config, profile과 Pingora header API로 구현했습니다. Control macOS release binary는 9,343,712 bytes에서 9,360,256 bytes로 16,544 bytes(0.18%) 증가했고 SHA-256은 `49a99b8dddce8fe7aa1cf7d6db6caf5b66a0db6a7ca225b80651f662de740e9d`입니다. 실제 G7 CSP 호환성과 shared-IP 인증 한도는 release pilot에 남깁니다.
 - VPSGuard 전용 관리자 인증은 `argon2 0.5.3`(MIT/Apache-2.0, MSRV 1.65), `totp-rs 5.7.2`(MIT, MSRV 1.66, `otpauth`·`zeroize`만 활성화)와 `chacha20poly1305 0.10.1`(MIT/Apache-2.0, crate metadata MSRV 미표기)을 사용합니다. 직접 crate source 기준 `totp-rs`와 `chacha20poly1305`에는 `unsafe` block이 없고 `argon2`에는 AVX2 구현의 2개 `unsafe` block이 있어 safe API로만 격리합니다. production lockfile package는 15개 늘었고 최종 관리 UI를 포함한 macOS release binary는 9,360,256 bytes에서 9,661,152 bytes로 300,896 bytes(3.21%) 증가했으며 SHA-256은 `709744900a59551ef799574c9b9a2a9735c8746792557d25afa9fafc59b33e3a`입니다. workspace Rust 1.96 build·clippy·audit·deny와 2GB Linux RSS를 release gate로 유지합니다.
+- Ubuntu 기본 관리 인증은 `pam-client 0.5.0`을 default feature 없이 사용합니다. MPL-2.0 file-level weak copyleft를 허용하되 crate를 수정하지 않고 [third-party notice](../THIRD_PARTY_NOTICES.md)와 covered source 취득 경로를 release bundle에 포함합니다. crate metadata에 MSRV가 없어 Rust 1.96 Linux check로 검증했습니다. crate 내부 C FFI `unsafe`는 safe `Context` API 뒤에 두고 VPSGuard adapter에는 `unsafe`가 없습니다. root helper는 bounded worker와 PAM service/group allowlist로 호출 범위를 제한합니다.
+- systemd socket activation은 Apache-2.0 `listenfd 1.0.2`를 사용합니다. helper가 직접 socket path를 bind하지 않고 systemd의 `0750 root:vps-guard` parent와 `0660` inherited listener만 받으며, Linux release check와 VM read-back을 통과했습니다.
 - `cargo audit --ignore RUSTSEC-2024-0437`: 허용되지 않은 알려진 취약점은 없습니다. Pingora metric encode 전이 경로의 `protobuf 2.28.0` 취약점 1건과 unmaintained `daemonize`, `derivative`, `rustls-pemfile` 경고 3건은 [기한부 예외](../security/advisory-exceptions.md)로 추적하며 public protobuf decode 경로를 금지합니다.
 - `rustls-pemfile`은 VPSGuard도 직접 사용하므로 유지보수되는 rustls pki type 경로로 교체 가능한지 우선 확인합니다. Pingora 전이 의존성 제거는 upstream 갱신과 별도입니다.
 - `cargo deny check`: 통과했으며 Pingora 중심의 중복 version은 계속 측정합니다.
