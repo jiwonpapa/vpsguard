@@ -13,8 +13,8 @@ const EDGE_SERVICE: &str = "vps-guard-edge.service";
 const NGINX_SERVICE: &str = "nginx.service";
 
 #[test]
-fn ingress_cli_round_trip_uses_one_typed_transaction_boundary()
--> Result<(), Box<dyn std::error::Error>> {
+fn ingress_cli_round_trip_uses_one_typed_transaction_boundary(
+) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
     let common = fixture.common_env();
     let snapshot_output = run(
@@ -107,7 +107,12 @@ impl Fixture {
         )?;
         for unit in [EDGE_SERVICE, NGINX_SERVICE] {
             fs::write(state.join(format!("{unit}.enabled")), b"enabled\n")?;
-            fs::write(state.join(format!("{unit}.active")), b"inactive\n")?;
+            let activity: &[u8] = if unit == NGINX_SERVICE {
+                b"active\n"
+            } else {
+                b"inactive\n"
+            };
+            fs::write(state.join(format!("{unit}.active")), activity)?;
         }
         fs::write(state.join("edge-public"), b"false\n")?;
         fs::write(state.join("public-edge-header"), b"absent\n")?;
@@ -134,7 +139,10 @@ impl Fixture {
 
     fn common_env(&self) -> Vec<(String, String)> {
         vec![
-            ("VPS_GUARD_TEST_ROOT".into(), self.root.display().to_string()),
+            (
+                "VPS_GUARD_TEST_ROOT".into(),
+                self.root.display().to_string(),
+            ),
             (
                 "VPS_GUARD_FAKE_STATE_DIR".into(),
                 self.state.display().to_string(),
@@ -154,10 +162,7 @@ impl Fixture {
         logical(&self.root, path)
     }
 
-    fn apply_direct(
-        &self,
-        common: &[(String, String)],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn apply_direct(&self, common: &[(String, String)]) -> Result<(), Box<dyn std::error::Error>> {
         let mut environment = common.to_vec();
         environment.push((
             "VPS_GUARD_DIRECT_CONFIRM".into(),
@@ -198,13 +203,7 @@ impl Fixture {
             ("VPS_GUARD_INGRESS_CONFIRM".into(), direction.into()),
         ]);
         run(
-            [
-                "ops",
-                "ingress-switch",
-                "apply",
-                "--direction",
-                direction,
-            ],
+            ["ops", "ingress-switch", "apply", "--direction", direction],
             &environment,
         )?;
         Ok(())
