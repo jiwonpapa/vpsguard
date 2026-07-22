@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 # EDGE-001, EDGE-002, TLS-005, OPS-003: 검증된 release bundle의 g7devops
 # direct TLS 후보를 원격 트랜잭션에 전달합니다.
 mode="${1:---plan}"
 bundle="${2:-}"
 target="${VPS_GUARD_SSH_TARGET:-g7devops}"
-
 usage() {
   echo "usage: $0 --plan | --apply RELEASE_BUNDLE"
 }
@@ -25,6 +23,7 @@ for file in \
   BUILD-INFO.txt \
   SHA256SUMS \
   scripts/operation-lock.sh \
+  scripts/state-common.sh \
   scripts/g7devops-direct-state.sh \
   scripts/cutover-g7devops-direct-remote.sh \
   certbot/vps-guard-deploy-hook \
@@ -66,6 +65,7 @@ scp -q "${bundle}/scripts/cutover-g7devops-direct-remote.sh" \
   "${target}:${stage}/cutover-direct.sh"
 scp -q "${bundle}/scripts/operation-lock.sh" \
   "${target}:${stage}/operation-lock.sh"
+scp -q "${bundle}/scripts/state-common.sh" "${target}:${stage}/state-common.sh"
 scp -q "${bundle}/scripts/g7devops-direct-state.sh" \
   "${target}:${stage}/direct-state.sh"
 # shellcheck disable=SC2029 # validated mktemp path intentionally expands locally

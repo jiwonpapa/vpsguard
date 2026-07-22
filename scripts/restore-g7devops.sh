@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2029 # remote paths are fixed or strict-regex validated before SSH expansion
 set -euo pipefail
-
 # OPS-009: g7devops의 root-only snapshot을 검증한 뒤 VPSGuard 소유 상태만 복구합니다.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target="g7devops"
@@ -31,6 +30,7 @@ stage_restore_harness() {
     exit 1
   }
   scp -q "${repo_root}/scripts/deployment-state.sh" "${target}:${remote_stage}/deployment-state.sh"
+  scp -q "${repo_root}/scripts/state-common.sh" "${target}:${remote_stage}/state-common.sh"
   scp -q "${repo_root}/scripts/operation-lock.sh" "${target}:${remote_stage}/operation-lock.sh"
   ssh "${target}" "chmod 0700 '${remote_stage}/deployment-state.sh' '${remote_stage}/operation-lock.sh'"
 }

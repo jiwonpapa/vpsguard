@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2029 # fixed target and regex-validated values are intentionally expanded for SSH
 set -euo pipefail
-
 # OPS-001, OPS-002, OPS-005, OPS-009, SEC-001: g7devops에 checksum 검증된
 # observe-only shadow를 설치하고 모든 실패를 pre-deploy snapshot으로 복구합니다.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,6 +50,7 @@ verify_local_bundle() {
   done
   for required in \
     "${bundle}/scripts/deployment-state.sh" \
+    "${bundle}/scripts/state-common.sh" \
     "${bundle}/scripts/operation-lock.sh" \
     "${bundle}/scripts/update-release.sh" \
     "${bundle}/systemd/vps-guard-control.service" \

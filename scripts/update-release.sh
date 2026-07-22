@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 # OPS-005, OPS-009: 검증된 bundle만 설치하고 실패하면 배포 snapshot으로 복구합니다.
 mode="${1:---plan}"
 bundle="${2:-}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=operation-lock.sh
+# shellcheck source-path=SCRIPTDIR source=operation-lock.sh
 source "${script_dir}/operation-lock.sh"
 manifest_name="ownership-manifest.txt"
 health_url="${VPS_GUARD_CONTROL_HEALTH_URL:-http://127.0.0.1:7727/health/live}"
@@ -16,7 +15,6 @@ release_id=""
 release_dir=""
 release_created=false
 operation_started=0
-
 wait_for_http() {
   curl --disable --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
     --connect-timeout 1 --max-time 15 "$@"
@@ -62,6 +60,7 @@ for required in \
   "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" \
   "${bundle}/tmpfiles/vps-guard.conf" \
   "${bundle}/scripts/deployment-state.sh" \
+  "${bundle}/scripts/state-common.sh" \
   "${bundle}/scripts/operation-lock.sh" \
   "${bundle}/BUILD-INFO.txt" \
   "${bundle}/${manifest_name}"; do
@@ -136,6 +135,7 @@ operation_progress stage_release completed
 
 install -d -m 0755 /usr/local/libexec/vps-guard
 install -m 0755 "${bundle}/scripts/deployment-state.sh" /usr/local/libexec/vps-guard/deployment-state
+install -m 0644 "${bundle}/scripts/state-common.sh" /usr/local/libexec/vps-guard/state-common.sh
 install -m 0644 "${bundle}/systemd/vps-guard-control.service" /etc/systemd/system/vps-guard-control.service
 install -m 0644 "${bundle}/systemd/vps-guard-edge.service" /etc/systemd/system/vps-guard-edge.service
 if [[ -f /etc/vps-guard/secrets/cloudflare-token ]]; then

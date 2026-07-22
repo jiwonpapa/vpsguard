@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target="${1:-x86_64-unknown-linux-gnu}"
 build_tool="${CARGO_BUILD_TOOL:-cargo}"
@@ -33,6 +32,7 @@ install -m 0644 packaging/ownership-manifest.txt "${bundle}/"
 install -m 0755 packaging/certbot/vps-guard-deploy-hook "${bundle}/certbot/"
 install -m 0755 \
   scripts/deployment-state.sh \
+  scripts/state-common.sh \
   scripts/operation-lock.sh \
   scripts/g7devops-direct-state.sh \
   scripts/restore-g7devops-direct.sh \

@@ -6,7 +6,6 @@ set -euo pipefail
 # 릴리스 완료로 오인하지 않아야 합니다.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
-
 bash scripts/requirements-gate.sh
 bash scripts/docs-gate.sh
 bash scripts/tests/g7devops-ingress-contract.sh
@@ -14,7 +13,6 @@ bash scripts/tests/ingress-transaction-harness.sh
 bash scripts/tests/direct-state-harness.sh
 bash scripts/tests/operation-harness.sh
 bash scripts/tests/operation-lock-harness.sh
-
 release_output="$(mktemp)"
 trap 'rm -f "${release_output}"' EXIT
 if bash scripts/requirements-gate.sh --release >"${release_output}" 2>&1; then
@@ -52,9 +50,11 @@ grep -Fq 'g7devops/nginx' scripts/build-release.sh
 grep -Fq 'scripts/cutover-g7devops-remote.sh' scripts/build-release.sh
 grep -Fq 'scripts/cutover-g7devops-direct.sh' scripts/build-release.sh
 grep -Fq 'scripts/cutover-g7devops-direct-remote.sh' scripts/build-release.sh
+grep -Fq 'scripts/state-common.sh' scripts/build-release.sh
 grep -Fq 'configs/vps-guard.g7devops.direct.toml' scripts/build-release.sh
 grep -Fq 'configs/nginx/g7devops-origin-only.conf' scripts/build-release.sh
 grep -Fq '/usr/local/libexec/vps-guard/deployment-state' packaging/ownership-manifest.txt
+grep -Fq '/usr/local/libexec/vps-guard/state-common.sh' packaging/ownership-manifest.txt
 grep -Fq '/usr/local/lib/vps-guard/current' packaging/ownership-manifest.txt
 grep -Fq '/usr/local/lib/vps-guard/releases' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh

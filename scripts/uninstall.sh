@@ -44,7 +44,7 @@ if /usr/sbin/nft list table inet vps_guard >/dev/null 2>&1; then
 fi
 while IFS= read -r path; do
   case "${path}" in
-    /usr/local/bin/vps-guard|/usr/local/bin/vps-guard-control|/usr/local/bin/vps-guard-edge|/usr/local/lib/vps-guard/current|/usr/local/libexec/vps-guard/deployment-state|/etc/systemd/system/vps-guard-control.service|/etc/systemd/system/vps-guard-edge.service|/etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf|/etc/systemd/system/vps-guard-control.service.d/20-service-credentials.conf|/etc/systemd/system/vps-guard-control.service.d/30-tls-certificate.conf|/etc/systemd/system/vps-guard-edge.service.d/30-tls-credentials.conf|/usr/lib/tmpfiles.d/vps-guard.conf)
+    /usr/local/bin/vps-guard|/usr/local/bin/vps-guard-control|/usr/local/bin/vps-guard-edge|/usr/local/lib/vps-guard/current|/usr/local/libexec/vps-guard/deployment-state|/usr/local/libexec/vps-guard/state-common.sh|/etc/systemd/system/vps-guard-control.service|/etc/systemd/system/vps-guard-edge.service|/etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf|/etc/systemd/system/vps-guard-control.service.d/20-service-credentials.conf|/etc/systemd/system/vps-guard-control.service.d/30-tls-certificate.conf|/etc/systemd/system/vps-guard-edge.service.d/30-tls-credentials.conf|/usr/lib/tmpfiles.d/vps-guard.conf)
       rm -f "${path}"
       ;;
     /usr/local/lib/vps-guard/releases)

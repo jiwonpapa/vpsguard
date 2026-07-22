@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 # EDGE-001, EDGE-002, TLS-005, OPS-003: VPSGuard가 public 80/443을 직접 소유하고
 # Nginx는 loopback HTTP/PHP-FPM origin으로만 남기는 g7devops 전환 트랜잭션입니다.
 stage="${1:-}"
@@ -34,13 +33,14 @@ for file in \
   certbot-deploy-hook \
   g7-certbot-deploy-hook \
   operation-lock.sh \
+  state-common.sh \
   direct-state.sh; do
   [[ -f "${stage}/${file}" && ! -L "${stage}/${file}" ]] || {
     echo "missing staged file: ${file}" >&2
     exit 2
   }
 done
-# shellcheck source=operation-lock.sh
+# shellcheck source-path=SCRIPTDIR source=operation-lock.sh
 source "${stage}/operation-lock.sh"
 operation_lock_acquire "direct-cutover-$$"
 operation_progress preflight started

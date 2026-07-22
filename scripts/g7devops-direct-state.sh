@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=state-common.sh
+source "${script_dir}/state-common.sh"
+
 # OPS-002, OPS-003, OPS-005, OPS-009, TLS-005: g7devops public ingress의
 # Nginx·VPSGuard 설정, service 상태와 VPSGuard-owned hook을 checksum snapshot으로
 # 보존하고 성공한 direct TLS 전환도 별도 명령으로 되돌립니다.
@@ -40,30 +44,6 @@ require_authority() {
     echo "snapshot root must be absolute" >&2
     exit 2
   }
-}
-
-hash_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
-machine_id_hash() {
-  local path
-  path="$(root_path /etc/machine-id)"
-  if [[ -f "${path}" ]]; then
-    hash_file "${path}"
-  elif [[ -n "${test_root}" ]]; then
-    printf 'test-machine\n' | if command -v sha256sum >/dev/null 2>&1; then
-      sha256sum | awk '{print $1}'
-    else
-      shasum -a 256 | awk '{print $1}'
-    fi
-  else
-    echo "missing"
-  fi
 }
 
 service_state() {

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=state-common.sh
+source "${script_dir}/state-common.sh"
+
 # OPS-002, OPS-005, OPS-009, SEC-001, TLS-005, ACT-010: VPSGuard가 소유하는
 # 배포 상태만 snapshot·복구하고 기존 ingress·인증서·사이트 directory 경계는
 # 전체 tree scan 없이 identity와 service/listener read-back으로 검증합니다.
@@ -15,6 +19,7 @@ owned_files=(
   /usr/local/bin/vps-guard-edge
   /usr/local/lib/vps-guard/current
   /usr/local/libexec/vps-guard/deployment-state
+  /usr/local/libexec/vps-guard/state-common.sh
   /etc/systemd/system/vps-guard-control.service
   /etc/systemd/system/vps-guard-edge.service
   /etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf
@@ -69,39 +74,11 @@ require_runtime_authority() {
   fi
 }
 
-hash_stream() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-  else
-    shasum -a 256 | awk '{print $1}'
-  fi
-}
-
-hash_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
 file_mode() {
   if stat -c '%a' "$1" >/dev/null 2>&1; then
     stat -c '%a' "$1"
   else
     stat -f '%Lp' "$1"
-  fi
-}
-
-machine_id_hash() {
-  local path
-  path="$(root_path /etc/machine-id)"
-  if [[ -f "${path}" ]]; then
-    hash_file "${path}"
-  elif [[ -n "${test_root}" ]]; then
-    printf 'test-machine\n' | hash_stream
-  else
-    echo "missing"
   fi
 }
 

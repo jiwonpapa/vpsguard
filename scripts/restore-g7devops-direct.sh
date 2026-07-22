@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2029 # strict-regex validated remote paths are intentionally expanded remotely
 set -euo pipefail
-
 # OPS-003, OPS-005, OPS-009, TLS-005: 성공한 g7devops direct TLS 전환을
 # checksum snapshot으로 검증한 뒤 이전 ingress와 service 상태로 되돌립니다.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,6 +29,7 @@ stage_harness() {
   [[ "${remote_stage}" =~ ^/tmp/vpsguard-direct-restore\.[A-Za-z0-9]+$ ]]
   scp -q "${repo_root}/scripts/g7devops-direct-state.sh" \
     "${target}:${remote_stage}/direct-state.sh"
+  scp -q "${repo_root}/scripts/state-common.sh" "${target}:${remote_stage}/state-common.sh"
   scp -q "${repo_root}/scripts/operation-lock.sh" \
     "${target}:${remote_stage}/operation-lock.sh"
   ssh "${target}" "chmod 0700 '${remote_stage}/direct-state.sh' '${remote_stage}/operation-lock.sh'"

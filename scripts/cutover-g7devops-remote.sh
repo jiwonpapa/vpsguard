@@ -44,7 +44,7 @@ for required in \
     exit 2
   }
 done
-# shellcheck source=operation-lock.sh
+# shellcheck source-path=SCRIPTDIR source=operation-lock.sh
 source "${stage}/operation-lock.sh"
 
 release_commit="$(tail -1 "${stage}/BUILD-INFO.txt")"
