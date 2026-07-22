@@ -5,12 +5,15 @@ use std::time::{Duration, Instant};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use guard_core::GuardMode;
+use guard_core::{DetectionInput, Detector, GuardMode, GuardState};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::mpsc;
 
-use super::{POLICY_REFRESH_INTERVAL, build_policy, policy_renewal_due, storage_writer_loop};
+use super::{
+    POLICY_REFRESH_INTERVAL, build_policy, keep_emergency, keep_local_guard, policy_renewal_due,
+    storage_writer_loop, transition_event, update_incident,
+};
 use crate::storage::{SqliteStore, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::TelemetryEnvelope;
 
@@ -68,4 +71,61 @@ fn dedicated_writer_drains_queue_as_one_transaction_batch() -> Result<(), Box<dy
     assert_eq!(health.persisted_samples, 3);
     assert_eq!(health.persisted_batches, 1);
     Ok(())
+}
+
+#[test]
+fn provider_failure_fallbacks_preserve_the_previous_transition_time() {
+    let mut current = GuardState::normal("2026-07-22T00:00:00Z");
+    current.current_mode = GuardMode::LocalGuard;
+    let mut next = current.clone();
+    next.current_mode = GuardMode::EmergencyProxy;
+    next.last_transition_at = "2026-07-22T00:00:05Z".to_owned();
+
+    keep_local_guard(&current, &mut next);
+    assert_eq!(next.current_mode, GuardMode::LocalGuard);
+    assert_eq!(next.last_transition_at, current.last_transition_at);
+
+    current.current_mode = GuardMode::EmergencyProxy;
+    next.current_mode = GuardMode::Recovering;
+    next.last_transition_at = "2026-07-22T00:00:10Z".to_owned();
+    keep_emergency(&current, &mut next);
+    assert_eq!(next.current_mode, GuardMode::EmergencyProxy);
+    assert_eq!(next.last_transition_at, current.last_transition_at);
+}
+
+#[test]
+fn incident_and_transition_event_keep_bounded_explanations() {
+    let previous = GuardState::normal("2026-07-22T00:00:00Z");
+    let mut next = previous.clone();
+    next.current_mode = GuardMode::LocalGuard;
+    next.policy_version = 7;
+    update_incident(&mut next);
+    assert!(
+        next.active_incident_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("incident-"))
+    );
+
+    let assessment = Detector::assess(&DetectionInput {
+        trust: 0,
+        automation: 95,
+        route_cost: 90,
+        upstream_pressure: 90,
+        resource_signals_available: true,
+        session_continuity: false,
+        crawler_verified: false,
+    });
+    let event = transition_event(
+        &previous,
+        &next,
+        &assessment,
+        "2026-07-22T00:00:05Z".to_owned(),
+    );
+    assert_eq!(event.kind, "guard.mode_transition");
+    assert_eq!(event.result["policy_version"], "7");
+    assert!(!event.reason_codes.is_empty());
+
+    next.current_mode = GuardMode::Normal;
+    update_incident(&mut next);
+    assert!(next.active_incident_id.is_none());
 }

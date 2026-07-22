@@ -105,3 +105,6 @@ NFR-007|AUTO_PASS|Cargo.toml|scripts/docs-gate.sh|-
 NFR-008|CODE_ONLY|docs/adr/0002-edge-integrations-and-service-observability.md|-|-
 NFR-009|AUTO_PASS|tools/vpsguard_harness/policy.py|tools/tests/test_policy.py|-
 NFR-010|AUTO_PASS|Cargo.toml|tools/tests/test_build_artifacts.py|-
+NFR-011|AUTO_PASS|tools/vpsguard_harness/coverage.py|tools/tests/test_coverage.py|-
+NFR-012|AUTO_PASS|tools/vpsguard_harness/dev_check.py|tools/tests/test_dev_check.py|-
+NFR-013|AUTO_PASS|tools/vpsguard_harness/commit_contract.py|tools/tests/test_commit_contract.py|-

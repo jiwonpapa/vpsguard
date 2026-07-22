@@ -16,6 +16,10 @@ use crate::proxy::GuardEdge;
 use crate::runtime::{EdgeRuntimeConfig, RuntimeConfigError};
 use crate::tls::{TlsPreflightError, preflight};
 
+#[cfg(test)]
+#[path = "startup/tests.rs"]
+mod tests;
+
 /// Edge가 listener를 열기 전 발생할 수 있는 startup 실패입니다.
 #[derive(Debug, Error)]
 pub enum EdgeStartupError {
@@ -48,14 +52,18 @@ pub enum EdgeStartupError {
 ///
 /// 파일, 설정, crypto provider 또는 listener 초기화가 실패하면 반환합니다.
 pub fn run_from_path(path: &Path) -> Result<(), EdgeStartupError> {
-    let source = fs::read_to_string(path)?;
-    let config = GuardConfig::from_toml(&source)?;
-    let runtime = EdgeRuntimeConfig::try_from_guard(&config)?;
+    let runtime = load_runtime(path)?;
     install_crypto_provider()?;
     if let Some(tls) = &runtime.tls {
         preflight(tls)?;
     }
     run_server(runtime)
+}
+
+fn load_runtime(path: &Path) -> Result<EdgeRuntimeConfig, EdgeStartupError> {
+    let source = fs::read_to_string(path)?;
+    let config = GuardConfig::from_toml(&source)?;
+    Ok(EdgeRuntimeConfig::try_from_guard(&config)?)
 }
 
 fn install_crypto_provider() -> Result<(), EdgeStartupError> {

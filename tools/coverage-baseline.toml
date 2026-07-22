@@ -1,0 +1,21 @@
+schema_version = 1
+
+# NFR-011: 2026-07-22 macOS full-workspace LCOV 67.50%에서 시작하며
+# CI platform 차이를 흡수하는 0.50%p만 남깁니다. release 목표는 80%입니다.
+[workspace]
+minimum_line_percent = 67.0
+
+# process/network adapter도 제외하지 않습니다. 낮은 수치는 현재 부채를
+# 정직하게 고정한 시작점이며 테스트 없이 더 낮아질 수 없습니다.
+[files]
+"crates/guard-core/src/policy.rs" = 83.0
+"crates/guard-core/src/state.rs" = 73.0
+"crates/guard-edge/src/policy_runtime.rs" = 73.0
+"crates/guard-edge/src/proxy.rs" = 5.0
+"crates/guard-edge/src/response.rs" = 44.0
+"crates/guard-edge/src/startup.rs" = 26.0
+"crates/guard-control/src/provider.rs" = 17.0
+"crates/guard-control/src/runtime.rs" = 17.0
+"crates/guard-provider/src/cloudflare.rs" = 74.0
+"crates/guard-system/src/command.rs" = 26.0
+"crates/guard-system/src/tls.rs" = 59.0

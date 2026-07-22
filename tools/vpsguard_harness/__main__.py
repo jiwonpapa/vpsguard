@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 from .build_artifacts import clean_build_artifacts, validate_build_profiles
+from .commit_contract import validate_commit_range
+from .coverage import validate_coverage
+from .dev_check import run_dev_check
 from .errors import HarnessError
 from .governance import validate_requirements, validate_rustdoc
 from .ops import run_ops_harness
@@ -28,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     build_storage.add_argument("--clean", action="store_true")
     build_storage.add_argument("--check-config", action="store_true")
+    subcommands.add_parser("coverage", help="honest LCOV workspace and production-file ratchet")
+    subcommands.add_parser("commit-contract", help="requirement IDs in authored Git commits")
+    dev_check = subcommands.add_parser("dev-check", help="fast check for one development scope")
+    dev_check.add_argument("scope", help="python, web or one workspace crate name")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
 
@@ -54,6 +61,18 @@ def main(argv: list[str] | None = None) -> int:
                 print("build storage profile gate: PASS")
             else:
                 print(clean_build_artifacts(root, apply=arguments.clean).display())
+        elif arguments.command == "coverage":
+            print(
+                validate_coverage(
+                    root,
+                    root / "target-evidence/coverage/lcov.info",
+                    root / "tools/coverage-baseline.toml",
+                ).display()
+            )
+        elif arguments.command == "commit-contract":
+            print(validate_commit_range(root).display())
+        elif arguments.command == "dev-check":
+            print(run_dev_check(root, arguments.scope).display())
     except HarnessError as error:
         print(error, file=sys.stderr)
         return 1

@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: 1.96.0
@@ -45,9 +46,11 @@ jobs:
         run: |
           python3 -W error::ResourceWarning -m unittest discover -s tools/tests -p 'test_*.py'
           bash scripts/harness-language-gate.sh
+          bash scripts/build-storage.sh --check-config
           bash scripts/docs-gate.sh
           bash scripts/requirements-gate.sh
           bash scripts/pr-contract-gate.sh
+          bash scripts/commit-contract-gate.sh
           bash scripts/tests/repository-contracts.sh
           actionlint
           shellcheck scripts/*.sh packaging/certbot/*

@@ -184,3 +184,7 @@ fn provider_state_path(config: &GuardConfig) -> PathBuf {
         |parent| parent.join("provider-transaction.json"),
     )
 }
+
+#[cfg(test)]
+#[path = "provider/tests.rs"]
+mod tests;
