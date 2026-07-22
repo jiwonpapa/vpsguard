@@ -454,7 +454,7 @@ fn execute_ingress_switch(command: IngressSwitchCommand) -> Result<String, CliEr
     plan.validate()?;
     if !apply {
         return Ok(format!(
-            "driver=guard-system\ndirection={expected}\nactive={}\nedge_candidate={}\nnginx_candidate={}\nplan_sha256={}",
+            "driver=guard-system\ndirection={expected}\nactive={}\nedge_candidate={}\nnginx_candidate={}\npreserve: SSH, certificates, site data\nplan_sha256={}",
             config.active_config.display(),
             config.edge_candidate.display(),
             config.nginx_candidate.display(),
@@ -931,6 +931,7 @@ mod tests {
         })?;
         assert!(switch.contains("driver=guard-system"));
         assert!(switch.contains("direction=to-edge"));
+        assert!(switch.contains("preserve: SSH, certificates, site data"));
 
         let bypass = execute_ingress_switch(IngressSwitchCommand::Plan {
             direction: IngressSwitchDirectionArg::ToNginx,

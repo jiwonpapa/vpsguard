@@ -96,8 +96,8 @@ last_reviewed: 2026-07-22
 | `TLS-004` | `crates/guard-agent/tests/served_certificate.rs` | file/served cert comparison |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | [`g7devops` 전환 전후 fingerprint](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
-| `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |
-| `OPS-004` | `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/ingress-transaction-harness.sh` | [`g7devops` edge -> Nginx -> direct edge smoke](evidence/g7devops-direct-tls-20260715.md) |
+| `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |
+| `OPS-004` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/ingress-transaction-harness.sh` | [`g7devops` edge -> Nginx -> direct edge smoke](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-005`, `OPS-006` | `tests/e2e/update_uninstall.rs` | rollback·소유 파일 manifest |
 | `OPS-007` | release workflow | arch별 hash·SBOM·smoke artifact |
 | `OPS-008` | `crates/guard-system/tests/command_audit.rs` | masked command log |

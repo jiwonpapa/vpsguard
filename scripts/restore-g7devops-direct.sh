@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2029 # validated snapshot IDs intentionally expand for the fixed SSH target
 set -euo pipefail
-
 # OPS-003, OPS-005, OPS-010, TLS-005: installed Rust driver가 checksum 검증,
 # operation lock, public ingress restore와 자동 rollback을 소유합니다.
 target="${VPS_GUARD_SSH_TARGET:-g7devops}"
