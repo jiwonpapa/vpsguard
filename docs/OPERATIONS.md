@@ -208,11 +208,21 @@ Update는 VPSGuard가 현재 public 443을 소유하면 즉시 거부합니다. 
 
 ## TLS 갱신
 
-`packaging/certbot/vps-guard-deploy-hook`를 Certbot deploy hook으로 설치합니다. hook은 certificate/key public key 일치, 24시간 이상 유효기간, VPSGuard config를 검사한 뒤 edge를 재시작하고 health를 read-back합니다.
+`packaging/certbot/vps-guard-deploy-hook`를 Certbot deploy hook으로 설치합니다. hook은 certificate/key public key 일치, 24시간 이상 유효기간, VPSGuard config를 검사한 뒤 edge를 재시작하고 health를 read-back합니다. 이어서 `VPS_GUARD_TLS_SERVER_NAME`을 SNI로, `VPS_GUARD_TLS_ADDRESS`의 명시적 IP·port로 TLS handshake를 수행해 갱신 파일과 실제 listener leaf의 SHA-256이 정확히 같을 때만 성공합니다. DNS·CDN 경로와 origin listener 검증을 혼합하지 않습니다.
 
 `tls.management`은 `auto`, `external_managed`, `vpsguard_assisted`, `manual` 중 하나입니다. 기본 `auto`는 `/etc/letsencrypt/live` lineage, renewal 설정, `certbot.timer`·Snap timer 또는 기존 Certbot cron을 읽기 전용으로 확인합니다. 정상 자동 갱신이 있으면 `external_managed`로 표시하고 VPSGuard가 timer나 renewal 설정을 다시 만들지 않습니다. edge service startup은 cert/key·SAN·현재 유효기간만 검사하며 package 설치·발급·timer 변경을 하지 않습니다.
 
-Control은 6시간마다 공개 certificate의 SAN·만료와 갱신 상태를 갱신하고 인증된 status API·관리 화면에 소유자, manager, 만료와 다음 조치를 표시합니다. Edge는 startup마다 공개 certificate와 private key 일치를 추가 검사합니다. 실제 제공 중인 certificate fingerprint 비교는 아직 release gate입니다.
+Control은 6시간마다 공개 certificate의 SAN·만료와 갱신 상태를 갱신하고 인증된 status API·관리 화면에 소유자, manager, 만료와 다음 조치를 표시합니다. Edge는 startup마다 공개 certificate와 private key 일치를 추가 검사합니다. 운영자는 같은 검증을 직접 실행할 수 있습니다.
+
+```bash
+sudo vps-guard verify-served-certificate \
+  --certificate /etc/letsencrypt/live/example.com/fullchain.pem \
+  --key /etc/letsencrypt/live/example.com/privkey.pem \
+  --server-name example.com \
+  --address 127.0.0.1:443
+```
+
+일치하면 bounded JSON report를 출력하고, 다른 leaf·잘못된 SAN·key 불일치·handshake 실패는 non-zero로 종료합니다. 현재 hook은 bounded restart와 read-back을 사용하며 완전한 connection-draining reload는 별도 release gate입니다.
 
 Certbot private key 원본을 `vps-guard` 계정에 직접 공개하지 않습니다. 설정에는 `cert_file = "tls-cert.pem"`, `key_file = "tls-key.pem"`처럼 service credential 이름을 사용하고, 설치 도구는 다음 template의 placeholder를 검증된 절대 경로로 치환합니다.
 
@@ -227,8 +237,9 @@ wildcard 인증서처럼 DNS-01이 필요하면 provider plugin의 root-only 자
 
 `g7devops`에서는 기존 webroot renewal을 VPSGuard public 80을 통해 staging
 `renew --dry-run`으로 검증했고 deploy hook 재시작과 served certificate fingerprint
-read-back을 완료했습니다. 미설정 서버의 신규 발급 보조 apply와 완전한 무중단
-certificate reload는 계속 release gate입니다.
+read-back을 완료했습니다. 현재 Rust exact 비교가 포함된 hook의 실제 renewal 재실행,
+미설정 서버의 신규 발급 보조 apply와 완전한 무중단 certificate reload는 계속 release
+gate입니다.
 
 근거: [Certbot webroot와 renewal hook 문서](https://eff-certbot.readthedocs.io/en/stable/using.html), [systemd credentials](https://systemd.io/CREDENTIALS/)
 

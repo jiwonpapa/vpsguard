@@ -17,6 +17,13 @@ use x509_parser::parse_x509_certificate;
 
 use crate::{OwnedProgram, SystemCommandRunner};
 
+mod served;
+
+pub use served::{
+    ServedCertificateProbeError, ServedCertificateReport, ServedCertificateState,
+    inspect_served_certificate,
+};
+
 const EXPIRING_SOON: Duration = Duration::days(30);
 const CERTBOT_LIVE_DIRECTORY: &str = "/etc/letsencrypt/live";
 const CERTBOT_RENEWAL_DIRECTORY: &str = "/etc/letsencrypt/renewal";

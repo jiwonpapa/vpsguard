@@ -99,7 +99,7 @@ last_reviewed: 2026-07-23
 |---|---|---|
 | `TLS-001` | `crates/guard-edge/tests/certificate_validation.rs` | invalid cert start rejection |
 | `TLS-002`, `TLS-003`, `TLS-006` | `tests/e2e/certbot_renew.rs` | [`g7devops` staging webroot renew·timer·deploy hook report](evidence/g7devops-direct-tls-20260715.md) |
-| `TLS-004` | `crates/guard-agent/tests/served_certificate.rs` | file/served cert comparison |
+| `TLS-004` | `crates/guard-system/src/tls/served/tests.rs`, `crates/guard-cli/src/main.rs`, `tools/tests/test_packaging_security.py` | staging renewal 직후 hook·listener fingerprint comparison |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | [`g7devops` 전환 전후 fingerprint](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
 | `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |

@@ -37,7 +37,8 @@ last_reviewed: 2026-07-23
 | `ACT-008` 자동 검증 | 안정 뒤 `RECOVERY_READY`에서 Cloudflare와 origin lock 유지, 관리자 인증·CSRF·재확인·idempotency 이후에만 snapshot 복구 | state·API·Playwright 회귀; 실제 test zone 승인 전후 read-back은 미완료 |
 | `ACT-013`, `ACT-014` | standalone UFW, JW-agent delegated, disabled 소유권과 typed IP/CIDR·port rule transaction | 실제 VM UFW active, 외부 규칙 8개 보존, 임시 deny add/read-back/remove, SSH·관리 HTTPS 보존과 delegated mutation 거부 |
 | `TLS-001` 일부 | 단일 certificate chain의 key·유효기간·SAN 검사 | TLS unit tests |
-| `TLS-002`, `TLS-005`, `TLS-006` 하네스 | startup cert/key·SAN·유효기간 preflight, 6시간 공개 cert·Certbot renewal/timer 관측, external/assisted/manual 소유권, systemd credential 경계, 승인 전 HTTP-01 plan, deploy hook과 보존 | typed unit/API/UI tests; 실제 staging 발급·renew·served cert 비교와 graceful reload 증거는 미수집 |
+| `TLS-002`, `TLS-005`, `TLS-006` 하네스 | startup cert/key·SAN·유효기간 preflight, 6시간 공개 cert·Certbot renewal/timer 관측, external/assisted/manual 소유권, systemd credential 경계, 승인 전 HTTP-01 plan, deploy hook과 보존 | typed unit/API/UI tests; 실제 staging 발급·renew와 graceful reload 증거는 미수집 |
+| `TLS-004` 자동 검증 | 명시적 IP·port에 exact SNI handshake 후 파일과 실제 leaf SHA-256 비교, mismatch fail-closed Certbot hook | 일치·불일치 local TLS fixture와 CLI·packaging 계약; 실제 renewal 직후 증거는 미수집 |
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | 별도 HTTPS 관리 Host→loopback Control 분리, CSR SPA, 인증된 SSE·조회, client 검색·필터·정렬·페이지, 운영 명령 확인, light/dark, stale/error | local TLS integration·Bun·Playwright·control tests |
 | `UI-016`, `UI-017` | trusted Apache TLS terminator의 직접 관리자와 standalone/delegated 방화벽 SPA | 실제 `:7443` PAM session·Control 비공개·Playwright typed form/read-only delegation |
 | `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | ingress 양방향·probe 실패 exact rollback fixture와 일부 실제 VPS 왕복 증거; update/uninstall·다중 architecture 실증은 미완료 |
@@ -65,7 +66,7 @@ last_reviewed: 2026-07-23
 - `DET-012`, `SEC-009`, `SEC-010`: loopback 자동 증거는 통과했으나 실제 G7 정상 browser CSP violation, Reverb·외부 asset 호환과 shared IP 인증 오탐을 관찰하기 전에는 CSP enforce·강한 auth 한도를 기본 적용하지 않음. 계정·session 단위 방어는 계속 origin 책임
 - `EDGE-014`, `DET-013`, `SEC-016`, `SEC-017`: 여러 실제 source high-cardinality, 실제 공식 crawler allow, HTTP/2·WebSocket framing과 authenticated 글쓰기·업로드 WAF 오탐 replay
 - `ACT-006`~`ACT-010`: User token과 record ID·type preflight는 fake API까지 구현됐으며, Cloudflare test zone 전환·복구와 실제 kernel/SSH·non-web port diff 증거가 남음. Account API Token onboarding은 zone-scoped DNS Write 재현 전까지 제외
-- `TLS-002`~`TLS-006`: 기존 manager·timer 감지와 승인 전 plan은 구현됐으며, plan hash 기반 apply, Certbot staging HTTP-01·systemd timer renew, 실제 served certificate 비교와 bypass 후 fingerprint 증거가 남음
+- `TLS-002`~`TLS-006`: 기존 manager·timer 감지, 승인 전 plan과 served certificate exact 비교는 구현됐으며, plan hash 기반 apply, Certbot staging HTTP-01·systemd timer renew, graceful reload와 실제 renewal·bypass 후 fingerprint 증거가 남음
 - `OPS-005`~`OPS-007`, `OPS-010`: update/uninstall 실증, x86_64/aarch64 artifact 실행 smoke, 격리 Ubuntu VM 20회 apply·restore와 100ms 순단 timeline. public cutover·bypass와 `OPS-009` shadow 복구는 기존 VPS 증거가 있으나 현재 서버는 원본 Nginx topology로 복구됨
 - 2GB `g7devops` 성능·장애·복구 파일럿
 

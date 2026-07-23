@@ -73,6 +73,21 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("redacted command stderr", command)
         self.assertIn('"/api/v1/bots"', api)
 
+    def test_certbot_hook_fails_closed_on_served_certificate_mismatch(self) -> None:
+        hook = (self.root / "packaging/certbot/vps-guard-deploy-hook").read_text(
+            encoding="utf-8"
+        )
+        site_hook = (self.root / "configs/certbot/g7devops-deploy-hook").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('VPS_GUARD_TLS_SERVER_NAME is required', hook)
+        self.assertIn('VPS_GUARD_TLS_ADDRESS is required', hook)
+        self.assertIn("verify-served-certificate", hook)
+        self.assertIn('--certificate "${cert}"', hook)
+        self.assertIn('--key "${key}"', hook)
+        self.assertIn("VPS_GUARD_TLS_SERVER_NAME=www.g7devops.com", site_hook)
+        self.assertIn("VPS_GUARD_TLS_ADDRESS=127.0.0.1:443", site_hook)
+
     def test_systemd_verify_ignores_all_packaged_binary_absence_only(self) -> None:
         output = "\n".join(
             [

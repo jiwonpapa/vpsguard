@@ -4,8 +4,12 @@ set -euo pipefail
 config="${VPS_GUARD_CONFIG:-/etc/vps-guard/config.toml}"
 health_url="${VPS_GUARD_EDGE_HEALTH_URL:-http://127.0.0.1:8080/health/live}"
 health_host="${VPS_GUARD_EDGE_HEALTH_HOST:-}"
+tls_server_name="${VPS_GUARD_TLS_SERVER_NAME:-${health_host}}"
+tls_address="${VPS_GUARD_TLS_ADDRESS:-}"
 lineage="${RENEWED_LINEAGE:-}"
 [[ -n "${lineage}" ]] || { echo "RENEWED_LINEAGE is required" >&2; exit 2; }
+[[ -n "${tls_server_name}" ]] || { echo "VPS_GUARD_TLS_SERVER_NAME is required" >&2; exit 2; }
+[[ -n "${tls_address}" ]] || { echo "VPS_GUARD_TLS_ADDRESS is required" >&2; exit 2; }
 cert="${lineage}/fullchain.pem"
 key="${lineage}/privkey.pem"
 [[ -r "${cert}" && -r "${key}" ]]
@@ -21,4 +25,9 @@ if [[ -n "${health_host}" ]]; then
   curl_args+=(-H "Host: ${health_host}")
 fi
 curl "${curl_args[@]}" "${health_url}" >/dev/null
+/usr/local/bin/vps-guard verify-served-certificate \
+  --certificate "${cert}" \
+  --key "${key}" \
+  --server-name "${tls_server_name}" \
+  --address "${tls_address}"
 echo "VPSGuard certificate deploy verified"

@@ -35,9 +35,11 @@ pub use operation::{
 pub use plan::{MutationPlan, PlanError, PlannedChange};
 pub use secret::{SecretFileError, SecretFilePolicy, load_secret_file, resolve_credential_path};
 pub use tls::{
-    CertbotAssistedPlan, CertbotPlanError, CertbotPlanStep, CertificateInspection, TlsHealth,
+    CertbotAssistedPlan, CertbotPlanError, CertbotPlanStep, CertificateInspection,
+    ServedCertificateProbeError, ServedCertificateReport, ServedCertificateState, TlsHealth,
     TlsManagementSnapshot, TlsOwnership, TlsRenewalState, build_certbot_assisted_plan,
-    inspect_tls_management, resolve_tls_credential_path, validate_certificate,
+    inspect_served_certificate, inspect_tls_management, resolve_tls_credential_path,
+    validate_certificate,
 };
 pub use ufw::{
     SystemUfwExecutor, UfwAction, UfwController, UfwError, UfwExecutor, UfwMutation,

@@ -3,6 +3,7 @@
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
+use std::net::SocketAddr;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -18,9 +19,9 @@ use guard_system::{
     DeploymentRestoreDriver, DeploymentStateConfig, DeploymentStateStore, IngressApplyDriver,
     IngressRestoreDriver, IngressStateConfig, IngressStateStore, IngressSwitchConfig,
     IngressSwitchDirection, IngressSwitchDriver, IngressTopology, MutationPlan, OperationKind,
-    OperationPlan, OperationState, PlannedChange, SnapshotResource, apache_ingress_plan,
-    deployment_restore_plan, execute_operation, ingress_apply_plan, ingress_restore_plan,
-    ingress_switch_plan,
+    OperationPlan, OperationState, PlannedChange, ServedCertificateReport, ServedCertificateState,
+    SnapshotResource, apache_ingress_plan, deployment_restore_plan, execute_operation,
+    ingress_apply_plan, ingress_restore_plan, ingress_switch_plan, inspect_served_certificate,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -57,6 +58,24 @@ enum Command {
         /// policy JSON 경로입니다.
         #[arg(short, long)]
         policy: PathBuf,
+    },
+    /// 파일 certificate와 실제 TLS SNI listener의 leaf를 비교합니다.
+    VerifyServedCertificate {
+        /// 비교할 PEM certificate chain입니다.
+        #[arg(long)]
+        certificate: PathBuf,
+        /// certificate와 일치해야 하는 PEM private key입니다.
+        #[arg(long)]
+        key: PathBuf,
+        /// listener에 전송할 exact SNI DNS 이름입니다.
+        #[arg(long)]
+        server_name: String,
+        /// DNS를 거치지 않고 연결할 명시적 IP·port입니다.
+        #[arg(long)]
+        address: SocketAddr,
+        /// connect·handshake timeout 초입니다.
+        #[arg(long, default_value_t = 5)]
+        timeout_seconds: u64,
     },
     /// local peer credential로 짧은 단회 웹 로그인 코드를 발급합니다.
     IssueLoginCode {
@@ -321,6 +340,17 @@ enum CliError {
     #[error(transparent)]
     Policy(#[from] guard_core::PolicyError),
     #[error(transparent)]
+    ServedCertificate(#[from] guard_system::ServedCertificateProbeError),
+    #[error(
+        "실제 제공 certificate가 설정 파일과 다릅니다: expected_sha256={expected_sha256}, served_sha256={served_sha256}"
+    )]
+    ServedCertificateMismatch {
+        /// 설정 파일 leaf fingerprint입니다.
+        expected_sha256: String,
+        /// 실제 listener leaf fingerprint입니다.
+        served_sha256: String,
+    },
+    #[error(transparent)]
     Plan(#[from] guard_system::PlanError),
     #[error(transparent)]
     OperationContract(#[from] guard_system::OperationContractError),
@@ -418,12 +448,43 @@ fn execute(cli: Cli) -> Result<String, CliError> {
             policy.validate_at(OffsetDateTime::now_utc())?;
             Ok(format!("policy valid: version={}", policy.policy_version))
         }
+        Command::VerifyServedCertificate {
+            certificate,
+            key,
+            server_name,
+            address,
+            timeout_seconds,
+        } => {
+            let certificate = guard_core::config::CertificateConfig {
+                domains: vec![server_name.clone()],
+                cert_file: certificate,
+                key_file: key,
+                certbot_lineage: None,
+            };
+            let report = inspect_served_certificate(
+                &certificate,
+                &server_name,
+                address,
+                Duration::from_secs(timeout_seconds),
+            )?;
+            format_served_certificate_report(report)
+        }
         Command::IssueLoginCode {
             socket,
             ttl_seconds,
         } => issue_login_code(&socket, ttl_seconds),
         Command::Ops { command } => execute_ops(command),
     }
+}
+
+fn format_served_certificate_report(report: ServedCertificateReport) -> Result<String, CliError> {
+    if report.state == ServedCertificateState::Mismatch {
+        return Err(CliError::ServedCertificateMismatch {
+            expected_sha256: report.expected_sha256,
+            served_sha256: report.served_sha256,
+        });
+    }
+    serde_json::to_string_pretty(&report).map_err(CliError::Json)
 }
 
 fn execute_ops(command: OpsCommand) -> Result<String, CliError> {
@@ -1060,8 +1121,9 @@ fn shadow_plan(config: &GuardConfig) -> MutationPlan {
 #[cfg(test)]
 mod tests {
     use super::{
-        IngressStateCommand, IngressSwitchCommand, IngressSwitchDirectionArg,
-        execute_ingress_state, execute_ingress_switch, read_config, shadow_plan,
+        CliError, IngressStateCommand, IngressSwitchCommand, IngressSwitchDirectionArg,
+        ServedCertificateReport, ServedCertificateState, execute_ingress_state,
+        execute_ingress_switch, format_served_certificate_report, read_config, shadow_plan,
     };
 
     #[test]
@@ -1091,5 +1153,20 @@ mod tests {
         })?;
         assert!(bypass.contains("direction=to-nginx"));
         Ok(())
+    }
+
+    #[test]
+    fn served_certificate_mismatch_is_a_failing_cli_result() {
+        let report = ServedCertificateReport {
+            server_name: "example.test".to_owned(),
+            address: std::net::SocketAddr::from(([127, 0, 0, 1], 443)),
+            expected_sha256: "11".repeat(32),
+            served_sha256: "22".repeat(32),
+            state: ServedCertificateState::Mismatch,
+        };
+        assert!(matches!(
+            format_served_certificate_report(report),
+            Err(CliError::ServedCertificateMismatch { .. })
+        ));
     }
 }
