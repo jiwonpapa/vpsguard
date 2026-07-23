@@ -7,8 +7,6 @@ use std::time::Duration;
 
 #[cfg(any(target_os = "linux", test))]
 use guard_core::config::FirewallMode;
-#[cfg(target_os = "linux")]
-use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_system::{CommandError, CommandOutput, UfwExecutor};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
@@ -316,7 +314,7 @@ mod platform {
                         .run(&arguments)
                         .map_err(|error| {
                             tracing::warn!(
-                                log_schema_version = LOG_SCHEMA_VERSION,
+                                log_schema_version = guard_core::correlation::LOG_SCHEMA_VERSION,
                                 component = "guard-privileged",
                                 error_code = "PRIVILEGED_UFW_COMMAND_FAILED",
                                 error = %error,
