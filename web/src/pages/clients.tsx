@@ -2,10 +2,14 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { DataTable } from "../components/data-table";
+import { ConsoleSection } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
 import { SectionHeading } from "../components/section-heading";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { api } from "../lib/api";
 import { formatBytes, formatTime } from "../lib/utils";
 
@@ -40,59 +44,56 @@ export function ClientsPage() {
   return (
     <>
       <SectionHeading eyebrow="Client aggregates" title="외부 클라이언트" description="원본 IP는 보존기간과 인증 session 안에서만 표시하며, 기본 응답은 network 단위로 마스킹합니다." />
-      <div className="mb-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_160px]">
-        <label className="grid gap-1 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-          Client 검색
-          <input
-            value={search}
-            onChange={(event) => { setSearch(event.target.value); setPage(0); }}
-            placeholder="IP 또는 network"
-            className="h-10 border border-zinc-700 bg-zinc-950 px-3 text-sm normal-case tracking-normal text-zinc-100 outline-none focus:border-orange-500"
-          />
-        </label>
-        <label className="grid gap-1 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-          판정 필터
-          <select
-            value={filter}
-            onChange={(event) => { setFilter(event.target.value as ClientFilter); setPage(0); }}
-            className="h-10 border border-zinc-700 bg-zinc-950 px-3 text-sm normal-case tracking-normal text-zinc-100"
-          >
-            <option value="all">전체</option>
-            <option value="throttled">제한 발생</option>
-            <option value="denied">거부 발생</option>
-          </select>
-        </label>
-        <label className="grid gap-1 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-          정렬
-          <select
-            value={sort}
-            onChange={(event) => { setSort(event.target.value as ClientSort); setPage(0); }}
-            className="h-10 border border-zinc-700 bg-zinc-950 px-3 text-sm normal-case tracking-normal text-zinc-100"
-          >
-            <option value="requests">요청 많은 순</option>
-            <option value="bytes">전송량 순</option>
-            <option value="recent">최근 관측 순</option>
-          </select>
-        </label>
-      </div>
-      <DataTable headers={["Client IP", "요청", "전송 body", "제한", "거부", "마지막 관측"]} empty={visible.length === 0}>
-        {visible.map((client, index) => (
-          <tr key={`${client.client_ip}:${currentPage * PAGE_SIZE + index}`} className="hover:bg-zinc-900/70">
-            <td className="px-3 py-3 font-mono text-zinc-200">{client.client_ip}</td>
-            <td className="px-3 py-3 font-mono">{client.requests.toLocaleString()}</td>
-            <td className="px-3 py-3 font-mono text-zinc-500">{formatBytes(client.request_body_bytes + client.response_body_bytes)}</td>
-            <td className="px-3 py-3"><Badge variant={client.throttled ? "warning" : "neutral"}>{client.throttled}</Badge></td>
-            <td className="px-3 py-3"><Badge variant={client.denied ? "danger" : "neutral"}>{client.denied}</Badge></td>
-            <td className="px-3 py-3 text-zinc-500">{formatTime(client.last_seen_unix_ms)}</td>
-          </tr>
-        ))}
-      </DataTable>
-      <div className="mt-4 flex items-center justify-between gap-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-        <span>{clients.length.toLocaleString()} clients · {currentPage + 1}/{pageCount}</span>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>이전</Button>
-          <Button variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>다음</Button>
-        </div>
+      <div className="space-y-6">
+        <ConsoleSection label="클라이언트 필터" title="필터와 정렬" description="IP·판정·전송량 기준으로 과다 요청 주체를 좁힙니다.">
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px_180px]">
+            <div className="grid gap-2">
+              <Label htmlFor="client-search" className="text-xs text-muted-foreground">Client 검색</Label>
+              <Input id="client-search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="IP 또는 network" className="h-10 normal-case tracking-normal" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="client-filter" className="text-xs text-muted-foreground">판정 필터</Label>
+              <Select value={filter} onValueChange={(value) => { setFilter(value as ClientFilter); setPage(0); }}>
+                <SelectTrigger id="client-filter" className="h-10 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">전체</SelectItem><SelectItem value="throttled">제한 발생</SelectItem><SelectItem value="denied">거부 발생</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="client-sort" className="text-xs text-muted-foreground">정렬</Label>
+              <Select value={sort} onValueChange={(value) => { setSort(value as ClientSort); setPage(0); }}>
+                <SelectTrigger id="client-sort" className="h-10 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="requests">요청 많은 순</SelectItem><SelectItem value="bytes">전송량 순</SelectItem><SelectItem value="recent">최근 관측 순</SelectItem></SelectContent>
+              </Select>
+            </div>
+          </div>
+        </ConsoleSection>
+
+        <ConsoleSection
+          label="클라이언트 목록"
+          title="클라이언트 목록"
+          description={`조건에 맞는 클라이언트 ${clients.length.toLocaleString()}개`}
+          contentClassName="p-0 sm:p-0"
+        >
+          <DataTable headers={["Client IP", "요청", "전송 body", "제한", "거부", "마지막 관측"]} empty={visible.length === 0}>
+            {visible.map((client, index) => (
+              <tr key={`${client.client_ip}:${currentPage * PAGE_SIZE + index}`} className="transition-colors hover:bg-muted/35">
+                <td className="px-4 py-3 font-mono text-foreground">{client.client_ip}</td>
+                <td className="px-4 py-3 font-mono">{client.requests.toLocaleString()}</td>
+                <td className="px-4 py-3 font-mono text-muted-foreground">{formatBytes(client.request_body_bytes + client.response_body_bytes)}</td>
+                <td className="px-4 py-3"><Badge variant={client.throttled ? "warning" : "neutral"}>{client.throttled}</Badge></td>
+                <td className="px-4 py-3"><Badge variant={client.denied ? "danger" : "neutral"}>{client.denied}</Badge></td>
+                <td className="px-4 py-3 text-muted-foreground">{formatTime(client.last_seen_unix_ms)}</td>
+              </tr>
+            ))}
+          </DataTable>
+          <div className="flex items-center justify-between gap-4 border-t px-5 py-4 font-mono text-[10px] text-muted-foreground sm:px-6">
+            <span>{clients.length.toLocaleString()} clients · {currentPage + 1}/{pageCount}</span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>이전</Button>
+              <Button variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>다음</Button>
+            </div>
+          </div>
+        </ConsoleSection>
       </div>
     </>
   );

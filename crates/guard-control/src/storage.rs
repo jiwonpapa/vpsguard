@@ -61,6 +61,20 @@ pub(crate) struct RouteRow {
     pub(crate) response_body_bytes: u64,
 }
 
+/// 선언형 bot 분류별 bounded 장기 aggregate row입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct BotRow {
+    pub(crate) bot_class: String,
+    pub(crate) bot_provider: Option<String>,
+    pub(crate) bot_verified: bool,
+    pub(crate) bot_reason: String,
+    pub(crate) user_agent_family: String,
+    pub(crate) requests: u64,
+    pub(crate) denied: u64,
+    pub(crate) throttled: u64,
+    pub(crate) response_body_bytes: u64,
+}
+
 /// 사건 API row입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct EventRow {
@@ -87,6 +101,11 @@ pub(crate) struct RequestTraceRow {
     pub(crate) upstream_connection_reused: Option<bool>,
     pub(crate) decision: String,
     pub(crate) policy_version: u64,
+    pub(crate) bot_class: String,
+    pub(crate) bot_provider: Option<String>,
+    pub(crate) bot_verified: bool,
+    pub(crate) bot_reason: String,
+    pub(crate) user_agent_family: String,
 }
 
 /// operation ID로 찾은 감사 action row입니다.
@@ -136,6 +155,8 @@ pub(crate) struct StorageHealthSnapshot {
     pub(crate) last_retention_at_unix_ms: Option<u64>,
     pub(crate) last_write_error_at_unix_ms: Option<u64>,
     pub(crate) retention_deleted_rows: u64,
+    pub(crate) retention_anonymized_rows: u64,
+    pub(crate) retention_backlog: bool,
 }
 
 #[derive(Debug)]
@@ -158,6 +179,8 @@ struct StorageHealth {
     last_retention_at_unix_ms: AtomicU64,
     last_write_error_at_unix_ms: AtomicU64,
     retention_deleted_rows: AtomicU64,
+    retention_anonymized_rows: AtomicU64,
+    retention_backlog: AtomicBool,
     max_database_bytes: u64,
     min_disk_free_bytes: u64,
 }
@@ -183,6 +206,8 @@ impl StorageHealth {
             last_retention_at_unix_ms: AtomicU64::new(0),
             last_write_error_at_unix_ms: AtomicU64::new(0),
             retention_deleted_rows: AtomicU64::new(0),
+            retention_anonymized_rows: AtomicU64::new(0),
+            retention_backlog: AtomicBool::new(false),
             max_database_bytes,
             min_disk_free_bytes,
         }
@@ -194,9 +219,14 @@ impl StorageHealth {
         let queue_dropped_samples = self.queue_dropped_samples.load(Ordering::Relaxed);
         let write_dropped_samples = self.write_dropped_samples.load(Ordering::Relaxed);
         let write_failures = self.write_failures.load(Ordering::Relaxed);
+        let retention_backlog = self.retention_backlog.load(Ordering::Relaxed);
         let condition = if database_budget_exceeded || disk_space_low {
             StorageCondition::Critical
-        } else if queue_dropped_samples > 0 || write_dropped_samples > 0 || write_failures > 0 {
+        } else if queue_dropped_samples > 0
+            || write_dropped_samples > 0
+            || write_failures > 0
+            || retention_backlog
+        {
             StorageCondition::Degraded
         } else {
             StorageCondition::Healthy
@@ -230,6 +260,8 @@ impl StorageHealth {
                 self.last_write_error_at_unix_ms.load(Ordering::Relaxed),
             ),
             retention_deleted_rows: self.retention_deleted_rows.load(Ordering::Relaxed),
+            retention_anonymized_rows: self.retention_anonymized_rows.load(Ordering::Relaxed),
+            retention_backlog,
         }
     }
 }
@@ -245,6 +277,16 @@ struct RouteRollupKey {
 struct ClientRollupKey {
     bucket_unix_ms: u64,
     client_ip: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BotRollupKey {
+    bucket_unix_ms: u64,
+    bot_class: String,
+    bot_provider: String,
+    bot_verified: bool,
+    bot_reason: String,
+    user_agent_family: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -268,11 +310,20 @@ struct ClientRollupValue {
     last_seen_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, Default)]
+struct BotRollupValue {
+    requests: u64,
+    denied: u64,
+    throttled: u64,
+    response_body_bytes: u64,
+}
+
 #[derive(Debug, Default)]
 struct BatchRollups {
     ten_seconds: HashMap<RouteRollupKey, RouteRollupValue>,
     one_minute: HashMap<RouteRollupKey, RouteRollupValue>,
     clients: HashMap<ClientRollupKey, ClientRollupValue>,
+    bots: HashMap<BotRollupKey, BotRollupValue>,
 }
 
 impl BatchRollups {
@@ -302,6 +353,30 @@ impl BatchRollups {
                     .saturating_add(telemetry.response_body_bytes);
                 value.last_seen_unix_ms =
                     value.last_seen_unix_ms.max(telemetry.occurred_at_unix_ms);
+            }
+            if telemetry.bot_class != guard_core::BotClass::Undeclared {
+                let key = BotRollupKey {
+                    bucket_unix_ms: bucket(telemetry.occurred_at_unix_ms, MINUTE_MS),
+                    bot_class: telemetry.bot_class.as_str().to_owned(),
+                    bot_provider: telemetry.bot_provider.map_or_else(
+                        || "none".to_owned(),
+                        |provider| provider.as_str().to_owned(),
+                    ),
+                    bot_verified: telemetry.bot_verified,
+                    bot_reason: telemetry.bot_reason.as_str().to_owned(),
+                    user_agent_family: telemetry.user_agent_family.as_str().to_owned(),
+                };
+                let value = rollups.bots.entry(key).or_default();
+                value.requests = value.requests.saturating_add(1);
+                value.denied = value
+                    .denied
+                    .saturating_add(u64::from(telemetry.decision == "deny"));
+                value.throttled = value
+                    .throttled
+                    .saturating_add(u64::from(telemetry.decision == "throttle"));
+                value.response_body_bytes = value
+                    .response_body_bytes
+                    .saturating_add(telemetry.response_body_bytes);
             }
         }
         rollups
@@ -455,6 +530,7 @@ impl SqliteStore {
         ensure_column(&connection, "upstream_connection_reused", "INTEGER")?;
         apply_rollup_migration(&mut connection)?;
         apply_correlation_migration(&mut connection)?;
+        apply_bot_telemetry_migration(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             database_path,
@@ -514,8 +590,10 @@ impl SqliteStore {
                     request_id, occurred_at_ms, method, client_ip, route_class,
                     normalized_route, route_cost, status, latency_micros,
                     request_body_bytes, response_body_bytes, upstream_connection_reused,
-                    decision, policy_version
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    decision, policy_version, bot_class, bot_provider, bot_verified,
+                    bot_reason, user_agent_family
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                           ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             )?;
             for telemetry in batch {
                 let client_ip = self
@@ -537,12 +615,18 @@ impl SqliteStore {
                     telemetry.upstream_connection_reused,
                     telemetry.decision,
                     to_i64(telemetry.policy_version),
+                    telemetry.bot_class.as_str(),
+                    telemetry.bot_provider.map(|provider| provider.as_str()),
+                    telemetry.bot_verified,
+                    telemetry.bot_reason.as_str(),
+                    telemetry.user_agent_family.as_str(),
                 ])?;
             }
         }
         upsert_route_rollups(&transaction, "traffic_rollups_10s", &rollups.ten_seconds)?;
         upsert_route_rollups(&transaction, "traffic_rollups_1m", &rollups.one_minute)?;
         upsert_client_rollups(&transaction, &rollups.clients)?;
+        upsert_bot_rollups(&transaction, &rollups.bots)?;
         transaction.commit()?;
         drop(connection);
 
@@ -621,6 +705,33 @@ impl SqliteStore {
                 max_route_cost: row.get(5)?,
                 request_body_bytes: from_i64(row.get(6)?),
                 response_body_bytes: from_i64(row.get(7)?),
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// 장기 1분 rollup에서 선언형 bot aggregate를 반환합니다.
+    pub(crate) fn bots(&self, limit: usize) -> Result<Vec<BotRow>, StorageError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT bot_class, bot_provider, bot_verified, bot_reason, user_agent_family,
+                    SUM(requests), SUM(denied), SUM(throttled), SUM(response_body_bytes)
+             FROM traffic_bot_rollups_1m
+             GROUP BY bot_class, bot_provider, bot_verified, bot_reason, user_agent_family
+             ORDER BY SUM(requests) DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map([to_i64(limit as u64)], |row| {
+            let provider = row.get::<_, String>(1)?;
+            Ok(BotRow {
+                bot_class: row.get(0)?,
+                bot_provider: (provider != "none").then_some(provider),
+                bot_verified: row.get(2)?,
+                bot_reason: row.get(3)?,
+                user_agent_family: row.get(4)?,
+                requests: from_i64(row.get(5)?),
+                denied: from_i64(row.get(6)?),
+                throttled: from_i64(row.get(7)?),
+                response_body_bytes: from_i64(row.get(8)?),
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -720,7 +831,8 @@ impl SqliteStore {
             .query_row(
                 "SELECT request_id, occurred_at_ms, method, route_class, normalized_route,
                         route_cost, status, latency_micros, request_body_bytes,
-                        response_body_bytes, upstream_connection_reused, decision, policy_version
+                        response_body_bytes, upstream_connection_reused, decision, policy_version,
+                        bot_class, bot_provider, bot_verified, bot_reason, user_agent_family
                  FROM traffic_samples WHERE request_id = ?1 LIMIT 1",
                 [request_id],
                 |row| {
@@ -738,6 +850,11 @@ impl SqliteStore {
                         upstream_connection_reused: row.get(10)?,
                         decision: row.get(11)?,
                         policy_version: from_i64(row.get(12)?),
+                        bot_class: row.get(13)?,
+                        bot_provider: row.get(14)?,
+                        bot_verified: row.get(15)?,
+                        bot_reason: row.get(16)?,
+                        user_agent_family: row.get(17)?,
                     })
                 },
             )
@@ -857,7 +974,7 @@ impl SqliteStore {
             "occurred_at_ms",
             cutoffs.detail_since_ms,
         )?);
-        transaction.execute(
+        let anonymized = transaction.execute(
             "UPDATE traffic_samples SET client_ip = NULL
              WHERE id IN (
                 SELECT id FROM traffic_samples
@@ -868,7 +985,7 @@ impl SqliteStore {
                 to_i64(cutoffs.raw_ip_since_ms),
                 to_i64(RETENTION_DELETE_LIMIT)
             ],
-        )?;
+        )? as u64;
         deleted = deleted.saturating_add(execute_bounded_delete(
             &transaction,
             "traffic_client_rollups_1m",
@@ -884,6 +1001,12 @@ impl SqliteStore {
         deleted = deleted.saturating_add(execute_bounded_delete(
             &transaction,
             "traffic_rollups_1m",
+            "bucket_ms",
+            cutoffs.aggregate_since_ms,
+        )?);
+        deleted = deleted.saturating_add(execute_bounded_delete(
+            &transaction,
+            "traffic_bot_rollups_1m",
             "bucket_ms",
             cutoffs.aggregate_since_ms,
         )?);
@@ -908,12 +1031,19 @@ impl SqliteStore {
             ],
         )? as u64);
         transaction.commit()?;
+        let retention_backlog = has_retention_backlog(&connection, cutoffs)?;
         connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_row| Ok(()))?;
         drop(connection);
 
         self.health
             .retention_deleted_rows
             .fetch_add(deleted, Ordering::Relaxed);
+        self.health
+            .retention_anonymized_rows
+            .fetch_add(anonymized, Ordering::Relaxed);
+        self.health
+            .retention_backlog
+            .store(retention_backlog, Ordering::Relaxed);
         self.health
             .last_retention_at_unix_ms
             .store(system_time_millis(), Ordering::Relaxed);
@@ -1083,6 +1213,59 @@ fn apply_correlation_migration(connection: &mut Connection) -> Result<(), rusqli
     transaction.commit()
 }
 
+fn apply_bot_telemetry_migration(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let applied = connection
+        .query_row(
+            "SELECT version FROM schema_migrations WHERE version = 4",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some();
+    if applied {
+        return Ok(());
+    }
+    ensure_column(
+        connection,
+        "bot_class",
+        "TEXT NOT NULL DEFAULT 'undeclared'",
+    )?;
+    ensure_column(connection, "bot_provider", "TEXT")?;
+    ensure_column(connection, "bot_verified", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        connection,
+        "bot_reason",
+        "TEXT NOT NULL DEFAULT 'not_declared'",
+    )?;
+    ensure_column(
+        connection,
+        "user_agent_family",
+        "TEXT NOT NULL DEFAULT 'missing'",
+    )?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE traffic_bot_rollups_1m (
+            bucket_ms INTEGER NOT NULL,
+            bot_class TEXT NOT NULL,
+            bot_provider TEXT NOT NULL,
+            bot_verified INTEGER NOT NULL,
+            bot_reason TEXT NOT NULL,
+            user_agent_family TEXT NOT NULL,
+            requests INTEGER NOT NULL,
+            denied INTEGER NOT NULL,
+            throttled INTEGER NOT NULL,
+            response_body_bytes INTEGER NOT NULL,
+            PRIMARY KEY(
+                bucket_ms, bot_class, bot_provider, bot_verified, bot_reason, user_agent_family
+            )
+        );
+        CREATE INDEX traffic_bot_rollups_time_idx
+            ON traffic_bot_rollups_1m(bucket_ms);
+        INSERT INTO schema_migrations(version) VALUES (4);",
+    )?;
+    transaction.commit()
+}
+
 fn backfill_route_rollup(
     transaction: &Transaction<'_>,
     table: &str,
@@ -1205,6 +1388,40 @@ fn upsert_client_rollups(
     Ok(())
 }
 
+fn upsert_bot_rollups(
+    transaction: &Transaction<'_>,
+    rollups: &HashMap<BotRollupKey, BotRollupValue>,
+) -> Result<(), rusqlite::Error> {
+    let mut statement = transaction.prepare_cached(
+        "INSERT INTO traffic_bot_rollups_1m(
+            bucket_ms, bot_class, bot_provider, bot_verified, bot_reason,
+            user_agent_family, requests, denied, throttled, response_body_bytes
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(
+            bucket_ms, bot_class, bot_provider, bot_verified, bot_reason, user_agent_family
+         ) DO UPDATE SET
+            requests = requests + excluded.requests,
+            denied = denied + excluded.denied,
+            throttled = throttled + excluded.throttled,
+            response_body_bytes = response_body_bytes + excluded.response_body_bytes",
+    )?;
+    for (key, value) in rollups {
+        statement.execute(params![
+            to_i64(key.bucket_unix_ms),
+            key.bot_class,
+            key.bot_provider,
+            key.bot_verified,
+            key.bot_reason,
+            key.user_agent_family,
+            to_i64(value.requests),
+            to_i64(value.denied),
+            to_i64(value.throttled),
+            to_i64(value.response_body_bytes),
+        ])?;
+    }
+    Ok(())
+}
+
 fn execute_bounded_delete(
     transaction: &Transaction<'_>,
     table: &str,
@@ -1219,6 +1436,33 @@ fn execute_bounded_delete(
         ),
         params![to_i64(cutoff), to_i64(RETENTION_DELETE_LIMIT)],
     )? as u64)
+}
+
+fn has_retention_backlog(
+    connection: &Connection,
+    cutoffs: &RetentionCutoffs,
+) -> Result<bool, rusqlite::Error> {
+    connection.query_row(
+        "SELECT CASE WHEN
+            EXISTS(SELECT 1 FROM traffic_samples WHERE occurred_at_ms < ?1 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM traffic_samples
+                      WHERE occurred_at_ms < ?2 AND client_ip IS NOT NULL LIMIT 1)
+            OR EXISTS(SELECT 1 FROM traffic_client_rollups_1m WHERE bucket_ms < ?2 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM traffic_rollups_10s WHERE bucket_ms < ?1 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM traffic_rollups_1m WHERE bucket_ms < ?3 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM traffic_bot_rollups_1m WHERE bucket_ms < ?3 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM guard_events WHERE unixepoch(occurred_at) < ?4 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM audit_actions WHERE unixepoch(occurred_at) < ?5 LIMIT 1)
+        THEN 1 ELSE 0 END",
+        params![
+            to_i64(cutoffs.detail_since_ms),
+            to_i64(cutoffs.raw_ip_since_ms),
+            to_i64(cutoffs.aggregate_since_ms),
+            to_i64(cutoffs.incident_since_seconds),
+            to_i64(cutoffs.audit_since_seconds),
+        ],
+        |row| row.get::<_, bool>(0),
+    )
 }
 
 fn pragma_u64(connection: &Connection, name: &str) -> Result<u64, rusqlite::Error> {
@@ -1327,6 +1571,7 @@ mod tests {
             decision: decision.to_owned(),
             policy_version: 2,
             occurred_at_unix_ms,
+            ..TelemetryEnvelope::default()
         }
     }
 
@@ -1369,7 +1614,11 @@ mod tests {
     #[test]
     fn persists_and_finds_bounded_request_trace() -> Result<(), Box<dyn std::error::Error>> {
         let store = SqliteStore::in_memory()?;
-        let telemetry = telemetry(120_000, None, "deny");
+        let mut telemetry = telemetry(120_000, None, "deny");
+        telemetry.bot_class = guard_core::BotClass::SpoofedCrawler;
+        telemetry.bot_provider = Some(guard_core::CrawlerProvider::Google);
+        telemetry.bot_reason = guard_core::BotReason::OfficialNetworkMismatch;
+        telemetry.user_agent_family = guard_core::UserAgentFamily::Googlebot;
         let request_id = telemetry.request_id.clone();
         store.record_traffic(&telemetry)?;
 
@@ -1381,6 +1630,13 @@ mod tests {
         assert_eq!(trace.normalized_route, "/bbs/:id");
         assert_eq!(trace.status, 503);
         assert_eq!(trace.decision, "deny");
+        assert_eq!(trace.bot_class, "spoofed_crawler");
+        assert_eq!(trace.bot_provider.as_deref(), Some("google"));
+        let bots = store.bots(10)?;
+        assert_eq!(bots.len(), 1);
+        assert_eq!(bots[0].requests, 1);
+        assert_eq!(bots[0].denied, 1);
+        assert_eq!(bots[0].user_agent_family, "googlebot");
         assert!(store.request_trace("guard-missing")?.is_none());
         Ok(())
     }
@@ -1459,6 +1715,30 @@ mod tests {
         ))?;
 
         assert!(store.clients(10)?.is_empty());
+        let stored_ip_count: i64 = store.lock().query_row(
+            "SELECT COUNT(*) FROM traffic_samples WHERE client_ip IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(stored_ip_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_reports_ip_anonymization_separately_from_deletion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = SqliteStore::in_memory()?;
+        let client = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        store.record_traffic_batch(&[
+            telemetry(60_000, client, "allow"),
+            telemetry(120_000, client, "allow"),
+        ])?;
+
+        let deleted = store.retain(&RetentionCutoffs::new(0, 150_000, 0, 0, 0))?;
+        let health = store.health();
+        assert_eq!(health.retention_anonymized_rows, 2);
+        assert!(deleted >= 2);
+        assert!(!health.retention_backlog);
         let stored_ip_count: i64 = store.lock().query_row(
             "SELECT COUNT(*) FROM traffic_samples WHERE client_ip IS NOT NULL",
             [],

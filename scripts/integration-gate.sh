@@ -320,21 +320,10 @@ admin_request /api/v1/status -H "Cookie: ${session_cookie}" >"${evidence_dir}/st
 admin_request /api/v1/traffic/summary -H "Cookie: ${session_cookie}" >"${evidence_dir}/traffic.json"
 admin_request /api/v1/clients -H "Cookie: ${session_cookie}" >"${evidence_dir}/clients.json"
 admin_request /api/v1/routes -H "Cookie: ${session_cookie}" >"${evidence_dir}/routes.json"
+admin_request /api/v1/bots -H "Cookie: ${session_cookie}" >"${evidence_dir}/bots.json"
 admin_request /api/v1/incidents -H "Cookie: ${session_cookie}" >"${evidence_dir}/incidents.json"
 admin_request /api/v1/traffic/series -H "Cookie: ${session_cookie}" >"${evidence_dir}/series.json"
-python3 - "${evidence_dir}/traffic.json" "${evidence_dir}/clients.json" "${evidence_dir}/routes.json" <<'PY'
-import json
-import sys
-
-traffic = json.load(open(sys.argv[1], encoding="utf-8"))
-clients = json.load(open(sys.argv[2], encoding="utf-8"))["items"]
-routes = json.load(open(sys.argv[3], encoding="utf-8"))["items"]
-assert traffic["requests"] >= 5
-assert traffic["response_body_bytes"] > 0
-assert traffic["upstream_connections"] >= 1
-assert clients and clients[0]["client_ip"] == "127.0.0.1"
-assert any(route["response_body_bytes"] > 0 for route in routes)
-PY
+python3 -m tools.vpsguard_harness.integration_assertions --edge-log "${evidence_dir}/edge.log" --traffic "${evidence_dir}/traffic.json" --clients "${evidence_dir}/clients.json" --routes "${evidence_dir}/routes.json" --bots "${evidence_dir}/bots.json"
 action_status="$(admin_request /api/v1/actions/manual-hold \
   --output "${evidence_dir}/manual-hold.json" --write-out '%{http_code}' -X POST \
   -H "Cookie: ${session_cookie}" -H "X-CSRF-Token: ${csrf_token}" \

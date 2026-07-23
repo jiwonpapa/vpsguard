@@ -2,13 +2,13 @@
 
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use guard_core::correlation::{LOG_SCHEMA_VERSION, RequestIdGenerator};
-use guard_core::{Decision, DeclaredBotDisposition, declared_bot_disposition};
+use guard_core::{Decision, DeclaredBotDisposition, declared_bot_disposition, user_agent_family};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_error::{
     Error, ErrorSource,
@@ -44,6 +44,10 @@ pub(crate) struct GuardEdge {
     telemetry: TelemetrySink,
     policy: Arc<PolicyRuntime>,
     clearance: Option<ClearanceSigner>,
+    in_flight_requests: Arc<AtomicU64>,
+    host_rejections: AtomicU64,
+    rate_limit_rejections: AtomicU64,
+    bot_classifications: AtomicU64,
 }
 
 impl GuardEdge {
@@ -84,6 +88,10 @@ impl GuardEdge {
             telemetry,
             policy,
             clearance,
+            in_flight_requests: Arc::new(AtomicU64::new(0)),
+            host_rejections: AtomicU64::new(0),
+            rate_limit_rejections: AtomicU64::new(0),
+            bot_classifications: AtomicU64::new(0),
         }
     }
 
@@ -165,15 +173,18 @@ impl GuardEdge {
         }
 
         if !host_allowed(host.as_deref(), &self.config.allowed_hosts) {
-            warn!(
-                log_schema_version = LOG_SCHEMA_VERSION,
-                component = "guard-edge",
-                error_code = "EDGE_HOST_REJECTED",
-                request_id = %context.request_id,
-                path = %context.path,
-                client_ip = ?context.client_ip,
-                "invalid host rejected"
-            );
+            let occurrence = self.host_rejections.fetch_add(1, Ordering::Relaxed) + 1;
+            if sampled_occurrence(occurrence) {
+                warn!(
+                    log_schema_version = LOG_SCHEMA_VERSION,
+                    component = "guard-edge",
+                    event_code = "EDGE_HOST_REJECTED",
+                    normalized_route = %context.normalized_route,
+                    client_network = %masked_client_network(context.client_ip).unwrap_or_else(|| "unknown".to_owned()),
+                    occurrence,
+                    "invalid host rejections aggregated"
+                );
+            }
             respond_text(session, 400, b"invalid host\n", &context.request_id, None).await?;
             self.emit_telemetry(context, 400, DecisionKind::Deny);
             return Ok(true);
@@ -199,15 +210,26 @@ impl GuardEdge {
             &self.config.bot_policy.allowed_crawlers,
             &self.config.bot_policy.crawler_networks,
         );
+        context.bot_class = bot_disposition.class();
+        context.bot_provider = bot_disposition.provider();
+        context.bot_verified = bot_disposition.verified();
+        context.bot_reason = bot_disposition.reason();
+        context.user_agent_family = user_agent_family(user_agent.as_deref(), bot_disposition);
         if bot_disposition != DeclaredBotDisposition::Undeclared {
-            info!(
-                log_schema_version = LOG_SCHEMA_VERSION,
-                component = "guard-edge",
-                event_code = "EDGE_DECLARED_BOT_CLASSIFIED",
-                request_id = %context.request_id,
-                disposition = ?bot_disposition,
-                "declared bot classified without trusting user-agent alone"
-            );
+            let occurrence = self.bot_classifications.fetch_add(1, Ordering::Relaxed) + 1;
+            if sampled_occurrence(occurrence) {
+                info!(
+                    log_schema_version = LOG_SCHEMA_VERSION,
+                    component = "guard-edge",
+                    event_code = "EDGE_DECLARED_BOT_CLASSIFIED",
+                    bot_class = bot_disposition.class().as_str(),
+                    bot_provider = bot_disposition.provider().map(|provider| provider.as_str()),
+                    bot_verified = bot_disposition.verified(),
+                    bot_reason = bot_disposition.reason().as_str(),
+                    occurrence,
+                    "declared bot classifications aggregated"
+                );
+            }
         }
         if self.config.enforces_dynamic_protection()
             && self.config.bot_policy.block_unapproved_declared_bots
@@ -237,6 +259,10 @@ impl GuardEdge {
                 (
                     "x-vpsguard-telemetry-reconnected",
                     self.telemetry.reconnected().to_string(),
+                ),
+                (
+                    "x-vpsguard-in-flight-requests",
+                    self.in_flight_requests.load(Ordering::Relaxed).to_string(),
                 ),
             ];
             respond_text_with_headers(
@@ -288,7 +314,7 @@ impl GuardEdge {
                 component = "guard-edge",
                 event_code = "EDGE_CANONICAL_REDIRECT",
                 request_id = %context.request_id,
-                path = %context.path,
+                normalized_route = %context.normalized_route,
                 canonical_host = canonical,
                 "canonical host redirect"
             );
@@ -384,16 +410,19 @@ impl GuardEdge {
             ) {
                 LimitDecision::Allow => {}
                 LimitDecision::Deny(scope) => {
-                    warn!(
-                        log_schema_version = LOG_SCHEMA_VERSION,
-                        component = "guard-edge",
-                        event_code = "EDGE_REQUEST_RATE_LIMITED",
-                        request_id = %context.request_id,
-                        path = %context.path,
-                        client_ip = %client_ip,
-                        limit_scope = ?scope,
-                        "request rate limited"
-                    );
+                    let occurrence = self.rate_limit_rejections.fetch_add(1, Ordering::Relaxed) + 1;
+                    if sampled_occurrence(occurrence) {
+                        warn!(
+                            log_schema_version = LOG_SCHEMA_VERSION,
+                            component = "guard-edge",
+                            event_code = "EDGE_REQUEST_RATE_LIMITED",
+                            normalized_route = %context.normalized_route,
+                            client_network = %masked_client_network(Some(client_ip)).unwrap_or_default(),
+                            limit_scope = ?scope,
+                            occurrence,
+                            "rate-limited requests aggregated"
+                        );
+                    }
                     respond_text(
                         session,
                         429,
@@ -471,7 +500,7 @@ impl ProxyHttp for GuardEdge {
     type CTX = RequestContext;
 
     fn new_ctx(&self) -> Self::CTX {
-        RequestContext::new()
+        RequestContext::tracked(Arc::clone(&self.in_flight_requests))
     }
 
     async fn upstream_peer(
@@ -674,7 +703,7 @@ impl ProxyHttp for GuardEdge {
             "id={} {} {} -> {}:{} tls={}",
             context.request_id,
             context.method,
-            context.path,
+            context.normalized_route,
             upstream_host,
             upstream_port,
             upstream_tls
@@ -711,6 +740,15 @@ impl GuardEdge {
             upstream_connection_reused: context.upstream_connection_reused,
             decision,
             policy_version: context.policy_version,
+            bot_class: context.bot_class,
+            bot_provider: context.bot_provider,
+            bot_verified: context.bot_verified,
+            bot_reason: context.bot_reason,
+            user_agent_family: context.user_agent_family,
+            in_flight_requests: context.in_flight_requests(),
+            edge_telemetry_emitted: self.telemetry.emitted(),
+            edge_telemetry_dropped: self.telemetry.dropped(),
+            edge_telemetry_reconnected: self.telemetry.reconnected(),
             occurred_at_unix_ms: unix_millis(),
         });
     }
@@ -738,6 +776,23 @@ fn unix_millis() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+fn sampled_occurrence(occurrence: u64) -> bool {
+    occurrence == 1 || occurrence.is_multiple_of(100)
+}
+
+fn masked_client_network(client_ip: Option<IpAddr>) -> Option<String> {
+    client_ip.map(|ip| match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, c, _] = ip.octets();
+            format!("{a}.{b}.{c}.0/24")
+        }
+        IpAddr::V6(ip) => {
+            let [a, b, c, d, ..] = ip.segments();
+            format!("{a:x}:{b:x}:{c:x}:{d:x}::/64")
+        }
+    })
 }
 
 fn header_value(request: &RequestHeader, name: &str) -> Option<String> {

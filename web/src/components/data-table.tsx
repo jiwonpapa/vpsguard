@@ -10,21 +10,21 @@ export function DataTable({
   empty?: boolean;
 }) {
   return (
-    <div className="overflow-x-auto border-y border-zinc-800">
+    <div className="overflow-x-auto">
       <table className="w-full min-w-[680px] border-collapse text-left text-xs">
-        <thead className="bg-zinc-950 text-[10px] uppercase tracking-wider text-zinc-500">
+        <thead className="bg-muted/45 text-[10px] uppercase tracking-wider text-muted-foreground">
           <tr>
             {headers.map((header) => (
-              <th key={header} className="border-b border-zinc-800 px-3 py-3 font-semibold">
+              <th key={header} className="border-b px-4 py-3 font-semibold">
                 {header}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-800">{children}</tbody>
+        <tbody className="divide-y divide-border/70">{children}</tbody>
       </table>
       {empty ? (
-        <div className="py-14 text-center text-xs text-zinc-600">아직 수집된 항목이 없습니다.</div>
+        <div className="py-14 text-center text-xs text-muted-foreground">아직 수집된 항목이 없습니다.</div>
       ) : null}
     </div>
   );

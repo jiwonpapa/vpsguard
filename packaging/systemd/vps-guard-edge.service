@@ -12,7 +12,7 @@ User=vps-guard
 Group=vps-guard
 ExecStart=/usr/local/bin/vps-guard-edge
 Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
-Environment=RUST_LOG=vps_guard_edge=info,guard_edge=info,pingora=warn
+Environment=RUST_LOG=vps_guard_edge=info,guard_edge=info,pingora=off
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vps-guard-edge

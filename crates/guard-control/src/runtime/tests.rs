@@ -60,6 +60,7 @@ fn dedicated_writer_drains_queue_as_one_transaction_batch() -> Result<(), Box<dy
             decision: "allow".to_owned(),
             policy_version: 1,
             occurred_at_unix_ms,
+            ..TelemetryEnvelope::default()
         })?;
     }
     drop(sender);

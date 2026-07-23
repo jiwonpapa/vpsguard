@@ -39,10 +39,20 @@ use crate::auth::{
 use crate::firewall::{FirewallError, FirewallOperations};
 use crate::provider::ProviderController;
 use crate::storage::{
-    AuditActionRow, ClientRow, EventRow, RequestTraceRow, RouteRow, SqliteStore,
+    AuditActionRow, BotRow, ClientRow, EventRow, RequestTraceRow, RouteRow, SqliteStore,
     StorageHealthSnapshot,
 };
 use crate::telemetry::{TrafficAggregator, TrafficSummary};
+
+macro_rules! api_warn {
+    ($($field:tt)*) => {
+        tracing::warn!(
+            log_schema_version = LOG_SCHEMA_VERSION,
+            component = "guard-control",
+            $($field)*
+        )
+    };
+}
 
 const INDEX_HTML: &str = include_str!("../../../web/dist/index.html");
 const APP_CSS: &str = include_str!("../../../web/dist/assets/app.css");
@@ -267,6 +277,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/traffic/series", get(traffic_series))
         .route("/api/v1/clients", get(clients))
         .route("/api/v1/routes", get(routes))
+        .route("/api/v1/bots", get(bots))
         .route("/api/v1/incidents", get(incidents))
         .route("/api/v1/correlations/{correlation_id}", get(correlation))
         .route("/api/v1/events", get(event_stream))
@@ -519,7 +530,7 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
 }
 
 async fn traffic_summary(State(app): State<Arc<AppState>>) -> Json<TrafficSummary> {
-    Json(lock_traffic(&app).summary())
+    Json(lock_traffic(&app).summary_at(unix_millis()))
 }
 
 async fn resources(State(app): State<Arc<AppState>>) -> Json<ResourcesResponse> {
@@ -543,7 +554,7 @@ async fn firewall_status(State(app): State<Arc<AppState>>) -> Response {
         Ok(Ok(status)) => Json(status).into_response(),
         Ok(Err(error)) => firewall_error_response(error),
         Err(error) => {
-            tracing::warn!(
+            api_warn!(
                 error_code = "FIREWALL_STATUS_TASK_FAILED",
                 error = %error,
                 "firewall status task failed"
@@ -613,7 +624,7 @@ async fn firewall_apply(
 }
 
 fn firewall_error_response(error: FirewallError) -> Response {
-    tracing::warn!(error_code = "FIREWALL_OPERATION_FAILED", error = %error);
+    api_warn!(error_code = "FIREWALL_OPERATION_FAILED", error = %error);
     match error {
         FirewallError::Ufw(UfwError::OwnershipDenied) => api_error(
             StatusCode::CONFLICT,
@@ -720,6 +731,10 @@ async fn clients(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery
 
 async fn routes(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
     storage_list::<RouteRow>(app.storage.routes(bounded_limit(query.limit)))
+}
+
+async fn bots(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
+    storage_list::<BotRow>(app.storage.bots(bounded_limit(query.limit)))
 }
 
 async fn incidents(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
@@ -1109,18 +1124,20 @@ async fn apply_provider_action(
             .as_mut()
             .ok_or_else(|| "PROVIDER_NOT_CONFIGURED".to_owned())?;
         if restore {
-            controller.restore().map_err(|error| error.to_string())
+            controller
+                .restore()
+                .map_err(|error| error.code().to_owned())
         } else {
             controller
                 .enable(&operation_for_task)
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.code().to_owned())
         }
     })
     .await;
     let stage = match provider_result {
         Ok(Ok(stage)) => stage,
         Ok(Err(error)) => {
-            tracing::warn!(
+            api_warn!(
                 error_code = "PROVIDER_ACTION_FAILED",
                 error,
                 operation_id,
@@ -1136,13 +1153,13 @@ async fn apply_provider_action(
             );
         }
         Err(error) => {
-            tracing::warn!(
+            api_warn!(
                 error_code = "PROVIDER_TASK_FAILED",
                 error = %error,
                 operation_id,
                 "provider task failed"
             );
-            record_provider_failure(app, &operation_id, action_name, &error.to_string());
+            record_provider_failure(app, &operation_id, action_name, "PROVIDER_TASK_JOIN_FAILED");
             return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PROVIDER_TASK_FAILED",
@@ -1187,7 +1204,7 @@ async fn apply_provider_action(
         mode_name(next.current_mode),
         &format!("{:?}", stage),
     ) {
-        tracing::warn!(
+        api_warn!(
             error_code = "PROVIDER_AUDIT_PERSISTENCE_FAILED",
             error = %error,
             operation_id,
@@ -1202,7 +1219,7 @@ async fn apply_provider_action(
         stage,
     );
     if let Err(error) = app.storage.record_event(&event) {
-        tracing::warn!(
+        api_warn!(
             error_code = "PROVIDER_EVENT_PERSISTENCE_FAILED",
             error = %error,
             operation_id,
@@ -1279,7 +1296,7 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
         mode_name(next.current_mode),
         "applied",
     ) {
-        tracing::warn!(
+        api_warn!(
             error_code = "ACTION_AUDIT_PERSISTENCE_FAILED",
             error = %error,
             operation_id,
@@ -1288,7 +1305,7 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
     }
     let event = action_event(operation_id.clone(), now, action_name, next.current_mode);
     if let Err(error) = app.storage.record_event(&event) {
-        tracing::warn!(
+        api_warn!(
             error_code = "ACTION_EVENT_PERSISTENCE_FAILED",
             error = %error,
             operation_id,
@@ -1651,7 +1668,7 @@ fn storage_list<T: Serialize>(result: Result<Vec<T>, crate::storage::StorageErro
     match result {
         Ok(items) => Json(ListResponse { items }).into_response(),
         Err(error) => {
-            tracing::warn!(
+            api_warn!(
                 error_code = "STORAGE_QUERY_FAILED",
                 error = %error,
                 "control query failed"

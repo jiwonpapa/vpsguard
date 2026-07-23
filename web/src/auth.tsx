@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { KeyRound, ShieldCheck, X } from "lucide-react";
+import { KeyRound, ShieldCheck } from "lucide-react";
 
 import {
   ApiError,
@@ -28,9 +28,30 @@ import {
   type SessionInfo,
 } from "./lib/api";
 import { Button } from "./components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog";
+import { Checkbox } from "./components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
+import { Label } from "./components/ui/label";
 import { validateAdminSetup } from "./lib/auth";
 
 interface AuthContextValue {
+  ready: boolean;
   authenticated: boolean;
   actor: string | null;
   runAction: (path: string) => Promise<void>;
@@ -45,6 +66,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  const [ready, setReady] = useState(false);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -76,7 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((error: unknown) => {
         setMessage(apiErrorMessage(error, "인증 상태를 확인하지 못했습니다."));
-      });
+      })
+      .finally(() => setReady(true));
   }, [queryClient]);
 
   const showLogin = () => {
@@ -221,6 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider
       value={{
+        ready,
         authenticated: session !== null,
         actor: session?.actor ?? null,
         runAction: async (path) => setConfirmPath(path),
@@ -230,47 +254,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
-      {confirmPath ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" role="presentation">
-          <section className="w-full max-w-md border border-zinc-700 bg-zinc-950 p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-            <h2 id="confirm-title" className="text-lg font-semibold">운영 명령 확인</h2>
-            <p className="mt-3 text-sm leading-6 text-zinc-500">
-              {actionDescription(confirmPath)} 실행 결과는 감사 timeline에 기록되며 idempotency key로 중복 적용을 차단합니다.
-            </p>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setConfirmPath(null)}>취소</Button>
-              <Button variant={confirmPath.includes("emergency") ? "danger" : "default"} onClick={() => {
+      <AlertDialog open={confirmPath !== null} onOpenChange={(nextOpen) => {
+        if (!nextOpen) setConfirmPath(null);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>운영 명령 확인</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmPath ? actionDescription(confirmPath) : "선택한 운영 명령을"} 실행하면 감사 timeline에 기록되며 idempotency key로 중복 적용을 차단합니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant={confirmPath?.includes("emergency") ? "destructive" : "default"}
+              onClick={() => {
+                if (!confirmPath) return;
                 const path = confirmPath;
                 setConfirmPath(null);
                 void execute(path);
-              }}>확인 후 실행</Button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {revokeAllOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" role="presentation">
-          <section className="w-full max-w-md border border-red-900 bg-zinc-950 p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="revoke-all-title">
-            <h2 id="revoke-all-title" className="text-lg font-semibold">모든 관리자 session 폐기</h2>
-            <p className="mt-3 text-sm leading-6 text-zinc-500">현재 관리자 ID로 로그인한 모든 브라우저를 즉시 로그아웃합니다. VPSGuard edge 트래픽 처리는 중단하지 않습니다.</p>
-            <div className="mt-6 flex justify-end gap-2"><Button variant="ghost" onClick={() => setRevokeAllOpen(false)}>취소</Button><Button variant="danger" disabled={busy} onClick={() => void revokeAll()}>{busy ? "폐기 중" : "모두 로그아웃"}</Button></div>
-          </section>
-        </div>
-      ) : null}
-      {open ? (
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/70 p-4" role="presentation">
-          <section className="my-6 w-full max-w-lg border border-zinc-700 bg-zinc-950 p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <KeyRound className="mb-4 size-5 text-orange-400" aria-hidden="true" />
-                <h2 id="auth-title" className="text-lg font-semibold">{authTitle(view)}</h2>
-                <p className="mt-2 text-sm leading-6 text-zinc-500">{authDescription(view, status?.auth_provider)}</p>
-              </div>
-              {view !== "recovery-codes" ? (
-                <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="닫기"><X className="size-4" /></Button>
-              ) : null}
-            </div>
-            <div aria-live="polite" className="mt-3 min-h-5 whitespace-pre-line text-sm text-red-400">{message}</div>
+              }}
+            >
+              확인 후 실행
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={revokeAllOpen} onOpenChange={setRevokeAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>모든 관리자 session 폐기</AlertDialogTitle>
+            <AlertDialogDescription>현재 관리자 ID로 로그인한 모든 브라우저를 즉시 로그아웃합니다. VPSGuard edge 트래픽 처리는 중단하지 않습니다.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void revokeAll()}>{busy ? "폐기 중" : "모두 로그아웃"}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog open={open} onOpenChange={(nextOpen) => {
+        if (view !== "recovery-codes") setOpen(nextOpen);
+      }}>
+        <DialogContent className="sm:max-w-lg" showCloseButton={view !== "recovery-codes"}>
+          <DialogHeader>
+            <KeyRound className="size-5 text-primary" aria-hidden="true" />
+            <DialogTitle>{authTitle(view)}</DialogTitle>
+            <DialogDescription>{authDescription(view, status?.auth_provider)}</DialogDescription>
+          </DialogHeader>
+          <div aria-live="polite" className="min-h-5 whitespace-pre-line text-sm text-destructive">{message}</div>
             {view === "login" ? (
               <LoginForm username={username} password={password} secondFactor={secondFactor} useRecovery={useRecovery} busy={busy} onUsername={setUsername} onPassword={setPassword} onSecondFactor={setSecondFactor} onUseRecovery={setUseRecovery} onSubmit={submitLogin} onBreakGlass={() => setView("break-glass")} />
             ) : null}
@@ -291,11 +322,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             {view === "break-glass" ? (
               <BreakGlassForm code={bootstrapCode} busy={busy} onCode={setBootstrapCode} onSubmit={submitBreakGlass} onBack={() => setView("login")} />
             ) : null}
-          </section>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
       {message && !open ? (
-        <button type="button" className="fixed bottom-5 right-5 z-50 whitespace-pre-line border border-zinc-700 bg-zinc-100 px-4 py-3 text-left text-xs font-semibold text-zinc-950 shadow-xl" onClick={() => setMessage(null)}>{message}</button>
+        <Button type="button" variant="secondary" className="fixed right-5 bottom-5 z-50 h-auto max-w-sm whitespace-pre-line px-4 py-3 text-left text-xs shadow-xl" onClick={() => setMessage(null)}>{message}</Button>
       ) : null}
     </AuthContext.Provider>
   );
@@ -317,9 +347,12 @@ function LoginForm(props: FormStateProps & {
       <Field id="admin-username" label="관리자 ID" value={props.username} onValue={props.onUsername} autoComplete="username" />
       <Field id="admin-password" label="비밀번호" type="password" value={props.password} onValue={props.onPassword} autoComplete="current-password" />
       <Field id="admin-second-factor" label={props.useRecovery ? "복구 코드" : "인증기 6자리 코드"} value={props.secondFactor} onValue={props.onSecondFactor} autoComplete="one-time-code" inputMode={props.useRecovery ? "text" : "numeric"} />
-      <label className="flex items-center gap-2 text-xs text-zinc-400"><input type="checkbox" checked={props.useRecovery} onChange={(event) => props.onUseRecovery(event.target.checked)} /> 인증기 대신 일회용 복구 코드 사용</label>
+      <div className="flex items-center gap-2">
+        <Checkbox id="use-recovery" checked={props.useRecovery} onCheckedChange={(checked) => props.onUseRecovery(checked === true)} />
+        <Label htmlFor="use-recovery" className="text-xs text-muted-foreground">인증기 대신 일회용 복구 코드 사용</Label>
+      </div>
       <Button className="w-full" disabled={props.busy} type="submit">{props.busy ? "확인 중" : "로그인"}</Button>
-      <button type="button" className="text-xs text-zinc-500 underline underline-offset-4" onClick={props.onBreakGlass}>서버 단회 코드로 긴급 복구</button>
+      <Button type="button" variant="link" className="h-auto p-0 text-xs text-muted-foreground" onClick={props.onBreakGlass}>서버 단회 코드로 긴급 복구</Button>
     </form>
   );
 }
@@ -343,10 +376,10 @@ function SetupAccountForm(props: FormStateProps & {
 function TotpSetupForm({ enrollment, code, busy, onCode, onSubmit }: FormStateProps & { enrollment: EnrollmentStart; code: string; onCode: (value: string) => void }) {
   return (
     <form className="mt-4 space-y-4" onSubmit={onSubmit}>
-      <div className="border border-zinc-800 bg-zinc-900 p-4">
-        <div className="text-xs text-zinc-500">인증 앱에 아래 키를 직접 입력하십시오.</div>
-        <code className="mt-2 block break-all font-mono text-sm text-orange-300">{enrollment.secret_base32}</code>
-        <a className="mt-3 inline-block text-xs text-zinc-400 underline" href={enrollment.otpauth_uri}>이 기기의 인증 앱에서 열기</a>
+      <div className="rounded-lg border bg-muted/50 p-4">
+        <div className="text-xs text-muted-foreground">인증 앱에 아래 키를 직접 입력하십시오.</div>
+        <code className="mt-2 block break-all font-mono text-sm text-primary">{enrollment.secret_base32}</code>
+        <a className="mt-3 inline-block text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" href={enrollment.otpauth_uri}>이 기기의 인증 앱에서 열기</a>
       </div>
       <Field id="setup-totp" label="인증기 6자리 코드" value={code} onValue={onCode} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" />
       <Button className="w-full" disabled={busy} type="submit">{busy ? "확인 중" : "등록 완료"}</Button>
@@ -359,9 +392,12 @@ function RecoveryCodes({ codes, onFinish }: { codes: string[]; onFinish: () => v
   return (
     <div className="mt-4">
       <div className="border border-amber-700/60 bg-amber-950/30 p-4 text-sm text-amber-200">이 코드는 지금 한 번만 표시됩니다. 비밀번호 관리자나 안전한 오프라인 장소에 보관하십시오.</div>
-      <ol className="mt-4 grid grid-cols-1 gap-2 border-y border-zinc-800 py-4 sm:grid-cols-2">{codes.map((code) => <li key={code}><code className="font-mono text-xs">{code}</code></li>)}</ol>
+      <ol className="mt-4 grid grid-cols-1 gap-2 rounded-lg border bg-muted/30 p-4 sm:grid-cols-2">{codes.map((code) => <li key={code}><code className="font-mono text-xs">{code}</code></li>)}</ol>
       <Button variant="outline" className="mt-4 w-full" onClick={() => void navigator.clipboard.writeText(codes.join("\n"))}>복구 코드 복사</Button>
-      <label className="mt-4 flex items-start gap-2 text-xs text-zinc-400"><input className="mt-0.5" type="checkbox" checked={saved} onChange={(event) => setSaved(event.target.checked)} /> 복구 코드를 안전한 장소에 저장했습니다.</label>
+      <div className="mt-4 flex items-start gap-2">
+        <Checkbox id="recovery-saved" className="mt-0.5" checked={saved} onCheckedChange={(checked) => setSaved(checked === true)} />
+        <Label htmlFor="recovery-saved" className="text-xs leading-5 text-muted-foreground">복구 코드를 안전한 장소에 저장했습니다.</Label>
+      </div>
       <Button className="mt-4 w-full" disabled={!saved} onClick={onFinish}><ShieldCheck className="size-4" /> 관리자 화면 시작</Button>
     </div>
   );
@@ -379,7 +415,7 @@ function BreakGlassForm({ code, busy, onCode, onSubmit, onBack }: FormStateProps
 function Field({ id, label, value, onValue, type = "text", ...inputProps }: {
   id: string; label: string; value: string; onValue: (value: string) => void; type?: string;
 } & Omit<InputHTMLAttributes<HTMLInputElement>, "id" | "value" | "onChange" | "type">) {
-  return <div><label htmlFor={id} className="block font-mono text-[10px] uppercase tracking-wider text-zinc-500">{label}</label><input id={id} type={type} value={value} onChange={(event) => onValue(event.target.value)} className="mt-2 h-10 w-full border border-zinc-700 bg-zinc-900 px-3 text-sm outline-none focus:border-orange-500" required {...inputProps} /></div>;
+  return <div className="grid gap-2"><Label htmlFor={id} className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</Label><Input id={id} type={type} value={value} onChange={(event) => onValue(event.target.value)} className="h-10" required {...inputProps} /></div>;
 }
 
 function authTitle(view: AuthView): string {

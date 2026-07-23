@@ -14,9 +14,9 @@ pub mod state;
 
 pub use config::{ConfigError, GuardConfig};
 pub use crawler::{
-    CrawlerNetwork, CrawlerProvider, CrawlerVerification, CrawlerVerificationInput,
-    DeclaredBotDisposition, VerificationMethod, VerificationReason, declared_bot_disposition,
-    verify_crawler,
+    BotClass, BotReason, CrawlerNetwork, CrawlerProvider, CrawlerVerification,
+    CrawlerVerificationInput, DeclaredBotDisposition, UserAgentFamily, VerificationMethod,
+    VerificationReason, declared_bot_disposition, user_agent_family, verify_crawler,
 };
 pub use detection::{Assessment, Decision, DetectionInput, Detector, ReasonCode};
 pub use event::{GuardEvent, Severity};

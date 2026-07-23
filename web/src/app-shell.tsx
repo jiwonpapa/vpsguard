@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, Outlet } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -7,9 +7,10 @@ import {
   CircleDot,
   Cpu,
   KeyRound,
+  LockKeyhole,
   LogOut,
+  Menu,
   Moon,
-  Network,
   Route,
   ShieldCheck,
   ShieldEllipsis,
@@ -21,25 +22,43 @@ import {
 import { useAuth } from "./auth";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { LoadingState } from "./components/query-state";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 
 const navigation = [
-  ["/", "개요", ShieldCheck],
-  ["/traffic", "트래픽", Activity],
-  ["/clients", "클라이언트", Users],
-  ["/routes", "경로", Route],
-  ["/incidents", "사건", BookOpenCheck],
-  ["/resources", "자원", Cpu],
-  ["/firewall", "방화벽", ShieldEllipsis],
+  {
+    label: "모니터링",
+    items: [
+      ["/", "개요", ShieldCheck],
+      ["/traffic", "트래픽", Activity],
+      ["/clients", "클라이언트", Users],
+      ["/routes", "경로", Route],
+    ],
+  },
+  {
+    label: "운영",
+    items: [
+      ["/incidents", "사건", BookOpenCheck],
+      ["/resources", "자원", Cpu],
+      ["/firewall", "방화벽", ShieldEllipsis],
+    ],
+  },
 ] as const;
 
 export function AppShell() {
   const queryClient = useQueryClient();
-  const { authenticated, actor, logout, openLogin, revokeAll } = useAuth();
+  const { ready, authenticated, actor, logout, openLogin, revokeAll } = useAuth();
   const [connected, setConnected] = useState(false);
-  const [dark, setDark] = useState(true);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
 
   useEffect(() => {
+    if (!ready || !authenticated) {
+      setConnected(false);
+      return;
+    }
     const source = new EventSource("/api/v1/events");
     source.onopen = () => setConnected(true);
     source.onmessage = () => void queryClient.invalidateQueries();
@@ -47,78 +66,191 @@ export function AppShell() {
     source.addEventListener("operator.action", () => void queryClient.invalidateQueries());
     source.onerror = () => setConnected(false);
     return () => source.close();
-  }, [queryClient]);
+  }, [authenticated, queryClient, ready]);
 
   const toggleTheme = () => {
     const next = !dark;
     setDark(next);
     document.documentElement.classList.toggle("dark", next);
+    window.localStorage.setItem("vpsguard-theme", next ? "dark" : "light");
   };
 
+  const connectionLabel = !ready
+    ? "인증 확인 중"
+    : authenticated
+      ? connected
+        ? "실시간 연결"
+        : "데이터 연결 대기"
+      : "로그인 필요";
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 selection:bg-orange-500 selection:text-zinc-950">
-      <header className="sticky top-0 z-40 flex h-14 items-center border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur md:px-6">
-        <Link to="/" className="flex min-w-48 items-center gap-3" aria-label="VPSGuard 개요">
-          <span className="grid size-8 place-items-center bg-orange-500 font-mono text-xs font-black text-zinc-950">VG</span>
-          <span className="font-semibold tracking-tight">VPSGuard</span>
-          <Badge>MVP</Badge>
-        </Link>
-        <div className="ml-auto flex items-center gap-2">
-          <div className="hidden items-center gap-2 pr-2 text-xs text-zinc-500 sm:flex">
-            <CircleDot className={cn("size-3", connected ? "text-emerald-400" : "text-amber-400")} />
-            {connected ? "SSE 연결됨" : "재연결 중"}
+    <div className="min-h-screen bg-muted/25 text-foreground selection:bg-primary selection:text-primary-foreground">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+        <SidebarBrand />
+        <SidebarNavigation onNavigate={() => undefined} />
+        <div className="mt-auto border-t border-sidebar-border px-5 py-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <LockKeyhole className="size-3.5 text-primary" aria-hidden="true" />
+            <span>관리 HTTPS 전용</span>
           </div>
-          {authenticated ? (
-            <>
-              <span className="hidden font-mono text-[10px] text-zinc-500 lg:inline">{actor}</span>
-              <Button variant="ghost" size="icon" onClick={revokeAll} aria-label="모든 관리자 session 로그아웃" title="모든 관리자 session 로그아웃"><ShieldX className="size-4" /></Button>
-              <Button variant="ghost" size="icon" onClick={() => void logout()} aria-label={`${actor ?? "관리자"} 로그아웃`} title={`${actor ?? "관리자"} 로그아웃`}>
-                <LogOut className="size-4" />
-              </Button>
-            </>
-          ) : (
-            <Button variant="ghost" size="icon" onClick={openLogin} aria-label="VPSGuard 관리자 로그인">
-              <KeyRound className="size-4" />
-            </Button>
-          )}
-          <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="테마 전환">
-            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-        </div>
-      </header>
-      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)_250px]">
-        <nav className="fixed inset-x-0 bottom-0 z-40 flex h-14 border-t border-zinc-800 bg-zinc-950 md:static md:h-auto md:flex-col md:border-r md:border-t-0 md:px-3 md:py-6" aria-label="주요 메뉴">
-          {navigation.map(([to, label, Icon]) => (
-            <Link
-              key={to}
-              to={to}
-              activeOptions={{ exact: to === "/" }}
-              aria-label={label}
-              className="flex flex-1 items-center justify-center gap-3 border-l-2 border-transparent px-3 py-3 text-xs text-zinc-500 transition-colors hover:text-zinc-100 md:flex-none md:justify-start"
-              activeProps={{ className: "border-orange-500 bg-zinc-900 text-zinc-50" }}
-            >
-              <Icon className="size-4 shrink-0" aria-hidden="true" />
-              <span className="hidden md:inline">{label}</span>
-            </Link>
-          ))}
-        </nav>
-        <main className="min-w-0 px-4 py-7 pb-20 md:px-8 md:py-10 xl:px-10">
-          <Outlet />
-        </main>
-        <aside className="hidden border-l border-zinc-800 bg-zinc-900/35 p-6 xl:block">
-          <Network className="size-5 text-orange-400" aria-hidden="true" />
-          <h2 className="mt-5 text-sm font-semibold">운영 경계</h2>
-          <ul className="mt-4 divide-y divide-zinc-800 text-xs leading-5 text-zinc-500">
-            <li className="py-3">Control은 loopback에 유지되고 UI는 별도 HTTPS 관리 Host로만 전달됩니다.</li>
-            <li className="py-3">Edge는 Control 장애 중에도 마지막 정상 정책으로 동작합니다.</li>
-            <li className="py-3">Provider 전환은 검증 가능한 transaction으로만 수행합니다.</li>
-            <li className="py-3">쓰기 명령은 session, CSRF, idempotency key가 필요합니다.</li>
-          </ul>
-          <div className="mt-8 border-t border-zinc-800 pt-5 font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+          <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/60">
             Rust · Pingora · SQLite WAL
+          </p>
+        </div>
+      </aside>
+
+      <div className="min-h-screen md:pl-60">
+        <header className="sticky top-0 z-30 flex h-16 items-center border-b border-border/80 bg-background/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="mr-2 md:hidden"
+            aria-label="주요 메뉴 열기"
+            onClick={() => setMobileNavigationOpen(true)}
+          >
+            <Menu className="size-4" />
+          </Button>
+          <div className="md:hidden"><SidebarBrand compact /></div>
+          <div className="hidden items-center gap-2 md:flex">
+            <CircleDot
+              className={cn("size-3", connected ? "text-emerald-500" : authenticated ? "text-amber-500" : "text-muted-foreground")}
+              aria-hidden="true"
+            />
+            <span className="text-xs font-medium text-muted-foreground">{connectionLabel}</span>
           </div>
-        </aside>
+          <div className="ml-auto flex items-center gap-1">
+            {authenticated ? (
+              <>
+                <div className="mr-2 hidden text-right lg:block">
+                  <div className="text-xs font-medium">{actor}</div>
+                  <div className="text-[10px] text-muted-foreground">인증된 관리자</div>
+                </div>
+                <IconAction label="모든 관리자 session 로그아웃" onClick={revokeAll}><ShieldX className="size-4" /></IconAction>
+                <IconAction label={`${actor ?? "관리자"} 로그아웃`} onClick={() => void logout()}><LogOut className="size-4" /></IconAction>
+              </>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={openLogin} aria-label="VPSGuard 관리자 로그인">
+                    <KeyRound className="size-3.5" />
+                    <span className="hidden sm:inline">관리자 로그인</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent sideOffset={6}>VPSGuard 관리자 로그인</TooltipContent>
+              </Tooltip>
+            )}
+            <IconAction label="테마 전환" onClick={toggleTheme}>{dark ? <Sun className="size-4" /> : <Moon className="size-4" />}</IconAction>
+          </div>
+        </header>
+
+        <main className="mx-auto min-w-0 max-w-[1480px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+          {!ready ? <LoadingState label="관리자 인증 확인 중" /> : authenticated ? <Outlet /> : <AccessGate onLogin={openLogin} />}
+        </main>
       </div>
+
+      <Dialog open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
+        <DialogContent
+          className="!top-0 !left-0 h-dvh !max-w-72 !translate-x-0 !translate-y-0 content-start gap-0 rounded-none border-r bg-sidebar p-0"
+          aria-label="모바일 주요 메뉴"
+        >
+          <DialogTitle className="sr-only">주요 메뉴</DialogTitle>
+          <DialogDescription className="sr-only">VPSGuard 관리자 화면 이동</DialogDescription>
+          <SidebarBrand />
+          <SidebarNavigation onNavigate={() => setMobileNavigationOpen(false)} />
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function SidebarBrand({ compact = false }: { compact?: boolean }) {
+  return (
+    <Link
+      to="/"
+      className={cn("flex items-center gap-3", compact ? "h-10" : "h-16 border-b border-sidebar-border px-5")}
+      aria-label="VPSGuard 개요"
+    >
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm shadow-primary/20">
+        <ShieldCheck className="size-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold tracking-tight">VPSGuard</span>
+        {!compact ? <span className="block text-[10px] text-muted-foreground">Edge security console</span> : null}
+      </span>
+      {!compact ? <Badge variant="neutral" className="ml-auto">MVP</Badge> : null}
+    </Link>
+  );
+}
+
+function SidebarNavigation({ onNavigate }: { onNavigate: () => void }) {
+  return (
+    <nav className="flex-1 overflow-y-auto px-3 py-5" aria-label="주요 메뉴">
+      {navigation.map((group, index) => (
+        <div key={group.label} className={cn(index > 0 && "mt-7")}>
+          <div className="px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/65">{group.label}</div>
+          <div className="mt-2 space-y-1">
+            {group.items.map(([to, label, Icon]) => (
+              <Link
+                key={to}
+                to={to}
+                activeOptions={{ exact: to === "/" }}
+                aria-label={label}
+                onClick={onNavigate}
+                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                activeProps={{ className: "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" }}
+              >
+                <Icon className="size-4 shrink-0" aria-hidden="true" />
+                <span>{label}</span>
+                <span className="ml-auto hidden size-1.5 rounded-full bg-primary [[data-status=active]_&]:block" />
+              </Link>
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function AccessGate({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div className="grid min-h-[calc(100vh-9rem)] place-items-center py-8">
+      <section className="w-full max-w-3xl overflow-hidden rounded-2xl border bg-card shadow-lg shadow-black/5" aria-labelledby="access-gate-title">
+        <div className="grid md:grid-cols-[1.3fr_0.7fr]">
+          <div className="p-7 sm:p-9">
+            <span className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
+              <KeyRound className="size-5" aria-hidden="true" />
+            </span>
+            <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Restricted operations</p>
+            <h1 id="access-gate-title" className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">관리자 로그인이 필요합니다</h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
+              방어 상태와 운영 설정은 인증된 관리자에게만 표시됩니다. 서버 관리자 계정과 2단계 인증으로 접속하십시오.
+            </p>
+            <Button className="mt-7" onClick={onLogin}>
+              <KeyRound className="size-4" aria-hidden="true" />
+              VPSGuard 관리자 로그인
+            </Button>
+          </div>
+          <div className="border-t bg-muted/40 p-7 md:border-t-0 md:border-l sm:p-9">
+            <h2 className="text-sm font-semibold">보호된 관리 경로</h2>
+            <ul className="mt-5 space-y-5 text-xs leading-5 text-muted-foreground">
+              <li className="flex gap-3"><span className="mt-1 size-1.5 shrink-0 rounded-full bg-emerald-500" />HTTPS 관리 호스트에서만 접근합니다.</li>
+              <li className="flex gap-3"><span className="mt-1 size-1.5 shrink-0 rounded-full bg-emerald-500" />비밀번호와 TOTP를 함께 검증합니다.</li>
+              <li className="flex gap-3"><span className="mt-1 size-1.5 shrink-0 rounded-full bg-emerald-500" />쓰기 작업은 재인증과 감사 기록을 남깁니다.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function IconAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" onClick={onClick} aria-label={label}>{children}</Button>
+      </TooltipTrigger>
+      <TooltipContent sideOffset={6}>{label}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -8,6 +8,7 @@ version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | he
 bundle="${repo_root}/target/release-bundle/${target}/vpsguard-${version}"
 cd "${repo_root}"
 trap 'bash scripts/build-storage.sh --auto || true' EXIT
+export VPS_GUARD_BUILD_COMMIT="$(git rev-parse --verify HEAD)"
 (cd web && bun ci && bun run check)
 "${build_tool}" build --locked --release --target "${target}" \
   -p guard-cli -p guard-control -p guard-edge --bins

@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use guard_core::correlation::LOG_SCHEMA_VERSION;
+use guard_core::{BotClass, BotReason, CrawlerProvider, UserAgentFamily};
 use serde::{Deserialize, Serialize};
 
 use crate::rate_limit::RouteClass;
@@ -61,6 +62,24 @@ pub struct RequestTelemetry {
     pub decision: DecisionKind,
     /// edge에 적용된 정책 버전입니다.
     pub policy_version: u64,
+    /// 선언형 bot의 bounded 분류입니다.
+    pub bot_class: BotClass,
+    /// 검증 대상 crawler provider입니다.
+    pub bot_provider: Option<CrawlerProvider>,
+    /// 공식 source identity 검증 여부입니다.
+    pub bot_verified: bool,
+    /// bot 판정의 안정 reason code입니다.
+    pub bot_reason: BotReason,
+    /// 원문을 보존하지 않는 User-Agent family입니다.
+    pub user_agent_family: UserAgentFamily,
+    /// event 시점의 처리 중 요청 수입니다.
+    pub in_flight_requests: u64,
+    /// event 생성 직전까지 edge telemetry 전송 성공 수입니다.
+    pub edge_telemetry_emitted: u64,
+    /// event 생성 직전까지 edge telemetry 손실 수입니다.
+    pub edge_telemetry_dropped: u64,
+    /// event 생성 직전까지 receiver 재연결 수입니다.
+    pub edge_telemetry_reconnected: u64,
     /// 관측 발생 Unix epoch milliseconds입니다.
     pub occurred_at_unix_ms: u64,
 }

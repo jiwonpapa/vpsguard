@@ -14,6 +14,8 @@ Environment=RUST_LOG=guard_control=info
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vps-guard-privileged
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=2000
 Restart=on-failure
 RestartSec=3s
 UMask=0077

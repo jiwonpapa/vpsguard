@@ -113,7 +113,7 @@ grep -Fq 'traffic_request_id_idx' crates/guard-control/src/storage.rs
 grep -Fq '/api/v1/correlations/{correlation_id}' crates/guard-control/src/api.rs
 grep -Fq 'cause: &' crates/guard-control/src/api.rs
 grep -Fq 'event_id: String' crates/guard-control/src/api.rs
-for unit in packaging/systemd/vps-guard-edge.service packaging/systemd/vps-guard-control.service; do
+for unit in packaging/systemd/vps-guard-edge.service packaging/systemd/vps-guard-control.service packaging/systemd/vps-guard-privileged.service; do
   grep -Fq 'StandardOutput=journal' "${unit}"
   grep -Fq 'LogRateLimitIntervalSec=30s' "${unit}"
   grep -Fq 'LogRateLimitBurst=2000' "${unit}"

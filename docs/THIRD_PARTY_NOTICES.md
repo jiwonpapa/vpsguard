@@ -11,3 +11,29 @@ VPSGuard는 아래 제3자 구성요소를 사용합니다. 이 문서는 VPSGua
 - 라이선스 전문: <https://www.mozilla.org/MPL/2.0/>
 
 VPSGuard는 해당 crate를 수정하지 않습니다. binary 배포 시 이 고지와 SBOM을 함께 제공하고 위 경로에서 MPL covered source를 받을 수 있도록 유지합니다. crate를 수정하거나 vendor하면 수정된 covered file의 source와 고지를 같은 release에서 제공해야 합니다.
+
+## shadcn/ui source components
+
+- 용도: VPSGuard 운영 SPA의 소스 소유형 공통 UI 컴포넌트와 Tailwind CSS 설계 토큰
+- 라이선스: MIT
+- 원본 source: <https://github.com/shadcn-ui/ui>
+
+## Radix UI 1.6.4
+
+- 용도: dialog, alert dialog, select, checkbox와 tooltip의 접근성 primitive
+- 라이선스: MIT
+- 원본 source: <https://github.com/radix-ui/primitives>
+- 배포 package: <https://www.npmjs.com/package/radix-ui/v/1.6.4>
+
+## tw-animate-css 1.4.0
+
+- 용도: shadcn/ui 상태 전환 animation utility
+- 라이선스: MIT
+- 원본 source: <https://github.com/Wombosvideo/tw-animate-css>
+
+## Geist Variable 5.3.0
+
+- 용도: VPSGuard 운영 SPA의 Latin variable web font
+- 라이선스: SIL Open Font License 1.1 (`OFL-1.1`)
+- 원본 source: <https://github.com/vercel/geist-font>
+- 배포 package: <https://www.npmjs.com/package/@fontsource-variable/geist/v/5.3.0>

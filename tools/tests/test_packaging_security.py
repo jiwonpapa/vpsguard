@@ -37,6 +37,28 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertNotIn("CAP_SETGID", helper)
         self.assertNotIn("CAP_NET_ADMIN", control)
 
+    def test_all_units_bound_logs_and_release_metadata_is_embedded(self) -> None:
+        units = [
+            self.root / "packaging/systemd/vps-guard-edge.service",
+            self.root / "packaging/systemd/vps-guard-control.service",
+            self.root / "packaging/systemd/vps-guard-privileged.service",
+        ]
+        for path in units:
+            unit = path.read_text(encoding="utf-8")
+            self.assertIn("LogRateLimitIntervalSec=30s", unit)
+            self.assertIn("LogRateLimitBurst=2000", unit)
+        self.assertIn("pingora=off", units[0].read_text(encoding="utf-8"))
+        release = (self.root / "scripts/build-release.sh").read_text(encoding="utf-8")
+        edge = (self.root / "crates/guard-edge/src/main.rs").read_text(encoding="utf-8")
+        command = (self.root / "crates/guard-system/src/command.rs").read_text(
+            encoding="utf-8"
+        )
+        api = (self.root / "crates/guard-control/src/api.rs").read_text(encoding="utf-8")
+        self.assertIn("VPS_GUARD_BUILD_COMMIT", release)
+        self.assertIn('option_env!("VPS_GUARD_BUILD_COMMIT")', edge)
+        self.assertIn("redacted command stderr", command)
+        self.assertIn('"/api/v1/bots"', api)
+
 
 if __name__ == "__main__":
     unittest.main()

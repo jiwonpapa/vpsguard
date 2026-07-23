@@ -46,6 +46,10 @@ export interface CertbotAssistedPlan {
 }
 
 export interface TrafficSummary {
+  window_seconds: number;
+  window_started_at_unix_ms: number;
+  window_ended_at_unix_ms: number;
+  requests_per_second_milli: number;
   requests: number;
   status_2xx: number;
   status_3xx: number;
@@ -61,6 +65,12 @@ export interface TrafficSummary {
   response_body_bytes: number;
   upstream_connections: number;
   upstream_connections_reused: number;
+  in_flight_requests: number;
+  bot_requests: number;
+  bot_denied: number;
+  edge_telemetry_emitted: number;
+  edge_telemetry_dropped: number;
+  edge_telemetry_reconnected: number;
 }
 
 export interface OsSnapshot {
@@ -138,6 +148,8 @@ export interface StorageHealth {
   last_retention_at_unix_ms: number | null;
   last_write_error_at_unix_ms: number | null;
   retention_deleted_rows: number;
+  retention_anonymized_rows: number;
+  retention_backlog: boolean;
 }
 
 export interface ResourcesResponse {
@@ -165,6 +177,18 @@ export interface RouteRow {
   latency_avg_micros: number;
   max_route_cost: number;
   request_body_bytes: number;
+  response_body_bytes: number;
+}
+
+export interface BotRow {
+  bot_class: string;
+  bot_provider: string | null;
+  bot_verified: boolean;
+  bot_reason: string;
+  user_agent_family: string;
+  requests: number;
+  denied: number;
+  throttled: number;
   response_body_bytes: number;
 }
 
@@ -214,6 +238,11 @@ export interface RequestTraceRow {
   upstream_connection_reused: boolean | null;
   decision: string;
   policy_version: number;
+  bot_class: string;
+  bot_provider: string | null;
+  bot_verified: boolean;
+  bot_reason: string;
+  user_agent_family: string;
 }
 
 export interface AuditActionRow {

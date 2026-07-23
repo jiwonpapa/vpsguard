@@ -1,6 +1,7 @@
 import type {
   ActionResponse,
   CertbotAssistedPlan,
+  BotRow,
   ClientRow,
   CorrelationResponse,
   EventRow,
@@ -296,6 +297,10 @@ export const api = {
     ),
   routes: () =>
     getJson<ListResponse<RouteRow>>("/api/v1/routes?limit=500").then(
+      (value) => value.items,
+    ),
+  bots: () =>
+    getJson<ListResponse<BotRow>>("/api/v1/bots?limit=100").then(
       (value) => value.items,
     ),
   incidents: () =>

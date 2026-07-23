@@ -42,9 +42,14 @@ async function mockApi(page: Page) {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/v1/session" && route.request().method() === "GET") {
       await route.fulfill({
-        status: 401,
+        status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ error: { code: "SESSION_AUTH_REQUIRED" } }),
+        body: JSON.stringify({
+          csrf_token: "csrf-fixture",
+          expires_in_seconds: 3600,
+          actor: "guard.admin",
+          authentication_method: "password_totp",
+        }),
       });
       return;
     }
@@ -53,7 +58,9 @@ async function mockApi(page: Page) {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          auth_provider: "local",
           setup_required: false,
+          enrollment_enabled: true,
           password_login_enabled: true,
           totp_required: true,
           break_glass_available: true,
@@ -91,6 +98,10 @@ async function mockApi(page: Page) {
     const data: Record<string, unknown> = {
       "/api/v1/status": status,
       "/api/v1/traffic/summary": {
+        window_seconds: 900,
+        window_started_at_unix_ms: 1783999100000,
+        window_ended_at_unix_ms: 1784000000000,
+        requests_per_second_milli: 1200,
         requests: 1200,
         status_2xx: 1100,
         status_3xx: 20,
@@ -106,6 +117,12 @@ async function mockApi(page: Page) {
         response_body_bytes: 819200,
         upstream_connections: 400,
         upstream_connections_reused: 320,
+        in_flight_requests: 7,
+        bot_requests: 18,
+        bot_denied: 4,
+        edge_telemetry_emitted: 1200,
+        edge_telemetry_dropped: 0,
+        edge_telemetry_reconnected: 1,
       },
       "/api/v1/resources": {
         state: "live",
@@ -184,10 +201,23 @@ async function mockApi(page: Page) {
           last_retention_at_unix_ms: 1783999900000,
           last_write_error_at_unix_ms: null,
           retention_deleted_rows: 37,
+          retention_anonymized_rows: 12,
+          retention_backlog: false,
         },
       },
       "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, request_body_bytes: 2048, response_body_bytes: 16384, last_seen_unix_ms: 1784000000000 }] },
       "/api/v1/routes": { items: [] },
+      "/api/v1/bots": { items: [{
+        bot_class: "spoofed_crawler",
+        bot_provider: "google",
+        bot_verified: false,
+        bot_reason: "official_network_mismatch",
+        user_agent_family: "googlebot",
+        requests: 8,
+        denied: 8,
+        throttled: 0,
+        response_body_bytes: 1024,
+      }] },
       "/api/v1/incidents": { items: [] },
       "/api/v1/firewall": {
         mode: "standalone_ufw",
@@ -222,6 +252,20 @@ async function mockApi(page: Page) {
   });
 }
 
+async function mockAnonymousSession(page: Page) {
+  await page.route("**/api/v1/session", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "SESSION_AUTH_REQUIRED" } }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
 });
@@ -231,12 +275,36 @@ test("renders protection posture and client drill-down", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "현재 방어 상태" })).toBeVisible();
   await expect(page.getByText("로컬 방어", { exact: true })).toBeVisible();
   await expect(page.getByText(/앱 보안 활성 · CSP report_only/)).toBeVisible();
-  await page.getByRole("link", { name: "클라이언트" }).click();
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await page.getByRole("button", { name: "주요 메뉴 열기" }).click();
+    await page.getByRole("dialog").getByRole("link", { name: "클라이언트" }).click();
+  } else {
+    await page.getByRole("link", { name: "클라이언트" }).click();
+  }
   await expect(page.getByText("203.0.113.8")).toBeVisible();
   await page.getByLabel("Client 검색").fill("198.51");
   await expect(page.getByText("아직 수집된 항목이 없습니다.")).toBeVisible();
   await page.getByLabel("Client 검색").fill("203.0");
   await expect(page.getByText("18.0 KiB")).toBeVisible();
+});
+
+test("organizes the overview as a sectioned operations console", async ({ page }) => {
+  await page.goto("/");
+
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await page.getByRole("button", { name: "주요 메뉴 열기" }).click();
+    const mobileMenu = page.getByRole("dialog");
+    await expect(mobileMenu.getByText("모니터링", { exact: true })).toBeVisible();
+    await expect(mobileMenu.getByText("운영", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+  } else {
+    await expect(page.getByText("모니터링", { exact: true })).toBeVisible();
+    await expect(page.getByText("운영", { exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole("region", { name: "현재 보호 상태" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "실시간 트래픽" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "서버 압력" })).toBeVisible();
+  await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);
 });
 
 test("renders bounded storage health and retention state", async ({ page }) => {
@@ -266,7 +334,9 @@ test("finds a request by correlation ID without a terminal", async ({ page }) =>
 test("switches between live and persisted traffic resolutions", async ({ page }) => {
   await page.goto("/traffic");
   await expect(page.getByRole("img", { name: "1m 요청 추이" })).toBeVisible();
-  await page.getByLabel("시계열 해상도").selectOption("1s");
+  await expect(page.getByText("spoofed crawler", { exact: true })).toBeVisible();
+  await page.getByLabel("시계열 해상도").click();
+  await page.getByRole("option", { name: "1초 live" }).click();
   await expect(page.getByRole("img", { name: "1s 요청 추이" })).toBeVisible();
 });
 
@@ -299,14 +369,33 @@ test("renders JW-agent delegated firewall as read-only", async ({ page }) => {
   await expect(page.getByRole("button", { name: "계획 만들기" })).toHaveCount(0);
 });
 
-test("mutation opens administrator two-factor login dialog", async ({ page }) => {
+test("anonymous administrator is gated by two-factor login", async ({ page }) => {
+  await mockAnonymousSession(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "자동 대응 중지" }).click();
-  await expect(page.getByRole("dialog", { name: "운영 명령 확인" })).toBeVisible();
-  await page.getByRole("button", { name: "확인 후 실행" }).click();
+  await expect(page.getByRole("heading", { name: "관리자 로그인이 필요합니다" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "현재 방어 상태" })).toHaveCount(0);
+  await page.getByRole("button", { name: "VPSGuard 관리자 로그인" }).first().click();
   await expect(page.getByRole("dialog", { name: "VPSGuard 관리자 로그인" })).toBeVisible();
   await expect(page.getByLabel("관리자 ID")).toBeVisible();
   await expect(page.getByLabel("인증기 6자리 코드")).toBeVisible();
+});
+
+test("uses the shadcn component contract for shared controls and dialogs", async ({ page }) => {
+  await mockAnonymousSession(page);
+  await page.goto("/");
+
+  const headerLogin = page.getByRole("button", { name: "VPSGuard 관리자 로그인" }).first();
+  await expect(headerLogin).toHaveAttribute("data-slot", "tooltip-trigger");
+  const loginButton = page.getByRole("button", { name: "VPSGuard 관리자 로그인" }).last();
+  await expect(loginButton).toHaveAttribute("data-slot", "button");
+  await loginButton.click();
+
+  const loginDialog = page.getByRole("dialog", { name: "VPSGuard 관리자 로그인" });
+  await expect(loginDialog).toHaveAttribute("data-slot", "dialog-content");
+  await expect(loginDialog.getByLabel("관리자 ID")).toHaveAttribute("data-slot", "input");
+  await expect(
+    loginDialog.getByRole("checkbox", { name: "인증기 대신 일회용 복구 코드 사용" }),
+  ).toHaveAttribute("data-slot", "checkbox");
 });
 
 test("authenticated administrator can revoke every session with confirmation", async ({ page }) => {
@@ -335,7 +424,7 @@ test("authenticated administrator can revoke every session with confirmation", a
   });
   await page.goto("/");
   await page.getByRole("button", { name: "모든 관리자 session 로그아웃" }).click();
-  await expect(page.getByRole("dialog", { name: "모든 관리자 session 폐기" })).toBeVisible();
+  await expect(page.getByRole("alertdialog", { name: "모든 관리자 session 폐기" })).toBeVisible();
   await page.getByRole("button", { name: "모두 로그아웃" }).click();
-  await expect(page.getByRole("button", { name: "VPSGuard 관리자 로그인" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "관리자 로그인이 필요합니다" })).toBeVisible();
 });

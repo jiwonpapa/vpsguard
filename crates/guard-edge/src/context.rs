@@ -1,7 +1,11 @@
 //! 요청 하나에만 존재하는 bounded edge context입니다.
 
 use std::net::IpAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+use guard_core::{BotClass, BotReason, CrawlerProvider, UserAgentFamily};
 
 use crate::rate_limit::RouteClass;
 use crate::runtime::UpstreamKind;
@@ -22,12 +26,18 @@ pub(crate) struct RequestContext {
     pub(crate) response_status: u16,
     pub(crate) upstream_connection_reused: Option<bool>,
     pub(crate) telemetry_emitted: bool,
+    pub(crate) bot_class: BotClass,
+    pub(crate) bot_provider: Option<CrawlerProvider>,
+    pub(crate) bot_verified: bool,
+    pub(crate) bot_reason: BotReason,
+    pub(crate) user_agent_family: UserAgentFamily,
     pub(crate) route_class: RouteClass,
     pub(crate) authentication_route: bool,
     pub(crate) normalized_route: String,
     pub(crate) route_cost: u8,
     pub(crate) policy_version: u64,
     pub(crate) upstream_kind: UpstreamKind,
+    in_flight_requests: Option<Arc<AtomicU64>>,
 }
 
 impl RequestContext {
@@ -46,12 +56,59 @@ impl RequestContext {
             response_status: 0,
             upstream_connection_reused: None,
             telemetry_emitted: false,
+            bot_class: BotClass::Undeclared,
+            bot_provider: None,
+            bot_verified: false,
+            bot_reason: BotReason::NotDeclared,
+            user_agent_family: UserAgentFamily::Missing,
             route_class: RouteClass::General,
             authentication_route: false,
             normalized_route: "/".to_owned(),
             route_cost: 1,
             policy_version: 0,
             upstream_kind: UpstreamKind::Application,
+            in_flight_requests: None,
         }
+    }
+
+    /// 현재 처리 중 요청 gauge에 연결된 context를 만듭니다.
+    pub(crate) fn tracked(in_flight_requests: Arc<AtomicU64>) -> Self {
+        in_flight_requests.fetch_add(1, Ordering::Relaxed);
+        let mut context = Self::new();
+        context.in_flight_requests = Some(in_flight_requests);
+        context
+    }
+
+    /// 이 요청을 포함한 현재 처리 중 요청 수입니다.
+    pub(crate) fn in_flight_requests(&self) -> u64 {
+        self.in_flight_requests
+            .as_ref()
+            .map_or(0, |value| value.load(Ordering::Relaxed))
+    }
+}
+
+impl Drop for RequestContext {
+    fn drop(&mut self) {
+        if let Some(in_flight_requests) = &self.in_flight_requests {
+            in_flight_requests.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::RequestContext;
+
+    #[test]
+    fn tracked_context_decrements_in_flight_gauge_on_drop() {
+        let gauge = Arc::new(AtomicU64::new(0));
+        {
+            let context = RequestContext::tracked(Arc::clone(&gauge));
+            assert_eq!(context.in_flight_requests(), 1);
+        }
+        assert_eq!(gauge.load(Ordering::Relaxed), 0);
     }
 }

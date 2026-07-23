@@ -9,7 +9,7 @@ use guard_core::config::{
     DetectionMode, DetectionProfile, GuardConfig, InspectionMode, OriginProtocol,
 };
 use guard_core::crawler::PinnedCrawlerNetworks;
-use guard_profiles::{ApplicationProfile, RouteKind, classify};
+use guard_profiles::{ApplicationProfile, RouteKind, classify, normalize_route};
 use ipnet::IpNet;
 use thiserror::Error;
 
@@ -276,7 +276,7 @@ impl EdgeRuntimeConfig {
                 } else {
                     RouteClass::General
                 },
-                normalized_route: path.to_owned(),
+                normalized_route: normalize_route(path),
                 base_cost: if management_auth { 12 } else { 2 },
                 source: if management_auth {
                     RouteClassSource::ManagementAuth
@@ -296,7 +296,7 @@ impl EdgeRuntimeConfig {
         if self.inspection_mode == InspectionMode::ProtocolOnly {
             return EffectiveRouteProfile {
                 route_class: site_override.0,
-                normalized_route: path.to_owned(),
+                normalized_route: normalize_route(target),
                 base_cost: 1,
                 source: site_override.1,
                 authentication_route: false,

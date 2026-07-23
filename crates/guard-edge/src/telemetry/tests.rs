@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use super::{DecisionKind, RequestTelemetry, TelemetrySink};
 use crate::rate_limit::RouteClass;
+use guard_core::{BotClass, BotReason, UserAgentFamily};
 
 fn fixture() -> RequestTelemetry {
     RequestTelemetry {
@@ -23,6 +24,15 @@ fn fixture() -> RequestTelemetry {
         upstream_connection_reused: Some(true),
         decision: DecisionKind::Allow,
         policy_version: 3,
+        bot_class: BotClass::Undeclared,
+        bot_provider: None,
+        bot_verified: false,
+        bot_reason: BotReason::NotDeclared,
+        user_agent_family: UserAgentFamily::Curl,
+        in_flight_requests: 2,
+        edge_telemetry_emitted: 7,
+        edge_telemetry_dropped: 1,
+        edge_telemetry_reconnected: 1,
         occurred_at_unix_ms: 1_000,
     }
 }
@@ -39,6 +49,9 @@ fn emits_bounded_privacy_safe_datagram() -> Result<(), Box<dyn std::error::Error
     assert_eq!(decoded, fixture());
     assert_eq!(sink.emitted(), 1);
     assert_eq!(sink.dropped(), 0);
+    let payload = std::str::from_utf8(&buffer[..length])?;
+    assert!(!payload.contains("query"));
+    assert!(!payload.contains("user-agent"));
     Ok(())
 }
 

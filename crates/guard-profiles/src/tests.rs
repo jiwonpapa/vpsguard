@@ -1,6 +1,6 @@
 //! 애플리케이션 profile 회귀 테스트입니다.
 
-use super::{ApplicationProfile, RouteKind, classify, security_profile};
+use super::{ApplicationProfile, RouteKind, classify, normalize_route, security_profile};
 
 #[test]
 fn gnuboard5_search_is_expensive_and_query_is_removed() {
@@ -74,6 +74,22 @@ fn ids_are_bounded_in_route_key() {
         "/posts/123/550e8400-e29b-41d4-a716-446655440000",
     );
     assert_eq!(route.normalized_route, "/posts/:id/:id");
+}
+
+#[test]
+fn high_entropy_and_excessive_routes_are_bounded() {
+    assert_eq!(
+        normalize_route("/download/0123456789abcdef0123456789abcdef?token=secret"),
+        "/download/:opaque"
+    );
+    assert_eq!(
+        normalize_route("/member/user@example.com"),
+        "/member/:opaque"
+    );
+    let excessive = format!("/{}", vec!["segment"; 24].join("/"));
+    let normalized = normalize_route(&excessive);
+    assert!(normalized.ends_with("/:other"));
+    assert!(normalized.len() <= 256);
 }
 
 #[test]

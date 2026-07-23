@@ -39,7 +39,7 @@ last_reviewed: 2026-07-22
 | `EDGE-007` | `tests/fault/control_down.rs` | control stop 중 HTTP success count |
 | `EDGE-009` | `crates/guard-core/tests/policy_snapshot.rs` | corrupt policy rejection event |
 | `EDGE-010` | `tests/integration/health_contract.rs` | origin down 상태 live/ready 비교 |
-| `EDGE-011` | `tests/security/log_secret_scan.rs` | 배포 로그 secret scan |
+| `EDGE-011` | `crates/guard-edge/src/telemetry/tests.rs`, `scripts/integration-gate.sh` | 배포 로그 secret scan |
 | `EDGE-012` | `tests/load/high_cardinality.js` | RSS와 eviction/drop counter |
 | `EDGE-013` | `scripts/integration-gate.sh` | `profiled`·`protocol_only` HTTP/TLS 정상 요청, app 판정 생략과 정적 불변조건 report |
 | `EDGE-014` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/vm/gnuboard5-toolkit.json` | [limiter capacity·prefix/route/global budget, XFF 우회와 2GB burst RSS report](evidence/gnuboard5-standalone-security-20260722.md) |
@@ -48,13 +48,13 @@ last_reviewed: 2026-07-22
 
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
-| `OBS-001`, `OBS-007` | `crates/guard-control/tests/traffic_aggregate.rs` | k6와 UI 집계 비교 |
-| `OBS-002`, `OBS-009` | `crates/guard-control/tests/client_enrichment.rs` | offline·GeoIP missing report |
+| `OBS-001`, `OBS-007` | `crates/guard-control/src/telemetry/tests.rs`, `crates/guard-control/src/storage.rs`, `scripts/integration-gate.sh` | k6와 UI 집계 비교 |
+| `OBS-002`, `OBS-009` | `crates/guard-control/src/storage.rs`, `crates/guard-core/src/crawler.rs` | offline·GeoIP missing report |
 | `OBS-003` | `crates/guard-agent/tests/os_collector.rs` | `/proc` 대조 report |
 | `OBS-004` | `crates/guard-agent/tests/php_fpm_collector.rs` | PHP-FPM status 대조 |
 | `OBS-005` | `crates/guard-agent/tests/mysql_collector.rs` | 최소 권한 DB 계정 smoke |
 | `OBS-006` | `crates/guard-agent/tests/redis_collector.rs` | Redis on/off/error smoke |
-| `OBS-008` | `tests/fault/telemetry_backpressure.rs` | drop counter와 HTTP success |
+| `OBS-008` | `crates/guard-edge/src/telemetry/tests.rs`, `crates/guard-control/src/telemetry/tests.rs` | drop counter와 HTTP success |
 | `OBS-010` | `crates/guard-core/tests/resource_correlation.rs` | incident evidence snapshot |
 | `OBS-011` | `crates/guard-agent/tests/systemd_cgroup_collector.rs` | 2GB VPS allowlisted unit과 cgroup 실제값 대조 |
 | `OBS-012` | `crates/guard-core/src/correlation.rs`, `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs`, `scripts/integration-gate.sh` | public 응답·Nginx upstream·Control UI의 동일 request ID 조회 report |
@@ -103,7 +103,7 @@ last_reviewed: 2026-07-22
 | `OPS-004` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/ingress-transaction-harness.sh` | [`g7devops` edge -> Nginx -> direct edge smoke](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-005`, `OPS-006` | `tests/e2e/update_uninstall.rs` | rollback·소유 파일 manifest |
 | `OPS-007` | release workflow | arch별 hash·SBOM·smoke artifact |
-| `OPS-008` | `crates/guard-system/tests/command_audit.rs` | masked command log |
+| `OPS-008` | `crates/guard-system/src/command.rs`, `scripts/tests/repository-contracts.sh` | masked command log |
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
 | `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh` | 2GB Ubuntu VM 20회 apply·restore의 100ms probe timeline과 단계별 duration report |
 | `OPS-011` | `crates/guard-system/src/ingress_state/apache/tests.rs`, `crates/guard-cli/tests/apache_ingress_cli.rs` | [`gnuboard5` Apache 전환·20회 왕복·rollback report](evidence/gnuboard5-apache-vm-20260722.md) |
@@ -114,7 +114,7 @@ last_reviewed: 2026-07-22
 |---|---|---|
 | `UI-001`, `SEC-007` | config·edge runtime·control API tests와 `scripts/integration-gate.sh` | 별도 HTTPS 관리 Host routing·Control public port scan |
 | `UI-002`, `UI-003`, `UI-004`, `UI-005`, `UI-006`, `UI-007`, `UI-008`, `UI-009` | `web/tests/fixtures.spec.ts` | 상태별 Playwright video·screenshot |
-| `UI-010`, `UI-011` | `web/tests/visual.spec.ts` | theme·viewport screenshot diff |
+| `UI-010`, `UI-011` | `web/tests/console.e2e.ts`, `web/tests/visual.e2e.ts` | 메뉴 그룹·운영 section 계약, 비로그인 gate와 인증 후 overview의 theme·viewport screenshot diff |
 | `UI-012` | `web/tests/permissions.spec.ts` | role별 IP·export·action matrix |
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |

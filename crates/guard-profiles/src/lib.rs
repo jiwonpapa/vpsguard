@@ -86,7 +86,7 @@ pub const fn security_profile(profile: ApplicationProfile) -> ApplicationSecurit
 #[must_use]
 pub fn classify(profile: ApplicationProfile, raw_target: &str) -> RouteProfile {
     let path = raw_target.split('?').next().unwrap_or("/");
-    let normalized = normalize_segments(path);
+    let normalized = normalize_route(path);
     let kind = match profile {
         ApplicationProfile::Php => classify_php(path),
         ApplicationProfile::Gnuboard5 => classify_gnuboard5(path),
@@ -97,6 +97,49 @@ pub fn classify(profile: ApplicationProfile, raw_target: &str) -> RouteProfile {
         normalized_route: normalized,
         kind,
         base_cost: base_cost(kind),
+    }
+}
+
+/// query·고유 식별자·고entropy segment를 제거한 bounded route key를 만듭니다.
+///
+/// profile을 사용하지 않는 범용 HTTP mode도 이 함수를 사용해 SQLite와 메모리
+/// cardinality가 공격자가 만든 path에 비례해 증가하지 않도록 해야 합니다.
+#[must_use]
+pub fn normalize_route(raw_target: &str) -> String {
+    const MAX_SEGMENTS: usize = 16;
+    const MAX_ROUTE_BYTES: usize = 256;
+    let path = raw_target.split('?').next().unwrap_or("/");
+    let mut normalized = String::new();
+    let mut truncated = false;
+    for (index, segment) in path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .enumerate()
+    {
+        if index == MAX_SEGMENTS {
+            truncated = true;
+            break;
+        }
+        let bounded = normalize_segment(segment);
+        if normalized
+            .len()
+            .saturating_add(1)
+            .saturating_add(bounded.len())
+            > MAX_ROUTE_BYTES.saturating_sub("/:other".len())
+        {
+            truncated = true;
+            break;
+        }
+        normalized.push('/');
+        normalized.push_str(bounded);
+    }
+    if truncated {
+        normalized.push_str("/:other");
+    }
+    if normalized.is_empty() {
+        "/".to_owned()
+    } else {
+        normalized
     }
 }
 
@@ -256,25 +299,27 @@ fn is_static(path: &str) -> bool {
     })
 }
 
-fn normalize_segments(path: &str) -> String {
-    let normalized = path
-        .split('/')
-        .map(|segment| {
-            if !segment.is_empty()
-                && (segment.bytes().all(|byte| byte.is_ascii_digit()) || is_uuid(segment))
-            {
-                ":id"
-            } else {
-                segment
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    if normalized.is_empty() {
-        "/".to_owned()
+fn normalize_segment(segment: &str) -> &str {
+    if segment.bytes().all(|byte| byte.is_ascii_digit()) || is_uuid(segment) {
+        ":id"
+    } else if segment.contains('@') || opaque_token(segment) {
+        ":opaque"
     } else {
-        normalized
+        segment
     }
+}
+
+fn opaque_token(segment: &str) -> bool {
+    const MAX_VISIBLE_SEGMENT_BYTES: usize = 64;
+    if segment.len() > MAX_VISIBLE_SEGMENT_BYTES {
+        return true;
+    }
+    let all_hex = segment.len() >= 16 && segment.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let token_like = segment.len() >= 32
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'=' | b'%'));
+    all_hex || token_like
 }
 
 fn is_uuid(segment: &str) -> bool {

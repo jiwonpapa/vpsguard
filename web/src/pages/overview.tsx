@@ -3,10 +3,12 @@ import { CloudCog, Pause, Play, RotateCcw, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 
 import { useAuth } from "../auth";
+import { ConsoleSection, MetricGrid, MetricItem } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
 import { SectionHeading } from "../components/section-heading";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
 import type { CertbotAssistedPlan } from "../lib/types";
 import { formatBytes, formatLatency, formatTime, MODE_LABELS, percent } from "../lib/utils";
@@ -22,221 +24,217 @@ export function OverviewPage() {
 
   if (status.isPending || summary.isPending || resources.isPending) return <LoadingState />;
   if (status.error || summary.error || resources.error) {
-    return <ErrorState message="Control API 응답을 읽지 못했습니다. SSH tunnel과 control 상태를 확인하십시오." />;
+    return <ErrorState message="Control API 응답을 읽지 못했습니다. 관리 HTTPS 경로와 control 상태를 확인하십시오." />;
   }
 
   const state = status.data;
   const traffic = summary.data;
   const resource = resources.data;
   const blocked = traffic.throttled + traffic.denied + traffic.challenged;
-  const memoryUsed = resource.os
-    ? resource.os.memory_total_bytes - resource.os.memory_available_bytes
-    : null;
+  const memoryUsed = resource.os ? resource.os.memory_total_bytes - resource.os.memory_available_bytes : null;
+  const modeVariant = state.mode === "NORMAL" ? "live" : state.mode === "EMERGENCY_PROXY" ? "danger" : "warning";
 
   return (
     <>
       <SectionHeading
-        eyebrow="Protection posture"
+        eyebrow="Operations overview"
         title="현재 방어 상태"
-        description={state.reasons[0] ?? "상태 전이 근거를 기다리고 있습니다."}
+        description="사이트 상태, 방어 판정, 서버 압력과 복구 경로를 한 화면에서 확인합니다."
         action={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => void runAction("/api/v1/actions/manual-hold")}>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => void runAction("/api/v1/actions/manual-hold")}>
               <Pause className="size-3.5" /> 자동 대응 중지
             </Button>
-            <Button onClick={() => void runAction("/api/v1/actions/resume-auto")}>
+            <Button size="sm" onClick={() => void runAction("/api/v1/actions/resume-auto")}>
               <Play className="size-3.5" /> 자동 대응 재개
             </Button>
           </div>
         }
       />
 
-      <section className="mb-10 border-y border-zinc-800 py-7">
-        <div className="flex flex-wrap items-end justify-between gap-5">
-          <div className="flex items-center gap-5">
-            <ShieldAlert className="size-9 text-orange-400" aria-hidden="true" />
-            <div>
-              <div className="text-4xl font-semibold tracking-[-0.04em] md:text-6xl">
-                {MODE_LABELS[state.mode] ?? state.mode}
-              </div>
-              <div className="mt-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                마지막 전이 {formatTime(state.last_transition_at)} · 정책 v{state.policy_version} · inspection {state.inspection}
-              </div>
-              <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                앱 보안 {state.security.app_layer_active ? "활성" : "비활성"} · CSP {state.security.csp_mode} · 인증 한도{" "}
-                {state.security.auth_rate_limit_rpm === null ? "미적용" : `${state.security.auth_rate_limit_rpm}회/분`}
-              </div>
-              <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                외부 WAF {state.security.waf_mode} · {state.security.waf_adapter.replaceAll("_", " ")}
-              </div>
-            </div>
-          </div>
-          <Badge variant={state.mode === "NORMAL" ? "live" : state.mode === "EMERGENCY_PROXY" ? "danger" : "warning"}>
-            {state.manual_hold ? "manual" : "automatic"}
-          </Badge>
-        </div>
-      </section>
-
-      <section aria-label="서비스 상태" className="mb-10 grid grid-cols-2 border-y border-zinc-800 md:grid-cols-5">
-        {(["edge", "origin", "agent", "provider", "tls"] as const).map((key) => (
-          <div key={key} className="border-b border-r border-zinc-800 px-3 py-4 last:border-r-0 md:border-b-0">
-            <div className="font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-600">{key}</div>
-            <div className="mt-1 text-xs font-semibold uppercase text-zinc-300">{state[key]}</div>
-          </div>
-        ))}
-      </section>
-
-      {state.tls_management.health !== "disabled" ? (
-        <section className="mb-10 border-b border-zinc-800 pb-5" aria-label="TLS 관리 상태">
-          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
-            <div>
-              <div className="text-sm font-semibold">TLS certificate lifecycle</div>
-              <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
-                owner {state.tls_management.ownership} · renewal {state.tls_management.renewal}
-                {state.tls_management.manager ? ` · ${state.tls_management.manager}` : ""}
-              </div>
-              <p className="mt-3 max-w-3xl text-xs leading-5 text-zinc-400">{state.tls_management.next_action}</p>
-              {state.tls_management.ownership === "vpsguard_assisted" &&
-              state.tls_management.renewal !== "healthy" ? (
-                <div className="mt-4 max-w-xl">
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <input
-                      type="email"
-                      autoComplete="email"
-                      value={tlsEmail}
-                      onChange={(event) => setTlsEmail(event.target.value)}
-                      placeholder="ACME 연락처 email"
-                      className="min-w-0 flex-1 border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 outline-none focus:border-orange-500"
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setTlsPlanError("");
-                        void api
-                          .tlsAssistedPlan(tlsEmail)
-                          .then(setTlsPlan)
-                          .catch((error: Error) => setTlsPlanError(error.message));
-                      }}
-                    >
-                      Certbot 계획 보기
-                    </Button>
+      <div className="space-y-6">
+        <ConsoleSection label="현재 보호 상태" contentClassName="p-0 sm:p-0">
+          <div className="grid lg:grid-cols-[1.35fr_0.65fr]">
+            <div className="p-5 sm:p-7">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-4">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <ShieldAlert className="size-5" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">현재 보호 모드</p>
+                    <div className="mt-1 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+                      {MODE_LABELS[state.mode] ?? state.mode}
+                    </div>
                   </div>
-                  {tlsPlanError ? <p className="mt-2 text-xs text-red-400">{tlsPlanError}</p> : null}
-                  {tlsPlan ? (
-                    <ol className="mt-3 list-decimal space-y-1 pl-5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                      {tlsPlan.steps.map((step) => (
-                        <li key={step}>{step.replaceAll("_", " ")}</li>
-                      ))}
-                    </ol>
-                  ) : null}
                 </div>
-              ) : null}
+                <Badge variant={modeVariant}>{state.manual_hold ? "수동 유지" : "자동 대응"}</Badge>
+              </div>
+
+              <div className="mt-7 rounded-lg bg-muted/60 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">판정 근거</p>
+                <ul className="mt-2 space-y-1.5 text-sm leading-6">
+                  {(state.reasons.length ? state.reasons : ["상태 전이 근거를 기다리고 있습니다."]).slice(0, 3).map((reason) => (
+                    <li key={reason} className="flex gap-2"><span className="mt-2.5 size-1 shrink-0 rounded-full bg-primary" />{reason}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[10px] text-muted-foreground">
+                <span>마지막 전이 {formatTime(state.last_transition_at)}</span>
+                <span>정책 v{state.policy_version}</span>
+                <span>inspection {state.inspection}</span>
+              </div>
             </div>
-            <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-              {state.tls_management.earliest_expiry
-                ? `expires ${formatTime(state.tls_management.earliest_expiry)}`
-                : "expiry unavailable"}
+
+            <div className="border-t bg-muted/25 p-5 lg:border-t-0 lg:border-l sm:p-7">
+              <h2 className="text-sm font-semibold">보안 계층</h2>
+              <dl className="mt-4 space-y-4 text-xs">
+                <SecurityRow label="앱 보안" value={state.security.app_layer_active ? "활성" : "비활성"} healthy={state.security.app_layer_active} />
+                <SecurityRow label="CSP" value={state.security.csp_mode} healthy={state.security.csp_mode !== "off"} />
+                <SecurityRow label="외부 WAF" value={state.security.waf_mode} healthy={state.security.waf_mode !== "off"} />
+                <SecurityRow
+                  label="인증 한도"
+                  value={state.security.auth_rate_limit_rpm === null ? "미적용" : `${state.security.auth_rate_limit_rpm}회/분`}
+                  healthy={state.security.auth_rate_limit_rpm !== null}
+                />
+              </dl>
+              <p className="mt-5 border-t pt-4 font-mono text-[10px] leading-5 text-muted-foreground">
+                앱 보안 {state.security.app_layer_active ? "활성" : "비활성"} · CSP {state.security.csp_mode} · {state.security.waf_adapter.replaceAll("_", " ")}
+              </p>
             </div>
           </div>
-        </section>
-      ) : null}
 
-      {state.provider !== "unavailable" ? (
-        <section className="mb-10 flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">
-          <div className="min-w-64 flex-1">
-            <div className="text-sm font-semibold">Cloudflare transaction</div>
-            <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-zinc-600">read-back stage: {state.provider}</div>
-            <div className="mt-3 h-1.5 max-w-lg overflow-hidden bg-zinc-900" aria-label={`Provider 진행률 ${providerProgress(state.provider)}%`}>
-              <div className="h-full bg-orange-500 transition-[width]" style={{ width: `${providerProgress(state.provider)}%` }} />
+          <div className="grid grid-cols-2 border-t sm:grid-cols-3 lg:grid-cols-5" aria-label="서비스 상태">
+            {(["edge", "origin", "agent", "provider", "tls"] as const).map((key) => (
+              <div key={key} className="border-r border-b px-5 py-4 last:border-r-0 lg:border-b-0">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{key}</div>
+                <div className="mt-2 flex items-center gap-2 text-xs font-semibold uppercase">
+                  <span className={serviceDot(state[key])} aria-hidden="true" />{state[key]}
+                </div>
+              </div>
+            ))}
+          </div>
+        </ConsoleSection>
+
+        <ConsoleSection
+          label="실시간 트래픽"
+          title="실시간 트래픽"
+          description="최근 수집 창의 요청량, 응답 지연과 방어 판정을 요약합니다."
+          contentClassName="p-0 sm:p-0"
+        >
+          <MetricGrid>
+            <MetricItem label="최근 10초 RPS" value={(traffic.requests_per_second_milli / 1_000).toFixed(1)} note={`${traffic.window_seconds}초 시간창`} />
+            <MetricItem label="p95 지연" value={formatLatency(traffic.latency_p95_micros)} note="현재 시간창 최대 2,048 요청" />
+            <MetricItem label="고유 클라이언트" value={traffic.unique_clients.toLocaleString()} note={`overflow ${traffic.dropped_clients}`} />
+            <MetricItem label="방어 판정" value={blocked.toLocaleString()} note={`${percent(blocked, traffic.requests)}% of traffic`} emphasis />
+          </MetricGrid>
+          <div className="grid border-t sm:grid-cols-2 xl:grid-cols-5">
+            <CompactMetric label="처리 중 요청" value={traffic.in_flight_requests.toLocaleString()} />
+            <CompactMetric label="요청 body" value={formatBytes(traffic.request_body_bytes)} />
+            <CompactMetric label="응답 body" value={formatBytes(traffic.response_body_bytes)} />
+            <CompactMetric label="Upstream 연결" value={traffic.upstream_connections.toLocaleString()} />
+            <CompactMetric label="연결 재사용" value={`${traffic.upstream_connections_reused.toLocaleString()} (${percent(traffic.upstream_connections_reused, traffic.upstream_connections + traffic.upstream_connections_reused)}%)`} />
+          </div>
+          <div className="border-t px-5 py-5 sm:px-6">
+            <div className="mb-3 flex items-center justify-between text-[10px] font-medium text-muted-foreground">
+              <span>응답 상태 분포</span><span>총 {traffic.requests.toLocaleString()}건</span>
+            </div>
+            <div className="flex h-8 overflow-hidden rounded-md bg-muted text-[10px] font-semibold">
+              <StatusSegment label="2xx" value={traffic.status_2xx} total={traffic.requests} className="bg-emerald-700" />
+              <StatusSegment label="3xx" value={traffic.status_3xx} total={traffic.requests} className="bg-sky-700" />
+              <StatusSegment label="4xx" value={traffic.status_4xx} total={traffic.requests} className="bg-amber-700" />
+              <StatusSegment label="5xx" value={traffic.status_5xx} total={traffic.requests} className="bg-red-800" />
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="danger" onClick={() => void runAction("/api/v1/actions/emergency-proxy")}>
-              <CloudCog className="size-3.5" /> 비상 보호
-            </Button>
-            <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}>
-              <RotateCcw className="size-3.5" /> Snapshot 복구
-            </Button>
-          </div>
-        </section>
-      ) : null}
+        </ConsoleSection>
 
-      <section>
-        <div className="mb-4 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-orange-400">Live window</div>
-        <div className="grid grid-cols-2 border-t border-zinc-800 lg:grid-cols-4">
-          <Metric label="수집 요청" value={traffic.requests.toLocaleString()} note="control lifetime" />
-          <Metric label="p95 지연" value={formatLatency(traffic.latency_p95_micros)} note="최근 2,048 요청" />
-          <Metric label="고유 client" value={traffic.unique_clients.toLocaleString()} note={`overflow ${traffic.dropped_clients}`} />
-          <Metric label="방어 판정" value={blocked.toLocaleString()} note={`${percent(blocked, traffic.requests)}% of traffic`} alert />
-        </div>
-        <dl className="mt-5 grid grid-cols-2 border-y border-zinc-800 lg:grid-cols-4">
-          <Resource label="요청 body" value={formatBytes(traffic.request_body_bytes)} />
-          <Resource label="응답 body" value={formatBytes(traffic.response_body_bytes)} />
-          <Resource label="Upstream 연결" value={traffic.upstream_connections.toLocaleString()} />
-          <Resource
-            label="연결 재사용"
-            value={`${traffic.upstream_connections_reused.toLocaleString()} (${percent(traffic.upstream_connections_reused, traffic.upstream_connections)}%)`}
-          />
-        </dl>
-        <div className="mt-5 flex h-9 overflow-hidden bg-zinc-900 text-[10px] font-bold">
-          <StatusSegment label="2xx" value={traffic.status_2xx} total={traffic.requests} className="bg-emerald-800" />
-          <StatusSegment label="3xx" value={traffic.status_3xx} total={traffic.requests} className="bg-sky-900" />
-          <StatusSegment label="4xx" value={traffic.status_4xx} total={traffic.requests} className="bg-amber-800" />
-          <StatusSegment label="5xx" value={traffic.status_5xx} total={traffic.requests} className="bg-red-900" />
-        </div>
-      </section>
+        <ConsoleSection
+          label="서버 압력"
+          title="서버 압력"
+          description="오리진 자원 고갈이 방어 전이의 원인인지 빠르게 확인합니다."
+          contentClassName="p-0 sm:p-0"
+        >
+          <MetricGrid>
+            <MetricItem label="Load 1m" value={resource.os?.load_1m.toFixed(2) ?? "—"} />
+            <MetricItem label="메모리 사용" value={memoryUsed == null ? "—" : formatBytes(memoryUsed)} />
+            <MetricItem label="Swap 사용" value={resource.os ? formatBytes(resource.os.swap_total_bytes - resource.os.swap_free_bytes) : "—"} />
+            <MetricItem label="Uptime" value={resource.os ? `${Math.floor(resource.os.uptime_seconds / 3600)} h` : "—"} />
+          </MetricGrid>
+        </ConsoleSection>
 
-      <section className="mt-12">
-        <div className="mb-4 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-orange-400">Server pressure</div>
-        <dl className="grid grid-cols-2 border-y border-zinc-800 lg:grid-cols-4">
-          <Resource label="Load 1m" value={resource.os?.load_1m.toFixed(2) ?? "—"} />
-          <Resource label="메모리 사용" value={memoryUsed == null ? "—" : formatBytes(memoryUsed)} />
-          <Resource label="Swap 사용" value={resource.os ? formatBytes(resource.os.swap_total_bytes - resource.os.swap_free_bytes) : "—"} />
-          <Resource label="Uptime" value={resource.os ? `${Math.floor(resource.os.uptime_seconds / 3600)} h` : "—"} />
-        </dl>
-      </section>
+        {state.tls_management.health !== "disabled" ? (
+          <ConsoleSection
+            label="TLS 관리 상태"
+            title="TLS 인증서 수명주기"
+            description={state.tls_management.next_action}
+            action={<Badge variant={state.tls_management.renewal === "healthy" ? "live" : "warning"}>{state.tls_management.renewal}</Badge>}
+          >
+            <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-end">
+              <div>
+                <div className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-[10px] text-muted-foreground">
+                  <span>owner {state.tls_management.ownership}</span>
+                  <span>manager {state.tls_management.manager ?? "unavailable"}</span>
+                  <span>certificates {state.tls_management.certificate_count}</span>
+                </div>
+                {state.tls_management.ownership === "vpsguard_assisted" && state.tls_management.renewal !== "healthy" ? (
+                  <div className="mt-5 max-w-xl">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input type="email" autoComplete="email" value={tlsEmail} onChange={(event) => setTlsEmail(event.target.value)} placeholder="ACME 연락처 email" className="h-9 min-w-0 flex-1 text-xs" />
+                      <Button variant="outline" onClick={() => {
+                        setTlsPlanError("");
+                        void api.tlsAssistedPlan(tlsEmail).then(setTlsPlan).catch((error: Error) => setTlsPlanError(error.message));
+                      }}>Certbot 계획 보기</Button>
+                    </div>
+                    {tlsPlanError ? <p className="mt-2 text-xs text-red-400">{tlsPlanError}</p> : null}
+                    {tlsPlan ? <ol className="mt-3 list-decimal space-y-1 pl-5 font-mono text-[10px] text-muted-foreground">{tlsPlan.steps.map((step) => <li key={step}>{step.replaceAll("_", " ")}</li>)}</ol> : null}
+                  </div>
+                ) : null}
+              </div>
+              <div className="font-mono text-[10px] text-muted-foreground">
+                {state.tls_management.earliest_expiry ? `expires ${formatTime(state.tls_management.earliest_expiry)}` : "expiry unavailable"}
+              </div>
+            </div>
+          </ConsoleSection>
+        ) : null}
+
+        {state.provider !== "unavailable" ? (
+          <ConsoleSection label="외부 보호 전환" title="Cloudflare transaction" description={`read-back stage: ${state.provider}`}>
+            <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div className="h-2 max-w-2xl overflow-hidden rounded-full bg-muted" aria-label={`Provider 진행률 ${providerProgress(state.provider)}%`}>
+                <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${providerProgress(state.provider)}%` }} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="destructive" onClick={() => void runAction("/api/v1/actions/emergency-proxy")}><CloudCog className="size-3.5" /> 비상 보호</Button>
+                <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}><RotateCcw className="size-3.5" /> Snapshot 복구</Button>
+              </div>
+            </div>
+          </ConsoleSection>
+        ) : null}
+      </div>
     </>
   );
 }
 
-function providerProgress(stage: string): number {
-  return {
-    ready: 0,
-    pending: 5,
-    snapshotted: 20,
-    proxy_requested: 40,
-    proxy_verified: 60,
-    origin_lock_requested: 80,
-    running: 90,
-    complete: 100,
-    restored: 100,
-  }[stage] ?? 0;
+function SecurityRow({ label, value, healthy }: { label: string; value: string; healthy: boolean }) {
+  return <div className="flex items-center justify-between gap-4"><dt className="text-muted-foreground">{label}</dt><dd className="flex items-center gap-2 font-mono text-[11px]"><span className={`size-1.5 rounded-full ${healthy ? "bg-emerald-500" : "bg-amber-500"}`} />{value}</dd></div>;
 }
 
-function Metric({ label, value, note, alert = false }: { label: string; value: string; note: string; alert?: boolean }) {
-  return (
-    <div className="border-b border-r border-zinc-800 py-5 pr-4 lg:border-b-0">
-      <div className="text-xs text-zinc-500">{label}</div>
-      <strong className={`mt-3 block font-mono text-2xl font-medium ${alert ? "text-orange-400" : "text-zinc-100"}`}>{value}</strong>
-      <small className="mt-1 block font-mono text-[10px] text-zinc-600">{note}</small>
-    </div>
-  );
+function serviceDot(state: string): string {
+  if (["live", "valid", "complete", "healthy"].includes(state)) return "size-1.5 rounded-full bg-emerald-500";
+  if (["unavailable", "disabled"].includes(state)) return "size-1.5 rounded-full bg-muted-foreground";
+  return "size-1.5 rounded-full bg-amber-500";
+}
+
+function providerProgress(stage: string): number {
+  return { ready: 0, pending: 5, snapshotted: 20, proxy_requested: 40, proxy_verified: 60, origin_lock_requested: 80, running: 90, complete: 100, restored: 100 }[stage] ?? 0;
+}
+
+function CompactMetric({ label, value }: { label: string; value: string }) {
+  return <div className="border-b border-r px-5 py-4 last:border-r-0 xl:border-b-0"><dt className="text-[11px] text-muted-foreground">{label}</dt><dd className="mt-1 font-mono text-sm">{value}</dd></div>;
 }
 
 function StatusSegment({ label, value, total, className }: { label: string; value: number; total: number; className: string }) {
   const weight = Math.max(1, percent(value, total));
-  return (
-    <span className={`grid min-w-[72px] place-items-center text-white transition-[flex-grow] ${className}`} style={{ flexGrow: weight }}>
-      {label} {value}
-    </span>
-  );
-}
-
-function Resource({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-b border-r border-zinc-800 px-3 py-4 lg:border-b-0">
-      <dt className="text-xs text-zinc-500">{label}</dt>
-      <dd className="mt-2 font-mono text-lg text-zinc-200">{value}</dd>
-    </div>
-  );
+  return <span className={`grid min-w-[58px] place-items-center text-white transition-[flex-grow] ${className}`} style={{ flexGrow: weight }}>{label} {value}</span>;
 }

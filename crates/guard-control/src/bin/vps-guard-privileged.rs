@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use guard_core::correlation::LOG_SCHEMA_VERSION;
-use tracing::error;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -20,6 +20,14 @@ async fn main() -> ExitCode {
     let config_path = std::env::var_os("VPS_GUARD_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/etc/vps-guard/config.toml"));
+    info!(
+        log_schema_version = LOG_SCHEMA_VERSION,
+        component = "guard-privileged",
+        event_code = "PRIVILEGED_STARTING",
+        version = env!("CARGO_PKG_VERSION"),
+        build_commit = option_env!("VPS_GUARD_BUILD_COMMIT").unwrap_or("unknown"),
+        "privileged helper starting"
+    );
     match guard_control::run_privileged_from_path(&config_path).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

@@ -605,6 +605,7 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
         decision: "allow".to_owned(),
         policy_version: 1,
         occurred_at_unix_ms: 1_000,
+        ..TelemetryEnvelope::default()
     })?;
 
     let anonymous = router(Arc::clone(&state))
@@ -655,6 +656,7 @@ async fn authenticated_correlation_lookup_returns_request_detail()
         decision: "throttle".to_owned(),
         policy_version: 3,
         occurred_at_unix_ms: 1_000,
+        ..TelemetryEnvelope::default()
     })?;
     let issued = issue_session(&state)?;
     let response = router(state)
@@ -769,6 +771,7 @@ async fn traffic_series_selects_one_second_ten_second_and_minute_layers()
         decision: "allow".to_owned(),
         policy_version: 1,
         occurred_at_unix_ms: 61_234,
+        ..TelemetryEnvelope::default()
     };
     state
         .traffic

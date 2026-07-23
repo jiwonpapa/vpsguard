@@ -20,8 +20,19 @@ pub enum ProviderControllerError {
     #[error(transparent)]
     Store(#[from] StoreError),
     /// origin allowlist plan 실패입니다.
-    #[error("origin firewall plan 실패: {0}")]
-    Firewall(String),
+    #[error("origin firewall plan 실패")]
+    Firewall,
+}
+
+impl ProviderControllerError {
+    /// journal·event·transaction에 저장할 비밀 없는 안정 오류 코드입니다.
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::Provider(error) => error.code(),
+            Self::Store(_) => "PROVIDER_STATE_STORE_FAILED",
+            Self::Firewall => "PROVIDER_FIREWALL_PLAN_FAILED",
+        }
+    }
 }
 
 /// Cloudflare backend와 원자 transaction state를 소유합니다.
@@ -44,7 +55,7 @@ impl ProviderController {
             return Ok(None);
         }
         let firewall_plan = OriginFirewallPlan::new(config.cloudflare.ip_networks.clone())
-            .map_err(|error| ProviderControllerError::Firewall(error.to_string()))?;
+            .map_err(|_error| ProviderControllerError::Firewall)?;
         let origin = NftOriginProtection::new(firewall_plan);
         let backend = CloudflareBackend::from_token_file(
             config.cloudflare.zone_id.clone(),
@@ -126,7 +137,7 @@ impl ProviderController {
         loop {
             let result = transaction.enable_step(&mut self.backend);
             if let Err(error) = &result {
-                transaction.last_error = Some(error.to_string());
+                transaction.last_error = Some(error.code().to_owned());
             }
             self.store.write(transaction)?;
             match result? {

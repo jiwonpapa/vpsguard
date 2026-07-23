@@ -51,7 +51,7 @@ const TLS_INSPECTION_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const STORAGE_BATCH_SIZE: usize = 256;
 const STORAGE_BATCH_WAIT: Duration = Duration::from_millis(25);
 const STORAGE_HEALTH_INTERVAL: Duration = Duration::from_secs(30);
-const STORAGE_RETENTION_INTERVAL: Duration = Duration::from_secs(60);
+const STORAGE_RETENTION_INTERVAL: Duration = Duration::from_secs(10);
 
 /// control startup·serve 실패입니다.
 #[derive(Debug, Error)]

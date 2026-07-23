@@ -1,0 +1,2 @@
+# Minified vendor bundles can preserve significant template-literal whitespace.
+web/dist/assets/*.js -whitespace

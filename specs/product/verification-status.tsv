@@ -14,7 +14,7 @@ EDGE-011|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 EDGE-012|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 EDGE-013|AUTO_PASS|crates/guard-edge/src/runtime.rs|scripts/integration-gate.sh|-
 OBS-001|AUTO_PASS|crates/guard-control/src/telemetry.rs|crates/guard-control/src/telemetry/tests.rs|-
-OBS-002|CODE_ONLY|crates/guard-control/src/storage.rs|-|-
+OBS-002|CODE_ONLY|crates/guard-control/src/storage.rs|crates/guard-control/src/storage.rs|-
 OBS-003|CODE_ONLY|crates/guard-agent/src/os.rs|-|-
 OBS-004|AUTO_PASS|crates/guard-agent/src/services.rs|crates/guard-agent/tests/php_fpm_collector.rs|-
 OBS-005|CODE_ONLY|crates/guard-agent/src/services.rs|-|-
@@ -66,7 +66,7 @@ UI-007|CODE_ONLY|web/src/pages/incidents.tsx|-|-
 UI-008|PLANNED|-|-|-
 UI-009|CODE_ONLY|web/src/auth.tsx|-|-
 UI-010|PLANNED|-|-|-
-UI-011|CODE_ONLY|web/src/app-shell.tsx|-|-
+UI-011|AUTO_PASS|web/src/components/ui/button.tsx|web/tests/visual.e2e.ts|-
 UI-012|PLANNED|-|-|-
 UI-013|CODE_ONLY|web/src/components/query-state.tsx|-|-
 UI-014|CODE_ONLY|web/src/router.tsx|-|-

@@ -12,15 +12,15 @@ export function SectionHeading({
   action?: ReactNode;
 }) {
   return (
-    <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-orange-400">
+    <header className="mb-7 flex flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
           {eyebrow}
         </div>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-50">{title}</h1>
-        {description ? <p className="mt-2 max-w-2xl text-sm text-zinc-500">{description}</p> : null}
+        <h1 className="mt-2 text-2xl font-semibold tracking-[-0.025em] text-foreground sm:text-3xl">{title}</h1>
+        {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
       </div>
-      {action}
+      {action ? <div className="shrink-0">{action}</div> : null}
     </header>
   );
 }

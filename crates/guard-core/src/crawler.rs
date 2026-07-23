@@ -18,6 +18,18 @@ pub enum CrawlerProvider {
     Naver,
 }
 
+impl CrawlerProvider {
+    /// telemetry·저장소에서 사용하는 bounded provider code입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Google => "google",
+            Self::Bing => "bing",
+            Self::Naver => "naver",
+        }
+    }
+}
+
 /// provider 공식 feed에서 가져온 crawler network 목록입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -55,11 +67,200 @@ pub enum DeclaredBotDisposition {
     UnapprovedDeclaredBot,
 }
 
+/// traffic telemetry에 저장하는 bounded bot 분류입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BotClass {
+    /// bot임을 선언하지 않은 요청입니다.
+    #[default]
+    Undeclared,
+    /// 공식 source identity가 확인된 검색 crawler입니다.
+    VerifiedCrawler,
+    /// 검색 crawler UA를 사용했지만 source identity가 일치하지 않습니다.
+    SpoofedCrawler,
+    /// 관리자 allowlist 밖의 선언형 AI bot·scraper입니다.
+    UnapprovedDeclaredBot,
+}
+
+impl BotClass {
+    /// SQLite와 API에 사용하는 안정 code입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Undeclared => "undeclared",
+            Self::VerifiedCrawler => "verified_crawler",
+            Self::SpoofedCrawler => "spoofed_crawler",
+            Self::UnapprovedDeclaredBot => "unapproved_declared_bot",
+        }
+    }
+}
+
+/// declared bot 판정의 bounded 설명 code입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BotReason {
+    /// 선언형 bot 신호가 없습니다.
+    #[default]
+    NotDeclared,
+    /// 공식 crawler network와 source IP가 일치했습니다.
+    OfficialNetworkMatch,
+    /// crawler UA와 공식 source identity가 일치하지 않았습니다.
+    OfficialNetworkMismatch,
+    /// allowlist 밖의 선언형 자동화 UA입니다.
+    UnapprovedUserAgent,
+}
+
+impl BotReason {
+    /// SQLite와 API에 사용하는 안정 code입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotDeclared => "not_declared",
+            Self::OfficialNetworkMatch => "official_network_match",
+            Self::OfficialNetworkMismatch => "official_network_mismatch",
+            Self::UnapprovedUserAgent => "unapproved_user_agent",
+        }
+    }
+}
+
+/// 원문 User-Agent를 저장하지 않는 bounded family입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserAgentFamily {
+    /// User-Agent가 없었습니다.
+    #[default]
+    Missing,
+    /// Google crawler 계열입니다.
+    Googlebot,
+    /// Bing crawler 계열입니다.
+    Bingbot,
+    /// Naver crawler 계열입니다.
+    Naver,
+    /// allowlist 밖의 선언형 자동화 client입니다.
+    DeclaredAutomation,
+    /// Chromium Chrome 계열입니다.
+    Chrome,
+    /// Microsoft Edge 계열입니다.
+    Edge,
+    /// Firefox 계열입니다.
+    Firefox,
+    /// Safari 계열입니다.
+    Safari,
+    /// curl 계열입니다.
+    Curl,
+    /// wget 계열입니다.
+    Wget,
+    /// 알려지지 않은 family입니다.
+    Other,
+}
+
+impl UserAgentFamily {
+    /// SQLite와 API에 사용하는 안정 code입니다.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Googlebot => "googlebot",
+            Self::Bingbot => "bingbot",
+            Self::Naver => "naver",
+            Self::DeclaredAutomation => "declared_automation",
+            Self::Chrome => "chrome",
+            Self::Edge => "edge",
+            Self::Firefox => "firefox",
+            Self::Safari => "safari",
+            Self::Curl => "curl",
+            Self::Wget => "wget",
+            Self::Other => "other",
+        }
+    }
+}
+
 impl DeclaredBotDisposition {
     /// enforcement에서 거부해야 하는 판정인지 반환합니다.
     #[must_use]
     pub const fn blocked(self) -> bool {
         matches!(self, Self::SpoofedCrawler(_) | Self::UnapprovedDeclaredBot)
+    }
+
+    /// 저장·집계할 bounded bot class입니다.
+    #[must_use]
+    pub const fn class(self) -> BotClass {
+        match self {
+            Self::Undeclared => BotClass::Undeclared,
+            Self::VerifiedCrawler(_) => BotClass::VerifiedCrawler,
+            Self::SpoofedCrawler(_) => BotClass::SpoofedCrawler,
+            Self::UnapprovedDeclaredBot => BotClass::UnapprovedDeclaredBot,
+        }
+    }
+
+    /// 검색 crawler provider가 있으면 반환합니다.
+    #[must_use]
+    pub const fn provider(self) -> Option<CrawlerProvider> {
+        match self {
+            Self::VerifiedCrawler(provider) | Self::SpoofedCrawler(provider) => Some(provider),
+            Self::Undeclared | Self::UnapprovedDeclaredBot => None,
+        }
+    }
+
+    /// 공식 source identity 확인 여부입니다.
+    #[must_use]
+    pub const fn verified(self) -> bool {
+        matches!(self, Self::VerifiedCrawler(_))
+    }
+
+    /// 판정에 대응하는 안정 reason입니다.
+    #[must_use]
+    pub const fn reason(self) -> BotReason {
+        match self {
+            Self::Undeclared => BotReason::NotDeclared,
+            Self::VerifiedCrawler(_) => BotReason::OfficialNetworkMatch,
+            Self::SpoofedCrawler(_) => BotReason::OfficialNetworkMismatch,
+            Self::UnapprovedDeclaredBot => BotReason::UnapprovedUserAgent,
+        }
+    }
+}
+
+/// 원문을 보존하지 않고 User-Agent family만 분류합니다.
+#[must_use]
+pub fn user_agent_family(
+    user_agent: Option<&str>,
+    disposition: DeclaredBotDisposition,
+) -> UserAgentFamily {
+    match disposition {
+        DeclaredBotDisposition::VerifiedCrawler(CrawlerProvider::Google)
+        | DeclaredBotDisposition::SpoofedCrawler(CrawlerProvider::Google) => {
+            return UserAgentFamily::Googlebot;
+        }
+        DeclaredBotDisposition::VerifiedCrawler(CrawlerProvider::Bing)
+        | DeclaredBotDisposition::SpoofedCrawler(CrawlerProvider::Bing) => {
+            return UserAgentFamily::Bingbot;
+        }
+        DeclaredBotDisposition::VerifiedCrawler(CrawlerProvider::Naver)
+        | DeclaredBotDisposition::SpoofedCrawler(CrawlerProvider::Naver) => {
+            return UserAgentFamily::Naver;
+        }
+        DeclaredBotDisposition::UnapprovedDeclaredBot => {
+            return UserAgentFamily::DeclaredAutomation;
+        }
+        DeclaredBotDisposition::Undeclared => {}
+    }
+    let Some(normalized) = user_agent.map(str::to_ascii_lowercase) else {
+        return UserAgentFamily::Missing;
+    };
+    if normalized.contains("edg/") || normalized.contains("edge/") {
+        UserAgentFamily::Edge
+    } else if normalized.contains("chrome/") || normalized.contains("chromium/") {
+        UserAgentFamily::Chrome
+    } else if normalized.contains("firefox/") {
+        UserAgentFamily::Firefox
+    } else if normalized.contains("safari/") && normalized.contains("version/") {
+        UserAgentFamily::Safari
+    } else if normalized.contains("curl/") {
+        UserAgentFamily::Curl
+    } else if normalized.contains("wget/") {
+        UserAgentFamily::Wget
+    } else {
+        UserAgentFamily::Other
     }
 }
 
@@ -366,6 +567,29 @@ mod tests {
                 &[],
             ),
             DeclaredBotDisposition::Undeclared
+        );
+    }
+
+    #[test]
+    fn declared_bot_metadata_and_user_agent_family_are_bounded() {
+        let verified = DeclaredBotDisposition::VerifiedCrawler(CrawlerProvider::Google);
+        assert_eq!(verified.class(), BotClass::VerifiedCrawler);
+        assert_eq!(verified.provider(), Some(CrawlerProvider::Google));
+        assert!(verified.verified());
+        assert_eq!(verified.reason(), BotReason::OfficialNetworkMatch);
+        assert_eq!(
+            user_agent_family(Some("Googlebot/2.1"), verified),
+            UserAgentFamily::Googlebot
+        );
+
+        let chrome = user_agent_family(
+            Some("Mozilla/5.0 Chrome/126.0 Safari/537.36"),
+            DeclaredBotDisposition::Undeclared,
+        );
+        assert_eq!(chrome, UserAgentFamily::Chrome);
+        assert_eq!(
+            user_agent_family(None, DeclaredBotDisposition::Undeclared),
+            UserAgentFamily::Missing
         );
     }
 }

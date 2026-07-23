@@ -92,14 +92,14 @@ pub enum CommandError {
     /// process 시작 또는 I/O 실패입니다.
     #[error("OS command 실행 실패: {0}")]
     Io(#[from] std::io::Error),
-    /// program이 non-zero로 종료했습니다.
+    /// program이 non-zero로 종료했습니다. 원문 stderr는 process 경계를 넘지 않습니다.
     #[error("OS command 실패: program={program}, exit={exit_code:?}, stderr={stderr}")]
     Failed {
         /// program 경로입니다.
         program: String,
         /// exit code입니다.
         exit_code: Option<i32>,
-        /// bounded stderr입니다.
+        /// 원문 대신 길이만 남긴 stderr marker입니다.
         stderr: String,
     },
 }
@@ -182,7 +182,7 @@ impl SystemCommandRunner {
             return Err(CommandError::Failed {
                 program: program.path().to_owned(),
                 exit_code: output.status.code(),
-                stderr: bounded_text(&output.stderr),
+                stderr: redacted_stderr(&output.stderr),
             });
         }
         Ok(CommandOutput {
@@ -192,14 +192,17 @@ impl SystemCommandRunner {
     }
 }
 
-fn bounded_text(bytes: &[u8]) -> String {
-    const MAX_BYTES: usize = 4_096;
-    String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_BYTES)]).into_owned()
+fn redacted_stderr(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        "[redacted command stderr: empty]".to_owned()
+    } else {
+        format!("[redacted command stderr: {} bytes]", bytes.len())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandAudit, OwnedProgram, bounded_text};
+    use super::{CommandAudit, OwnedProgram, redacted_stderr};
 
     #[test]
     fn program_paths_are_fixed_and_audit_is_serializable() -> Result<(), Box<dyn std::error::Error>>
@@ -229,13 +232,11 @@ mod tests {
     }
 
     #[test]
-    fn stderr_text_is_lossy_utf8_and_bounded() {
-        let mut bytes = vec![b'x'; 5_000];
-        bytes[0] = 0xff;
-        let bounded = bounded_text(&bytes);
+    fn stderr_never_crosses_the_command_boundary() {
+        let redacted = redacted_stderr(b"token=secret-token\nrequest body");
 
-        assert!(bounded.starts_with('\u{fffd}'));
-        assert!(bounded.len() <= 4_098);
-        assert!(!bounded.contains("secret-token"));
+        assert_eq!(redacted, "[redacted command stderr: 31 bytes]");
+        assert!(!redacted.contains("secret-token"));
+        assert_eq!(redacted_stderr(b""), "[redacted command stderr: empty]");
     }
 }
