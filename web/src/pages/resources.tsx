@@ -17,9 +17,10 @@ export function ResourcesPage() {
     <>
       <SectionHeading eyebrow="Read-only collectors" title="서버 자원과 서비스" description="모든 probe는 독립 timeout을 가지며 Edge 요청 경로와 분리됩니다." />
       <div className="space-y-6">
-        <ConsoleSection label="운영체제 자원" title="운영체제 자원" description="호스트 부하와 가용 메모리·swap·uptime입니다." contentClassName="p-0 sm:p-0">
+        <ConsoleSection label="운영체제 자원" title="운영체제 자원" description="호스트 CPU·load와 가용 메모리·swap·uptime입니다." contentClassName="p-0 sm:p-0">
           <MetricGrid>
-            <MetricItem label="Load 1m" value={os?.load_1m.toFixed(2) ?? "—"} />
+            <MetricItem label="CPU 사용" value={os?.cpu_usage_percent == null ? "—" : `${os.cpu_usage_percent}%`} />
+            <MetricItem label="Load 1m" value={os ? `${os.load_1m.toFixed(2)} / ${os.logical_cpu_count} core` : "—"} />
             <MetricItem label="메모리 가용" value={formatBytes(os?.memory_available_bytes)} />
             <MetricItem label="Swap 여유" value={formatBytes(os?.swap_free_bytes)} />
             <MetricItem label="Uptime" value={os ? `${Math.floor(os.uptime_seconds / 3600)} h` : "—"} />

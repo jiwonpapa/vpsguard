@@ -2,6 +2,8 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
+use guard_core::HostPressure;
+
 use super::{TelemetryEnvelope, TrafficAggregator};
 
 fn telemetry(ip: u8, status: u16, latency: u64) -> TelemetryEnvelope {
@@ -55,11 +57,15 @@ fn creates_and_resets_detection_window() {
     sample.route_cost = 15;
     sample.decision = "throttle".to_owned();
     aggregate.ingest(&sample);
-    let input = aggregate.take_detection_input(true);
+    let input = aggregate.take_detection_input(HostPressure::available(0));
     assert!(input.is_some_and(|value| {
         value.automation == 100 && value.route_cost == 90 && value.upstream_pressure == 100
     }));
-    assert!(aggregate.take_detection_input(true).is_none());
+    assert!(
+        aggregate
+            .take_detection_input(HostPressure::available(0))
+            .is_none()
+    );
 }
 
 #[test]

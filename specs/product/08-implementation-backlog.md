@@ -62,6 +62,17 @@ vps-guard/
 
 OS 명령과 provider API를 `guard-core`에 넣지 않습니다. `guard-edge`는 웹 UI와 SQLite에 의존하지 않습니다.
 
+### 현재 배치: host 자원 압력 기반 보호 전이
+
+- 요구사항: `DET-014`, `DET-007`, `DET-010`, `OBS-003`
+- [x] `/proc/stat` 누적 counter delta 기반 CPU 사용률과 logical core 수 수집
+- [x] CPU·core-normalized load·memory·swap을 bounded host pressure로 합성
+- [x] traffic latency·5xx와 host pressure를 resource cost에 반영하고 reason code 노출
+- [x] 단일 window WATCH, 연속 5개 window 비상 승격과 collector 결손 confidence 회귀
+- [x] `protocol_only + enforce`에서도 자동 local/provider 제어 유지
+- [x] 관리자 Overview·Resource 화면에 host CPU와 core-normalized load 표시
+- [ ] 실제 2GB VPS에서 `/proc` 대조, 부하 주입과 상태·복구 timeline 수집
+
 ### 최근 완료 배치: 관리면·GnuBoard 보안 수직 슬라이스
 
 - 요구사항: `DET-002`, `DET-011`, `UI-001`, `SEC-003`, `SEC-006`, `SEC-007`

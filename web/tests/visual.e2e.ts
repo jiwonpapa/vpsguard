@@ -135,6 +135,8 @@ test("keeps the authenticated operations overview consistent", async ({ page }, 
       "/api/v1/resources": {
         state: "live",
         os: {
+          cpu_usage_percent: 37,
+          logical_cpu_count: 2,
           load_1m: 0.72,
           memory_total_bytes: 2147483648,
           memory_available_bytes: 1073741824,

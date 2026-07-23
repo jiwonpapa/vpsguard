@@ -5,13 +5,18 @@ use std::time::{Duration, Instant};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use guard_core::{DetectionInput, Detector, GuardMode, GuardState};
+use guard_agent::os::OsSnapshot;
+use guard_core::config::{DetectionMode, InspectionMode};
+use guard_core::{
+    DetectionInput, Detector, GuardConfig, GuardMode, GuardState, HostPressure, TransitionInput,
+};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::mpsc;
 
 use super::{
-    POLICY_REFRESH_INTERVAL, build_policy, keep_emergency, keep_local_guard, policy_renewal_due,
+    POLICY_REFRESH_INTERVAL, automatic_enforcement_enabled, build_policy, host_pressure,
+    is_distributed_pressure, keep_emergency, keep_local_guard, policy_renewal_due,
     storage_writer_loop, transition_event, update_incident,
 };
 use crate::storage::{SqliteStore, TRAFFIC_QUEUE_CAPACITY};
@@ -112,7 +117,7 @@ fn incident_and_transition_event_keep_bounded_explanations() {
         automation: 95,
         route_cost: 90,
         upstream_pressure: 90,
-        resource_signals_available: true,
+        host_pressure: HostPressure::available(90),
         session_continuity: false,
         crawler_verified: false,
     });
@@ -129,4 +134,77 @@ fn incident_and_transition_event_keep_bounded_explanations() {
     next.current_mode = GuardMode::Normal;
     update_incident(&mut next);
     assert!(next.active_incident_id.is_none());
+}
+
+#[test]
+fn host_pressure_uses_real_cpu_load_memory_and_swap_signals() {
+    let low = OsSnapshot {
+        cpu_usage_percent: Some(20),
+        logical_cpu_count: 2,
+        load_1m: 0.5,
+        memory_total_bytes: 1_000,
+        memory_available_bytes: 800,
+        swap_total_bytes: 1_000,
+        swap_free_bytes: 900,
+        uptime_seconds: 60,
+    };
+    assert_eq!(host_pressure(Some(&low)).score(), 0);
+
+    let critical = OsSnapshot {
+        cpu_usage_percent: Some(92),
+        logical_cpu_count: 2,
+        load_1m: 4.0,
+        memory_total_bytes: 1_000,
+        memory_available_bytes: 30,
+        swap_total_bytes: 1_000,
+        swap_free_bytes: 100,
+        uptime_seconds: 60,
+    };
+    assert_eq!(host_pressure(Some(&critical)).score(), 100);
+    assert!(!host_pressure(None).signals_available());
+}
+
+#[test]
+fn protocol_only_enforce_keeps_automatic_control_enabled() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut config =
+        GuardConfig::from_toml(include_str!("../../../../configs/vps-guard.smoke.toml"))?;
+    config.detection.mode = DetectionMode::Enforce;
+    config.detection.inspection = InspectionMode::ProtocolOnly;
+    assert!(automatic_enforcement_enabled(&config));
+    Ok(())
+}
+
+#[test]
+fn sustained_host_pressure_reaches_emergency_but_one_window_does_not() {
+    let input = DetectionInput {
+        trust: 80,
+        automation: 0,
+        route_cost: 10,
+        upstream_pressure: 0,
+        host_pressure: HostPressure::available(100),
+        session_continuity: true,
+        crawler_verified: false,
+    };
+    let assessment = Detector::assess(&input);
+    assert!(is_distributed_pressure(&input, &assessment));
+
+    let mut state = GuardState::normal("2026-07-23T00:00:00Z");
+    state = state.transition(&TransitionInput {
+        assessment: assessment.clone(),
+        distributed_pressure: true,
+        provider_verified: true,
+        occurred_at: "2026-07-23T00:00:01Z".to_owned(),
+    });
+    assert_eq!(state.current_mode, GuardMode::Watch);
+
+    for second in 2..=5 {
+        state = state.transition(&TransitionInput {
+            assessment: assessment.clone(),
+            distributed_pressure: true,
+            provider_verified: true,
+            occurred_at: format!("2026-07-23T00:00:0{second}Z"),
+        });
+    }
+    assert_eq!(state.current_mode, GuardMode::EmergencyProxy);
 }

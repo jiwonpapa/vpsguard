@@ -13,7 +13,7 @@ last_reviewed: 2026-07-23
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 120개 중 `PLANNED` 10개, `CODE_ONLY` 32개, `AUTO_PASS` 64개, `VPS_PASS` 14개입니다. 즉 110개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 78개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 121개 중 `PLANNED` 10개, `CODE_ONLY` 32개, `AUTO_PASS` 65개, `VPS_PASS` 14개입니다. 즉 111개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 79개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -26,11 +26,12 @@ last_reviewed: 2026-07-23
 | `EDGE-015` | active request·downstream I/O timeout·최소 HTTP/1 전송률·keepalive 재사용 상한 | config/runtime unit과 loopback slow-origin 동시 요청 503; slow client·HTTP/2·2GB concurrent soak는 미완료 |
 | `EDGE-008`, `EDGE-009` | policy hash·request-time TTL·version 검증, last-known-good 원자 hot reload와 5분 lease 갱신 | `policy_runtime`·control runtime tests |
 | `OBS-001`, `OBS-008` | status·latency·bytes·upstream connection·client·route aggregate, SQLite WAL·retention, non-blocking datagram 재연결·손실 계측 | telemetry·storage·loopback integration tests |
-| `OBS-003`~`OBS-006`, `OBS-011` | Linux `/proc` 서버값, allowlist systemd unit의 cgroup v2 CPU·memory·I/O·process/task, Nginx/Apache·PHP-FPM·MySQL/MariaDB·Redis semantic metric과 component별 timeout/error/stale 상태 | config·bounded parser·loopback transport·cgroup fixture, Control resource API와 Playwright; 실제 DB/Redis·2GB VPS 대조는 미완료 |
+| `OBS-003`~`OBS-006`, `OBS-011` | Linux `/proc/stat` delta CPU·logical core·load·memory·swap 서버값, allowlist systemd unit의 cgroup v2 CPU·memory·I/O·process/task, Nginx/Apache·PHP-FPM·MySQL/MariaDB·Redis semantic metric과 component별 timeout/error/stale 상태 | config·bounded parser·loopback transport·cgroup fixture, Control resource API와 Playwright; disk wait·network 및 실제 DB/Redis·2GB VPS 대조는 미완료 |
 | `OBS-007` 자동 검증 | 설정 상한이 적용된 1초 live ring, 전용 blocking batch writer, SQLite WAL 상세·client IP·10초·1분 rollup, 계층별 bounded retention, DB/WAL·disk·drop health | telemetry·storage·API·UI 회귀 테스트; busy·disk-full fault와 2GB VPS 부하 증거는 미완료 |
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
 | `DET-002`, `DET-011`, `DET-012` | 범용 PHP·GnuBoard 5·GnuBoard 7·WordPress route 분리, app 분류와 site override 합성, generic 보안 core와 G7 CSP·auth overlay 분리 | profile·edge runtime·security tests |
 | `DET-013` | 공식 CIDR feed의 Google·Naver·Bing 판정, 위조 crawler와 미허용 declared AI bot 분리 | crawler/config/updater unit와 VM GPTBot·Meta·위조 Googlebot 403; 실제 공식 crawler source allow는 미완료 |
+| `DET-014` | traffic latency·5xx와 실제 CPU·core-normalized load·memory·swap host pressure를 합성하고 `protocol_only + enforce` 자동 전이를 유지 | `/proc` fixture, host pressure reason code, 단일 WATCH·연속 LOCAL/EMERGENCY 회귀; 실제 2GB pressure timeline은 미완료 |
 | `ACT-001`~`ACT-005` | client·route 제한, 429, signed clearance, 기능별 정책, TTL client rule | edge limiter·challenge·policy tests |
 | `ACT-006`~`ACT-012` 코드 | User token preflight, 동일 hostname의 명시적 A·AAAA/CNAME record ID별 checkpoint·즉시 rollback, Cloudflare read-back·외부 `cf-ray` 코드 경로, dual-stack nftables 원자 교체·정확 read-back, 중간 단계 복구·idempotency | fake API/provider/system/control tests; 실제 test zone 변경 증거 없음 |
 | `ACT-013`, `ACT-014` | standalone UFW, JW-agent delegated, disabled 소유권과 typed IP/CIDR·port rule transaction | 실제 VM UFW active, 외부 규칙 8개 보존, 임시 deny add/read-back/remove, SSH·관리 HTTPS 보존과 delegated mutation 거부 |

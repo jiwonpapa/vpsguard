@@ -12,12 +12,12 @@ use guard_agent::services::{
     ServiceProbe, ServiceTarget, ServiceTargets, ServiceTargetsError, collect_services,
     merge_service_history,
 };
-use guard_core::config::{DetectionMode, InspectionMode, ServiceCollectorKind};
+use guard_core::config::{DetectionMode, ServiceCollectorKind};
 use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_core::policy::{RouteRule, StaticLimits};
 use guard_core::{
     Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
-    PolicySnapshot, Severity, TransitionInput,
+    HostPressure, PolicySnapshot, Severity, TransitionInput,
 };
 use guard_system::{AtomicJsonStore, StoreError, inspect_tls_management};
 use thiserror::Error;
@@ -230,24 +230,82 @@ fn spawn_tls_inspection(app: Arc<AppState>, tls: guard_core::config::TlsConfig) 
 fn spawn_os_collector(app: Arc<AppState>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        let mut previous_cpu = None;
         loop {
             interval.tick().await;
-            let result = tokio::task::spawn_blocking(|| os::collect(Path::new("/proc"))).await;
+            let previous = previous_cpu;
+            let result = tokio::task::spawn_blocking(move || {
+                os::collect_with_previous(Path::new("/proc"), previous)
+            })
+            .await;
             match result {
-                Ok(Ok(snapshot)) => *app.os_snapshot.write().await = Some(snapshot),
-                Ok(Err(error)) => control_warn!(
-                    "CONTROL_OS_COLLECTOR_UNAVAILABLE",
-                    error = %error,
-                    "OS collector unavailable"
-                ),
-                Err(error) => control_warn!(
-                    "CONTROL_OS_COLLECTOR_TASK_FAILED",
-                    error = %error,
-                    "OS collector task failed"
-                ),
+                Ok(Ok((snapshot, current_cpu))) => {
+                    previous_cpu = Some(current_cpu);
+                    *app.os_snapshot.write().await = Some(snapshot);
+                }
+                Ok(Err(error)) => {
+                    previous_cpu = None;
+                    *app.os_snapshot.write().await = None;
+                    control_warn!(
+                        "CONTROL_OS_COLLECTOR_UNAVAILABLE",
+                        error = %error,
+                        "OS collector unavailable"
+                    );
+                }
+                Err(error) => {
+                    previous_cpu = None;
+                    *app.os_snapshot.write().await = None;
+                    control_warn!(
+                        "CONTROL_OS_COLLECTOR_TASK_FAILED",
+                        error = %error,
+                        "OS collector task failed"
+                    );
+                }
             }
         }
     });
+}
+
+fn host_pressure(snapshot: Option<&os::OsSnapshot>) -> HostPressure {
+    let Some(snapshot) = snapshot else {
+        return HostPressure::unavailable();
+    };
+    let cpu = snapshot
+        .cpu_usage_percent
+        .map_or(0, |percent| pressure_score(u64::from(percent), 70, 85, 95));
+    let load_ratio = if snapshot.load_1m.is_finite() && snapshot.load_1m >= 0.0 {
+        (snapshot.load_1m * 100.0 / f64::from(snapshot.logical_cpu_count.max(1))) as u64
+    } else {
+        0
+    };
+    let load = pressure_score(load_ratio, 75, 125, 200);
+    let memory = used_percent(snapshot.memory_total_bytes, snapshot.memory_available_bytes)
+        .map_or(0, |percent| pressure_score(percent, 75, 90, 97));
+    let swap = used_percent(snapshot.swap_total_bytes, snapshot.swap_free_bytes)
+        .map_or(0, |percent| pressure_score(percent, 25, 60, 90));
+    HostPressure::available(cpu.max(load).max(memory).max(swap))
+}
+
+const fn pressure_score(value: u64, warning: u64, high: u64, critical: u64) -> u8 {
+    if value >= critical {
+        100
+    } else if value >= high {
+        80
+    } else if value >= warning {
+        50
+    } else {
+        0
+    }
+}
+
+fn used_percent(total: u64, available: u64) -> Option<u64> {
+    (total > 0).then(|| {
+        total
+            .saturating_sub(available)
+            .saturating_mul(100)
+            .checked_div(total)
+            .unwrap_or_default()
+    })
 }
 
 fn spawn_service_collectors(
@@ -483,8 +541,7 @@ fn spawn_storage_health(storage: Arc<SqliteStore>) {
 }
 
 fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
-    let enforce = config.detection.mode == DetectionMode::Enforce
-        && config.detection.inspection == InspectionMode::Profiled;
+    let enforce = automatic_enforcement_enabled(config);
     let policy_store = AtomicJsonStore::<PolicySnapshot>::new(config.edge.policy_path.clone());
     let max_body_bytes = config.edge.max_body_bytes;
     let max_tracked_clients = config.edge.max_tracked_clients;
@@ -495,8 +552,11 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             interval.tick().await;
             let policy_refresh_due =
                 enforce && policy_renewal_due(last_policy_refresh, Instant::now());
-            let resources_available = app.os_snapshot.read().await.is_some();
-            let input = lock_traffic(&app).take_detection_input(resources_available);
+            let pressure = {
+                let snapshot = app.os_snapshot.read().await;
+                host_pressure(snapshot.as_ref())
+            };
+            let input = lock_traffic(&app).take_detection_input(pressure);
             let occurred_at = current_timestamp();
             let current = app.state.read().await.clone();
             let Some(input) = input else {
@@ -516,6 +576,7 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                 continue;
             };
             let assessment = Detector::assess(&input);
+            let distributed_pressure = is_distributed_pressure(&input, &assessment);
             let provider_verified = app.provider.try_lock().ok().is_some_and(|provider| {
                 provider
                     .as_ref()
@@ -523,7 +584,7 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             });
             let mut next = current.clone().transition(&TransitionInput {
                 assessment: assessment.clone(),
-                distributed_pressure: assessment.bot_likelihood >= 80,
+                distributed_pressure,
                 provider_verified,
                 occurred_at: occurred_at.clone(),
             });
@@ -683,6 +744,14 @@ async fn write_policy_for_mode(
     }
     state.policy_version = policy_version;
     Some(state)
+}
+
+fn automatic_enforcement_enabled(config: &GuardConfig) -> bool {
+    config.detection.mode == DetectionMode::Enforce
+}
+
+fn is_distributed_pressure(input: &guard_core::DetectionInput, assessment: &Assessment) -> bool {
+    assessment.bot_likelihood >= 80 || input.host_pressure.score() >= 80
 }
 
 fn policy_renewal_due(last_refresh: Option<Instant>, now: Instant) -> bool {

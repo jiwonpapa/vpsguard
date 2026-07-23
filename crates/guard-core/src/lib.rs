@@ -18,7 +18,7 @@ pub use crawler::{
     CrawlerVerificationInput, DeclaredBotDisposition, UserAgentFamily, VerificationMethod,
     VerificationReason, declared_bot_disposition, user_agent_family, verify_crawler,
 };
-pub use detection::{Assessment, Decision, DetectionInput, Detector, ReasonCode};
+pub use detection::{Assessment, Decision, DetectionInput, Detector, HostPressure, ReasonCode};
 pub use event::{GuardEvent, Severity};
 pub use policy::{PolicyError, PolicySnapshot};
 pub use state::{GuardMode, GuardState, StateError, TransitionInput};

@@ -156,7 +156,8 @@ export function OverviewPage() {
           contentClassName="p-0 sm:p-0"
         >
           <MetricGrid>
-            <MetricItem label="Load 1m" value={resource.os?.load_1m.toFixed(2) ?? "—"} />
+            <MetricItem label="CPU 사용" value={resource.os?.cpu_usage_percent == null ? "—" : `${resource.os.cpu_usage_percent}%`} />
+            <MetricItem label="Load 1m" value={resource.os ? `${resource.os.load_1m.toFixed(2)} / ${resource.os.logical_cpu_count} core` : "—"} />
             <MetricItem label="메모리 사용" value={memoryUsed == null ? "—" : formatBytes(memoryUsed)} />
             <MetricItem label="Swap 사용" value={resource.os ? formatBytes(resource.os.swap_total_bytes - resource.os.swap_free_bytes) : "—"} />
             <MetricItem label="Uptime" value={resource.os ? `${Math.floor(resource.os.uptime_seconds / 3600)} h` : "—"} />

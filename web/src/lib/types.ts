@@ -74,6 +74,8 @@ export interface TrafficSummary {
 }
 
 export interface OsSnapshot {
+  cpu_usage_percent: number | null;
+  logical_cpu_count: number;
   load_1m: number;
   memory_total_bytes: number;
   memory_available_bytes: number;

@@ -2,6 +2,46 @@
 
 use serde::{Deserialize, Serialize};
 
+/// OS collector에서 계산한 bounded host 자원 압력입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostPressure {
+    score: u8,
+    signals_available: bool,
+}
+
+impl HostPressure {
+    /// 최신 host 신호가 있을 때 0..=100으로 고정한 압력을 만듭니다.
+    #[must_use]
+    pub const fn available(score: u8) -> Self {
+        Self {
+            score: if score > 100 { 100 } else { score },
+            signals_available: true,
+        }
+    }
+
+    /// host collector 신호가 없거나 최신이 아닐 때의 값을 만듭니다.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            score: 0,
+            signals_available: false,
+        }
+    }
+
+    /// 0..=100 host 압력을 반환합니다.
+    #[must_use]
+    pub const fn score(self) -> u8 {
+        self.score
+    }
+
+    /// 최신 host collector 신호가 있는지 반환합니다.
+    #[must_use]
+    pub const fn signals_available(self) -> bool {
+        self.signals_available
+    }
+}
+
 /// 탐지 입력의 결손 여부를 포함한 bounded 신호입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -14,8 +54,8 @@ pub struct DetectionInput {
     pub route_cost: u8,
     /// upstream 지연 가중치입니다.
     pub upstream_pressure: u8,
-    /// PHP·DB·OS collector가 최신인지 여부입니다.
-    pub resource_signals_available: bool,
+    /// CPU·load·memory·swap으로 합성한 host 자원 압력입니다.
+    pub host_pressure: HostPressure,
     /// 정상 session cookie가 이어지는지 여부입니다.
     pub session_continuity: bool,
     /// 검색봇 identity가 UA 외 신호로 검증됐는지 여부입니다.
@@ -32,6 +72,8 @@ pub enum ReasonCode {
     ExpensiveRoute,
     /// upstream 자원 압력이 높습니다.
     UpstreamPressure,
+    /// host CPU·load·memory·swap 압력이 높습니다.
+    HostResourcePressure,
     /// 정상 session 연속성이 없습니다.
     NoSessionContinuity,
     /// 검색봇 identity가 검증됐습니다.
@@ -94,12 +136,18 @@ impl Detector {
     pub fn assess(input: &DetectionInput) -> Assessment {
         let trust_score = input.trust.min(100);
         let mut bot = input.automation.min(100);
-        let mut cost = input
+        let host_pressure = if input.host_pressure.signals_available() {
+            input.host_pressure.score()
+        } else {
+            0
+        };
+        let effective_pressure = input.upstream_pressure.min(100).max(host_pressure);
+        let cost = input
             .route_cost
             .min(100)
-            .saturating_add(input.upstream_pressure.min(100) / 2)
+            .saturating_add(effective_pressure / 2)
             .min(100);
-        let mut reasons = Vec::with_capacity(5);
+        let mut reasons = Vec::with_capacity(7);
 
         if input.automation >= 50 {
             reasons.push(ReasonCode::AutomationPattern);
@@ -109,6 +157,9 @@ impl Detector {
         }
         if input.upstream_pressure >= 50 {
             reasons.push(ReasonCode::UpstreamPressure);
+        }
+        if host_pressure >= 50 {
+            reasons.push(ReasonCode::HostResourcePressure);
         }
         if input.session_continuity {
             bot = bot.saturating_sub(20);
@@ -120,10 +171,9 @@ impl Detector {
             bot = bot.saturating_sub(35);
             reasons.push(ReasonCode::VerifiedCrawler);
         }
-        let confidence = if input.resource_signals_available {
+        let confidence = if input.host_pressure.signals_available() {
             100
         } else {
-            cost = input.route_cost.min(100);
             reasons.push(ReasonCode::ResourceSignalsMissing);
             60
         };

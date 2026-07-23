@@ -10,6 +10,12 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OsSnapshot {
+    /// 직전 `/proc/stat` 표본과 비교한 host CPU 사용률입니다.
+    ///
+    /// 첫 표본이거나 kernel counter가 역행하면 `None`입니다.
+    pub cpu_usage_percent: Option<u8>,
+    /// kernel이 보고한 logical CPU 수입니다.
+    pub logical_cpu_count: u16,
     /// 1분 load average입니다.
     pub load_1m: f64,
     /// 전체 memory bytes입니다.
@@ -22,6 +28,15 @@ pub struct OsSnapshot {
     pub swap_free_bytes: u64,
     /// system uptime 초입니다.
     pub uptime_seconds: u64,
+}
+
+/// 연속 CPU 사용률 계산에 필요한 누적 kernel counter입니다.
+///
+/// 값 자체는 외부 계약이 아니며 다음 수집 호출에만 전달합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuTimes {
+    total: u64,
+    idle: u64,
 }
 
 /// OS collector 실패입니다.
@@ -51,17 +66,40 @@ pub enum OsCollectorError {
 ///
 /// 파일 읽기 또는 숫자 해석 실패를 반환합니다.
 pub fn collect(proc_root: &Path) -> Result<OsSnapshot, OsCollectorError> {
+    collect_with_previous(proc_root, None).map(|(snapshot, _)| snapshot)
+}
+
+/// 직전 CPU counter와 비교해 OS snapshot과 다음 counter를 함께 수집합니다.
+///
+/// 실제 Linux에서는 `/proc`를 전달하고 첫 호출에는 `None`, 이후 호출에는 반환된
+/// [`CpuTimes`]를 전달합니다.
+///
+/// # Errors
+///
+/// 파일 읽기 또는 숫자 해석 실패를 반환합니다.
+pub fn collect_with_previous(
+    proc_root: &Path,
+    previous_cpu: Option<CpuTimes>,
+) -> Result<(OsSnapshot, CpuTimes), OsCollectorError> {
     let load = read(proc_root, "loadavg")?;
     let memory = read(proc_root, "meminfo")?;
     let uptime = read(proc_root, "uptime")?;
-    Ok(OsSnapshot {
-        load_1m: first_number(&load, "load_1m")?,
-        memory_total_bytes: kib_value(&memory, "MemTotal")?,
-        memory_available_bytes: kib_value(&memory, "MemAvailable")?,
-        swap_total_bytes: kib_value(&memory, "SwapTotal")?,
-        swap_free_bytes: kib_value(&memory, "SwapFree")?,
-        uptime_seconds: first_number::<f64>(&uptime, "uptime")? as u64,
-    })
+    let stat = read(proc_root, "stat")?;
+    let current_cpu = parse_cpu_times(&stat)?;
+    Ok((
+        OsSnapshot {
+            cpu_usage_percent: previous_cpu
+                .and_then(|previous| cpu_usage_percent(previous, current_cpu)),
+            logical_cpu_count: logical_cpu_count(&stat)?,
+            load_1m: first_number(&load, "load_1m")?,
+            memory_total_bytes: kib_value(&memory, "MemTotal")?,
+            memory_available_bytes: kib_value(&memory, "MemAvailable")?,
+            swap_total_bytes: kib_value(&memory, "SwapTotal")?,
+            swap_free_bytes: kib_value(&memory, "SwapFree")?,
+            uptime_seconds: first_number::<f64>(&uptime, "uptime")? as u64,
+        },
+        current_cpu,
+    ))
 }
 
 fn read(root: &Path, name: &str) -> Result<String, OsCollectorError> {
@@ -92,6 +130,60 @@ fn kib_value(raw: &str, key: &'static str) -> Result<u64, OsCollectorError> {
         .and_then(|value| value.parse::<u64>().ok())
         .map(|kib| kib.saturating_mul(1024))
         .ok_or(OsCollectorError::Parse { field: key })
+}
+
+fn parse_cpu_times(raw: &str) -> Result<CpuTimes, OsCollectorError> {
+    let line = raw
+        .lines()
+        .find(|line| line.starts_with("cpu "))
+        .ok_or(OsCollectorError::Parse { field: "cpu" })?;
+    let values = line
+        .split_whitespace()
+        .skip(1)
+        .take(8)
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| OsCollectorError::Parse { field: "cpu" })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() < 4 {
+        return Err(OsCollectorError::Parse { field: "cpu" });
+    }
+    let total = values.iter().copied().fold(0_u64, u64::saturating_add);
+    let idle = values[3].saturating_add(values.get(4).copied().unwrap_or_default());
+    Ok(CpuTimes { total, idle })
+}
+
+fn logical_cpu_count(raw: &str) -> Result<u16, OsCollectorError> {
+    let count = raw
+        .lines()
+        .filter(|line| {
+            line.strip_prefix("cpu")
+                .and_then(|suffix| suffix.chars().next())
+                .is_some_and(|character| character.is_ascii_digit())
+        })
+        .count();
+    if count == 0 {
+        return Err(OsCollectorError::Parse {
+            field: "logical_cpu_count",
+        });
+    }
+    u16::try_from(count).map_err(|_| OsCollectorError::Parse {
+        field: "logical_cpu_count",
+    })
+}
+
+fn cpu_usage_percent(previous: CpuTimes, current: CpuTimes) -> Option<u8> {
+    let total_delta = current.total.checked_sub(previous.total)?;
+    let idle_delta = current.idle.checked_sub(previous.idle)?;
+    if total_delta == 0 {
+        return None;
+    }
+    let busy_delta = total_delta.saturating_sub(idle_delta);
+    u8::try_from(busy_delta.saturating_mul(100) / total_delta)
+        .ok()
+        .map(|percent| percent.min(100))
 }
 
 #[cfg(test)]

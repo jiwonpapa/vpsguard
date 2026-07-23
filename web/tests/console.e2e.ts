@@ -127,6 +127,8 @@ async function mockApi(page: Page) {
       "/api/v1/resources": {
         state: "live",
         os: {
+          cpu_usage_percent: 37,
+          logical_cpu_count: 2,
           load_1m: 0.7,
           memory_total_bytes: 2147483648,
           memory_available_bytes: 1073741824,
@@ -304,6 +306,8 @@ test("organizes the overview as a sectioned operations console", async ({ page }
   await expect(page.getByRole("region", { name: "현재 보호 상태" })).toBeVisible();
   await expect(page.getByRole("region", { name: "실시간 트래픽" })).toBeVisible();
   await expect(page.getByRole("region", { name: "서버 압력" })).toBeVisible();
+  await expect(page.getByText("CPU 사용", { exact: true })).toBeVisible();
+  await expect(page.getByText("37%", { exact: true })).toBeVisible();
   await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);
 });
 

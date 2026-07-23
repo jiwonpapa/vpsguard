@@ -3,7 +3,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 
-use guard_core::{BotClass, BotReason, CrawlerProvider, DetectionInput, UserAgentFamily};
+use guard_core::{
+    BotClass, BotReason, CrawlerProvider, DetectionInput, HostPressure, UserAgentFamily,
+};
 use serde::{Deserialize, Serialize};
 
 const LATENCY_WINDOW: usize = 2_048;
@@ -419,10 +421,7 @@ impl TrafficAggregator {
     }
 
     /// 현재 detection window를 입력으로 변환하고 새 window를 시작합니다.
-    pub fn take_detection_input(
-        &mut self,
-        resource_signals_available: bool,
-    ) -> Option<DetectionInput> {
+    pub fn take_detection_input(&mut self, host_pressure: HostPressure) -> Option<DetectionInput> {
         if self.window.requests == 0 {
             return None;
         }
@@ -460,7 +459,7 @@ impl TrafficAggregator {
             upstream_pressure: u8::try_from(error_percent.min(100))
                 .unwrap_or(100)
                 .max(latency_pressure),
-            resource_signals_available,
+            host_pressure,
             session_continuity: false,
             crawler_verified: false,
         })

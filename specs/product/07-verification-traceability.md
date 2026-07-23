@@ -75,6 +75,7 @@ last_reviewed: 2026-07-23
 | `DET-011` | `crates/guard-edge/src/runtime/tests.rs` | app profile·site override·incident policy 합성 replay |
 | `DET-012` | `crates/guard-profiles/src/tests.rs` | generic core와 G7 auth·CSP overlay 교차 profile fixture |
 | `DET-013` | `crates/guard-core/src/crawler.rs`, `crates/guard-core/src/config/tests.rs`, `tools/tests/test_update_crawler_networks.py` | [공식 CIDR fixture, 위조 Googlebot·미허용 AI bot VM replay](evidence/gnuboard5-standalone-security-20260722.md) |
+| `DET-014` | `crates/guard-agent/tests/os_collector.rs`, `crates/guard-core/src/detection/tests.rs`, `crates/guard-control/src/runtime/tests.rs` | 2GB VPS의 `/proc`·Control API 대조와 synthetic pressure 상태 전이 timeline |
 
 ### 3.4 Action
 
