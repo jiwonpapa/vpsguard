@@ -7,20 +7,24 @@ use super::{EdgeRuntimeConfig, RouteClassSource, UpstreamKind};
 use crate::rate_limit::RouteClass;
 
 #[test]
-fn observe_mode_never_enables_dynamic_rate_limits() -> Result<(), Box<dyn std::error::Error>> {
+fn observe_mode_never_enables_common_rate_limits() -> Result<(), Box<dyn std::error::Error>> {
     let config = GuardConfig::from_toml(include_str!("../../../../configs/vps-guard.smoke.toml"))?;
     let runtime = EdgeRuntimeConfig::try_from_guard(&config)?;
 
-    assert!(!runtime.enforces_dynamic_protection());
+    assert!(!runtime.enforces_common_protection());
     assert_eq!(runtime.rate_limit(RouteClass::General), None);
     assert_eq!(runtime.rate_limit(RouteClass::Strict), None);
     assert_eq!(runtime.rate_limit(RouteClass::Upload), None);
     assert_eq!(runtime.authentication_rate_limit(), None);
+    assert_eq!(runtime.max_in_flight_requests, 1_024);
+    assert_eq!(runtime.downstream_io_timeout.as_millis(), 30_000);
+    assert_eq!(runtime.downstream_min_send_rate_bps, 1_024);
+    assert_eq!(runtime.keepalive_request_limit, 1_000);
     Ok(())
 }
 
 #[test]
-fn protocol_only_skips_application_profile_and_dynamic_protection()
+fn protocol_only_skips_application_profile_but_enforces_common_protection()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = include_str!("../../../../configs/vps-guard.smoke.toml")
         .replace(
@@ -37,7 +41,11 @@ fn protocol_only_skips_application_profile_and_dynamic_protection()
     );
 
     assert_eq!(runtime.inspection_mode, InspectionMode::ProtocolOnly);
-    assert!(!runtime.enforces_dynamic_protection());
+    assert!(runtime.enforces_common_protection());
+    assert_eq!(runtime.rate_limit(RouteClass::General), Some(2));
+    assert_eq!(runtime.rate_limit(RouteClass::Strict), Some(1));
+    assert_eq!(runtime.rate_limit(RouteClass::Upload), Some(1));
+    assert_eq!(runtime.authentication_rate_limit(), None);
     assert_eq!(auth.route_class, RouteClass::General);
     assert_eq!(auth.normalized_route, "/api/auth/login");
     assert_eq!(auth.base_cost, 1);

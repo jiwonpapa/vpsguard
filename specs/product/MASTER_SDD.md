@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-22
+last_reviewed: 2026-07-23
 bounded_context: adaptive-vps-guard
 ---
 
@@ -146,10 +146,12 @@ git show 87c0f0e61^:crates/common/src/config/model/edge_proxy_config.rs
 
 정책 조회 때문에 요청마다 control 프로세스나 SQLite에 접근하는 구현은 금지합니다.
 
+2GB VPS의 자원 경계는 Pingora의 downstream I/O timeout·최소 HTTP/1 전송률·keepalive 요청 상한과 VPSGuard의 bounded active-request counter를 조합합니다. 상한을 넘긴 app 요청은 origin 연결 전에 `503`과 `Retry-After`로 거부합니다. 총 응답 크기를 중간에 임의 절단해 정상 다운로드를 손상시키는 방식은 사용하지 않습니다.
+
 VPSGuard의 공개 protocol 범위는 HTTP/1.1, HTTP/2와 HTTP Upgrade로 시작하는 WebSocket입니다. 지원한다고 선언한 protocol은 모두 E2E를 통과해야 하지만 인터넷의 모든 protocol을 해석하지는 않습니다. 요청 처리 mode는 다음 두 축을 분리합니다.
 
 - `profiled`: app profile, route class와 행동 신호를 사용해 분석·판정합니다.
-- `protocol_only`: app profile과 행동 판정을 생략하고 upstream으로 전달합니다. 다만 TLS·SNI·Host, forwarded header, 연결·body·timeout 상한, bounded 계측과 비밀값 미저장 불변조건은 유지합니다.
+- `protocol_only`: app profile과 app 전용 행동 판정을 생략하고 upstream으로 전달합니다. 다만 `enforce`의 명시적 client·route 정책과 공통 IP·prefix·route·global 한도, TLS·SNI·Host, forwarded header, 연결·body·timeout 상한, bounded 계측과 비밀값 미저장 불변조건은 유지합니다.
 
 `protocol_only`도 Pingora가 HTTP와 TLS를 종료하므로 raw TCP/TLS pass-through가 아닙니다. WebSocket은 HTTP upgrade까지 검사한 뒤 frame 내용은 해석하지 않고 bounded tunnel로 전달합니다. enforcement의 `observe`·`enforce`와 inspection의 `profiled`·`protocol_only`는 서로 독립된 설정입니다.
 
@@ -157,9 +159,9 @@ VPSGuard는 소유한 TCP 80/443 외 listener를 가로채지 않습니다. stan
 
 ### 7.1 애플리케이션 보안 계층
 
-범용 core는 위험한 HTTP method 거부, Host·forwarded header 경계, body·timeout 상한, response version header 제거와 보안 header 적용을 소유합니다. `profiled+enforce`에서는 app profile이 인증으로 분류한 경로에 별도 bounded client 한도를 적용합니다. G7 overlay는 Laravel API·SPA의 실제 인증 경로와 기본 CSP를 소유하고 범용·G5 규칙과 섞지 않습니다.
+범용 core는 위험한 HTTP method 거부, Host·forwarded header 경계, 공통 다계층 rate limit, 명시적 정책, body·timeout 상한, response version header 제거와 보안 header 적용을 소유합니다. `profiled+enforce`에서는 app profile이 인증으로 분류한 경로에 별도 bounded client 한도를 적용합니다. G7 overlay는 Laravel API·SPA의 실제 인증 경로와 기본 CSP를 소유하고 범용·G5 규칙과 섞지 않습니다.
 
-CSP는 기본 report-only로 관찰한 뒤 site 호환성을 확인해 enforce합니다. HSTS는 HTTPS 운영·bypass 경로가 확인된 site에서만 명시적으로 켭니다. `protocol_only`는 app CSP overlay와 인증 행동 판정을 생략하지만 protocol 안전 method와 비밀값 미저장 불변조건은 유지합니다.
+CSP는 기본 report-only로 관찰한 뒤 site 호환성을 확인해 enforce합니다. HSTS는 HTTPS 운영·bypass 경로가 확인된 site에서만 명시적으로 켭니다. `protocol_only`는 app CSP overlay와 인증 행동 판정을 생략하지만 공통 rate limit·명시적 정책, protocol 안전 method와 비밀값 미저장 불변조건은 유지합니다.
 
 VPSGuard는 query나 request body의 공격 문자열을 정규식으로 찾았다는 이유만으로 SQL injection·XSS 방어 완료를 선언하지 않습니다. parameterized query, schema validation, context-aware output escaping, CSRF·session·계정별 로그인 제한은 origin 애플리케이션 책임이며 CSP와 client별 edge rate limit은 보조 방어입니다.
 

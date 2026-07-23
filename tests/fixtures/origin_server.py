@@ -3,13 +3,18 @@
 
 import json
 import os
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SLOW_RESPONSE_SECONDS = 0.3
 
 
 class Handler(BaseHTTPRequestHandler):
     """Return a bounded echo of proxy-owned headers."""
 
     def do_GET(self):  # noqa: N802
+        if self.path.startswith("/__vpsguard_test__/slow"):
+            time.sleep(SLOW_RESPONSE_SECONDS)
         payload = json.dumps(
             {
                 "path": self.path,

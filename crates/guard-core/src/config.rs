@@ -90,6 +90,18 @@ pub struct EdgeConfig {
     pub upload_upstream_read_timeout_ms: u64,
     /// limiter가 추적할 최대 client 수입니다.
     pub max_tracked_clients: usize,
+    /// 동시에 origin으로 전달할 수 있는 최대 HTTP 요청 수입니다.
+    #[serde(default = "default_max_in_flight_requests")]
+    pub max_in_flight_requests: u64,
+    /// downstream body read·response write·drain 제한 시간입니다.
+    #[serde(default = "default_downstream_io_timeout_ms")]
+    pub downstream_io_timeout_ms: u64,
+    /// HTTP/1 downstream이 유지해야 하는 최소 응답 전송률입니다.
+    #[serde(default = "default_downstream_min_send_rate_bps")]
+    pub downstream_min_send_rate_bps: usize,
+    /// 한 downstream keepalive 연결이 처리할 최대 요청 수입니다.
+    #[serde(default = "default_keepalive_request_limit")]
+    pub keepalive_request_limit: u32,
     /// client limit에 곱할 IPv4 /24·IPv6 /64 prefix 예산입니다.
     #[serde(default = "default_prefix_rate_limit_multiplier")]
     pub prefix_rate_limit_multiplier: u32,
@@ -731,6 +743,30 @@ impl GuardConfig {
         }
         if self.edge.max_tracked_clients == 0 {
             return invalid("edge.max_tracked_clients", "0보다 커야 합니다");
+        }
+        if !(1..=65_535).contains(&self.edge.max_in_flight_requests) {
+            return invalid(
+                "edge.max_in_flight_requests",
+                "1 이상 65535 이하여야 합니다",
+            );
+        }
+        if !(100..=300_000).contains(&self.edge.downstream_io_timeout_ms) {
+            return invalid(
+                "edge.downstream_io_timeout_ms",
+                "100ms 이상 300000ms 이하여야 합니다",
+            );
+        }
+        if !(1..=10 * 1_024 * 1_024).contains(&self.edge.downstream_min_send_rate_bps) {
+            return invalid(
+                "edge.downstream_min_send_rate_bps",
+                "1 이상 10485760 이하여야 합니다",
+            );
+        }
+        if !(1..=10_000).contains(&self.edge.keepalive_request_limit) {
+            return invalid(
+                "edge.keepalive_request_limit",
+                "1 이상 10000 이하여야 합니다",
+            );
         }
         if self.edge.prefix_rate_limit_multiplier == 0
             || self.edge.route_rate_limit_multiplier < self.edge.prefix_rate_limit_multiplier
@@ -1441,6 +1477,22 @@ const fn default_route_rate_limit_multiplier() -> u32 {
 
 const fn default_global_rate_limit_multiplier() -> u32 {
     256
+}
+
+const fn default_max_in_flight_requests() -> u64 {
+    1_024
+}
+
+const fn default_downstream_io_timeout_ms() -> u64 {
+    30_000
+}
+
+const fn default_downstream_min_send_rate_bps() -> usize {
+    1_024
+}
+
+const fn default_keepalive_request_limit() -> u32 {
+    1_000
 }
 
 const fn default_collector_timeout_ms() -> u64 {

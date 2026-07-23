@@ -155,8 +155,8 @@ fi
 ready_status="$(curl --disable --silent --output /dev/null --write-out '%{http_code}' -H 'Host: example.test' http://127.0.0.1:28080/health/ready)"
 [[ "${ready_status}" == "200" ]]
 
-# EDGE-013: protocol_only는 G7 app profile과 동적 판정을 건너뛰지만
-# HTTP parsing, Host, forwarded header, body 상한과 telemetry 경계는 유지합니다.
+# EDGE-008, EDGE-013, ACT-001: protocol_only는 G7 app profile 판정을 건너뛰지만
+# 공통 정책·rate limit과 HTTP parsing, Host, forwarded header, body 상한은 유지합니다.
 VPS_GUARD_CONFIG="${repo_root}/configs/vps-guard.protocol-only.integration.toml" \
   target/debug/vps-guard-edge >"${evidence_dir}/protocol-only-edge.log" 2>&1 &
 protocol_edge_pid=$!
@@ -207,10 +207,14 @@ with socket.create_connection(("127.0.0.1", 28082), timeout=2) as connection:
         response = b""
 assert b'"path"' not in response
 PY
+python3 -m tools.vpsguard_harness.edge_probe \
+  --port 28444 --host example.test --evidence "${evidence_dir}/edge-resource-probe.json"
 printf '%s\n' \
   'profiled_http=pass' \
   'protocol_only_http=pass' \
   'protocol_only_tls=pass' \
+  'protocol_only_request_capacity=pass' \
+  'protocol_only_common_rate_limit=pass' \
   'host_forwarded_body_invariants=pass' \
   'owned_port_non_http_rejected=pass' \
   >"${evidence_dir}/inspection-modes.txt"

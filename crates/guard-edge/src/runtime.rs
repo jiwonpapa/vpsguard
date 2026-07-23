@@ -90,6 +90,10 @@ pub(crate) struct EdgeRuntimeConfig {
     pub(crate) upstream_read_timeout: Duration,
     pub(crate) upload_upstream_read_timeout: Duration,
     pub(crate) max_tracked_clients: usize,
+    pub(crate) max_in_flight_requests: u64,
+    pub(crate) downstream_io_timeout: Duration,
+    pub(crate) downstream_min_send_rate_bps: usize,
+    pub(crate) keepalive_request_limit: u32,
     pub(crate) prefix_rate_limit_multiplier: u32,
     pub(crate) route_rate_limit_multiplier: u32,
     pub(crate) global_rate_limit_multiplier: u32,
@@ -223,6 +227,10 @@ impl EdgeRuntimeConfig {
                 config.edge.upload_upstream_read_timeout_ms,
             ),
             max_tracked_clients: config.edge.max_tracked_clients,
+            max_in_flight_requests: config.edge.max_in_flight_requests,
+            downstream_io_timeout: Duration::from_millis(config.edge.downstream_io_timeout_ms),
+            downstream_min_send_rate_bps: config.edge.downstream_min_send_rate_bps,
+            keepalive_request_limit: config.edge.keepalive_request_limit,
             prefix_rate_limit_multiplier: config.edge.prefix_rate_limit_multiplier,
             route_rate_limit_multiplier: config.edge.route_rate_limit_multiplier,
             global_rate_limit_multiplier: config.edge.global_rate_limit_multiplier,
@@ -352,7 +360,7 @@ impl EdgeRuntimeConfig {
     }
 
     pub(crate) fn rate_limit(&self, route_class: RouteClass) -> Option<u32> {
-        if !self.enforces_dynamic_protection() {
+        if !self.enforces_common_protection() {
             return None;
         }
         match route_class {
@@ -366,7 +374,9 @@ impl EdgeRuntimeConfig {
 
     /// app profile 인증 경로의 별도 client 한도를 반환합니다.
     pub(crate) fn authentication_rate_limit(&self) -> Option<u32> {
-        (self.enforces_dynamic_protection() && self.auth_rate_limit_rpm > 0)
+        (self.enforces_common_protection()
+            && self.inspection_mode == InspectionMode::Profiled
+            && self.auth_rate_limit_rpm > 0)
             .then_some(self.auth_rate_limit_rpm)
     }
 
@@ -379,10 +389,9 @@ impl EdgeRuntimeConfig {
         )
     }
 
-    /// observe-only 설치에서 동적 throttle·challenge·deny를 실행하지 않습니다.
-    pub(crate) fn enforces_dynamic_protection(&self) -> bool {
+    /// enforce mode에서 app 분석과 독립된 공통 보호 정책을 실행합니다.
+    pub(crate) fn enforces_common_protection(&self) -> bool {
         self.detection_mode == DetectionMode::Enforce
-            && self.inspection_mode == InspectionMode::Profiled
     }
 
     pub(crate) fn trusts_peer(&self, peer: IpAddr) -> bool {

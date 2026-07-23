@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: verification-contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-22
+last_reviewed: 2026-07-23
 ---
 
 # 검증 추적표
@@ -41,8 +41,9 @@ last_reviewed: 2026-07-22
 | `EDGE-010` | `tests/integration/health_contract.rs` | origin down 상태 live/ready 비교 |
 | `EDGE-011` | `crates/guard-edge/src/telemetry/tests.rs`, `scripts/integration-gate.sh` | 배포 로그 secret scan |
 | `EDGE-012` | `tests/load/high_cardinality.js` | RSS와 eviction/drop counter |
-| `EDGE-013` | `scripts/integration-gate.sh` | `profiled`·`protocol_only` HTTP/TLS 정상 요청, app 판정 생략과 정적 불변조건 report |
+| `EDGE-013` | `crates/guard-edge/src/runtime/tests.rs`, `scripts/integration-gate.sh` | `profiled`·`protocol_only` HTTP/TLS 정상 요청, app 판정 생략·공통 rate limit과 정적 불변조건 report |
 | `EDGE-014` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/vm/gnuboard5-toolkit.json` | [limiter capacity·prefix/route/global budget, XFF 우회와 2GB burst RSS report](evidence/gnuboard5-standalone-security-20260722.md) |
+| `EDGE-015` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime/tests.rs`, `scripts/integration-gate.sh` | slow-header·slow-body·slow-reader와 2GB concurrent soak report |
 
 ### 3.2 Observation
 

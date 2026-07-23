@@ -4,7 +4,7 @@ status: active
 doc_type: implementation-status
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-22
+last_reviewed: 2026-07-23
 ---
 
 # pre-MVP 구현 현황
@@ -13,7 +13,7 @@ last_reviewed: 2026-07-22
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 119개 중 `PLANNED` 10개, `CODE_ONLY` 33개, `AUTO_PASS` 61개, `VPS_PASS` 15개입니다. 즉 109개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 76개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 120개 중 `PLANNED` 10개, `CODE_ONLY` 32개, `AUTO_PASS` 64개, `VPS_PASS` 14개입니다. 즉 110개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 78개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -23,6 +23,7 @@ last_reviewed: 2026-07-22
 | `EDGE-010`~`EDGE-012` | 첫 origin 성공 전 ready 차단, live/ready 분리, query·header·body 비밀값 로그 제외, bounded limiter | edge unit·integration secret scan |
 | `EDGE-013` | enforcement와 독립된 `profiled`·`protocol_only`, app·행동 판정 생략 시에도 HTTP/TLS·Host·forwarded header·body·timeout·bounded 계측 유지 | edge config/runtime unit test와 loopback HTTP/TLS integration; HTTP/2·WebSocket 실 VPS 증거는 별도 `EDGE-002`, `EDGE-005` gate |
 | `EDGE-014`, `NFR-002` | client table 포화 시 IP·prefix·route·global aggregate fallback과 bounded memory | limiter unit·VM burst, 실제 2GB에서 정상 75 x 200·burst 515 x 429·service OOM 0; 다중 실제 source soak는 미완료 |
+| `EDGE-015` | active request·downstream I/O timeout·최소 HTTP/1 전송률·keepalive 재사용 상한 | config/runtime unit과 loopback slow-origin 동시 요청 503; slow client·HTTP/2·2GB concurrent soak는 미완료 |
 | `EDGE-008`, `EDGE-009` | policy hash·request-time TTL·version 검증, last-known-good 원자 hot reload와 5분 lease 갱신 | `policy_runtime`·control runtime tests |
 | `OBS-001`, `OBS-008` | status·latency·bytes·upstream connection·client·route aggregate, SQLite WAL·retention, non-blocking datagram 재연결·손실 계측 | telemetry·storage·loopback integration tests |
 | `OBS-003`~`OBS-006`, `OBS-011` | Linux `/proc` 서버값, allowlist systemd unit의 cgroup v2 CPU·memory·I/O·process/task, Nginx/Apache·PHP-FPM·MySQL/MariaDB·Redis semantic metric과 component별 timeout/error/stale 상태 | config·bounded parser·loopback transport·cgroup fixture, Control resource API와 Playwright; 실제 DB/Redis·2GB VPS 대조는 미완료 |

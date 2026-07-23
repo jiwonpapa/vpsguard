@@ -38,6 +38,7 @@ pub(crate) struct RequestContext {
     pub(crate) policy_version: u64,
     pub(crate) upstream_kind: UpstreamKind,
     in_flight_requests: Option<Arc<AtomicU64>>,
+    origin_in_flight_requests: Option<Arc<AtomicU64>>,
 }
 
 impl RequestContext {
@@ -68,6 +69,7 @@ impl RequestContext {
             policy_version: 0,
             upstream_kind: UpstreamKind::Application,
             in_flight_requests: None,
+            origin_in_flight_requests: None,
         }
     }
 
@@ -85,12 +87,44 @@ impl RequestContext {
             .as_ref()
             .map_or(0, |value| value.load(Ordering::Relaxed))
     }
+
+    /// origin 동시 요청 permit을 원자 획득하고 context 수명에 묶습니다.
+    pub(crate) fn try_acquire_origin_capacity(
+        &mut self,
+        origin_in_flight_requests: Arc<AtomicU64>,
+        max_in_flight_requests: u64,
+    ) -> bool {
+        if self.origin_in_flight_requests.is_some() {
+            return true;
+        }
+        let mut current = origin_in_flight_requests.load(Ordering::Acquire);
+        loop {
+            if current >= max_in_flight_requests {
+                return false;
+            }
+            match origin_in_flight_requests.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.origin_in_flight_requests = Some(origin_in_flight_requests);
+                    return true;
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
 }
 
 impl Drop for RequestContext {
     fn drop(&mut self) {
         if let Some(in_flight_requests) = &self.in_flight_requests {
             in_flight_requests.fetch_sub(1, Ordering::Relaxed);
+        }
+        if let Some(origin_in_flight_requests) = &self.origin_in_flight_requests {
+            origin_in_flight_requests.fetch_sub(1, Ordering::Release);
         }
     }
 }
@@ -110,5 +144,26 @@ mod tests {
             assert_eq!(context.in_flight_requests(), 1);
         }
         assert_eq!(gauge.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn origin_capacity_permit_is_atomic_and_released_on_drop() {
+        let origin_in_flight = Arc::new(AtomicU64::new(0));
+        let mut first = RequestContext::new();
+        let mut second = RequestContext::new();
+        let mut rejected = RequestContext::new();
+
+        assert!(first.try_acquire_origin_capacity(Arc::clone(&origin_in_flight), 2));
+        assert!(second.try_acquire_origin_capacity(Arc::clone(&origin_in_flight), 2));
+        assert!(!rejected.try_acquire_origin_capacity(Arc::clone(&origin_in_flight), 2));
+        assert_eq!(origin_in_flight.load(Ordering::Relaxed), 2);
+
+        drop(first);
+        assert!(rejected.try_acquire_origin_capacity(Arc::clone(&origin_in_flight), 2));
+        assert_eq!(origin_in_flight.load(Ordering::Relaxed), 2);
+
+        drop(second);
+        drop(rejected);
+        assert_eq!(origin_in_flight.load(Ordering::Relaxed), 0);
     }
 }

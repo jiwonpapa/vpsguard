@@ -69,9 +69,44 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.edge.prefix_rate_limit_multiplier, 32);
     assert_eq!(config.edge.route_rate_limit_multiplier, 128);
     assert_eq!(config.edge.global_rate_limit_multiplier, 256);
+    assert_eq!(config.edge.max_in_flight_requests, 1_024);
+    assert_eq!(config.edge.downstream_io_timeout_ms, 30_000);
+    assert_eq!(config.edge.downstream_min_send_rate_bps, 1_024);
+    assert_eq!(config.edge.keepalive_request_limit, 1_000);
     assert_eq!(config.retention.audit_days, 365);
     assert_eq!(config.storage.max_database_bytes, 512 * 1_024 * 1_024);
     assert_eq!(config.storage.min_disk_free_bytes, 256 * 1_024 * 1_024);
+}
+
+#[test]
+fn rejects_unbounded_downstream_resource_settings() {
+    for (field, setting) in [
+        ("edge.max_in_flight_requests", "max_in_flight_requests = 0"),
+        (
+            "edge.downstream_io_timeout_ms",
+            "downstream_io_timeout_ms = 0",
+        ),
+        (
+            "edge.downstream_min_send_rate_bps",
+            "downstream_min_send_rate_bps = 0",
+        ),
+        (
+            "edge.keepalive_request_limit",
+            "keepalive_request_limit = 0",
+        ),
+    ] {
+        let input = VALID_CONFIG.replace(
+            "max_tracked_clients = 10000",
+            &format!("max_tracked_clients = 10000\n{setting}"),
+        );
+        assert!(matches!(
+            GuardConfig::from_toml(&input),
+            Err(ConfigError::Invalid {
+                field: actual,
+                ..
+            }) if actual == field
+        ));
+    }
 }
 
 #[test]

@@ -5,10 +5,11 @@ use std::path::Path;
 
 use guard_core::correlation::LOG_SCHEMA_VERSION;
 use guard_core::{ConfigError, GuardConfig};
+use pingora_core::apps::HttpServerOptions;
 use pingora_core::listeners::tls::TlsSettings;
 use pingora_core::server::Server;
 use pingora_core::server::configuration::Opt;
-use pingora_proxy::http_proxy_service;
+use pingora_proxy::ProxyServiceBuilder;
 use thiserror::Error;
 use tracing::info;
 
@@ -81,7 +82,11 @@ fn run_server(runtime: EdgeRuntimeConfig) -> Result<(), EdgeStartupError> {
         .map_err(|error| EdgeStartupError::Server(format!("{error:?}")))?;
     server.bootstrap();
     let app = GuardEdge::new(runtime.clone());
-    let mut service = http_proxy_service(&server.configuration, app);
+    let mut server_options = HttpServerOptions::default();
+    server_options.keepalive_request_limit = Some(runtime.keepalive_request_limit);
+    let mut service = ProxyServiceBuilder::new(&server.configuration, app)
+        .server_options(server_options)
+        .build();
     service.add_tcp(&runtime.listen_addr);
     if let Some(tls) = &runtime.tls {
         let mut settings = TlsSettings::intermediate(

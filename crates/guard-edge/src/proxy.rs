@@ -45,7 +45,9 @@ pub(crate) struct GuardEdge {
     policy: Arc<PolicyRuntime>,
     clearance: Option<ClearanceSigner>,
     in_flight_requests: Arc<AtomicU64>,
+    origin_in_flight_requests: Arc<AtomicU64>,
     host_rejections: AtomicU64,
+    capacity_rejections: AtomicU64,
     rate_limit_rejections: AtomicU64,
     bot_classifications: AtomicU64,
 }
@@ -89,7 +91,9 @@ impl GuardEdge {
             policy,
             clearance,
             in_flight_requests: Arc::new(AtomicU64::new(0)),
+            origin_in_flight_requests: Arc::new(AtomicU64::new(0)),
             host_rejections: AtomicU64::new(0),
+            capacity_rejections: AtomicU64::new(0),
             rate_limit_rejections: AtomicU64::new(0),
             bot_classifications: AtomicU64::new(0),
         }
@@ -149,6 +153,10 @@ impl GuardEdge {
         context.response_status = 0;
         context.upstream_connection_reused = None;
         context.telemetry_emitted = false;
+        session.set_read_timeout(Some(self.config.downstream_io_timeout));
+        session.set_write_timeout(Some(self.config.downstream_io_timeout));
+        session.set_total_drain_timeout(Some(self.config.downstream_io_timeout));
+        session.set_min_send_rate(Some(self.config.downstream_min_send_rate_bps));
 
         let raw_header = session.as_downstream().to_h1_raw();
         if let Err(violation) = validate_request_framing(&raw_header, session.req_header()) {
@@ -231,7 +239,7 @@ impl GuardEdge {
                 );
             }
         }
-        if self.config.enforces_dynamic_protection()
+        if self.config.enforces_common_protection()
             && self.config.bot_policy.block_unapproved_declared_bots
             && bot_disposition.blocked()
         {
@@ -328,9 +336,9 @@ impl GuardEdge {
             OffsetDateTime::now_utc(),
         );
         context.policy_version = runtime_decision.policy_version;
-        let dynamic_protection_enabled = self.config.enforces_dynamic_protection()
+        let common_protection_enabled = self.config.enforces_common_protection()
             && context.upstream_kind == UpstreamKind::Application;
-        if dynamic_protection_enabled && let Some(client_ip) = context.client_ip {
+        if common_protection_enabled && let Some(client_ip) = context.client_ip {
             match runtime_decision.action {
                 Some(Decision::Deny) => {
                     respond_text(session, 403, b"request denied\n", &context.request_id, None)
@@ -386,7 +394,7 @@ impl GuardEdge {
             self.config
                 .management_login_rate_limit(&context.method, &path)
         } else {
-            let route_limit = dynamic_protection_enabled
+            let route_limit = common_protection_enabled
                 .then_some(runtime_decision.requests_per_minute)
                 .flatten()
                 .or_else(|| self.config.rate_limit(context.route_class));
@@ -456,6 +464,36 @@ impl GuardEdge {
             )
             .await?;
             self.emit_telemetry(context, 413, DecisionKind::Deny);
+            return Ok(true);
+        }
+        if context.upstream_kind == UpstreamKind::Application
+            && !context.try_acquire_origin_capacity(
+                Arc::clone(&self.origin_in_flight_requests),
+                self.config.max_in_flight_requests,
+            )
+        {
+            let occurrence = self.capacity_rejections.fetch_add(1, Ordering::Relaxed) + 1;
+            if sampled_occurrence(occurrence) {
+                warn!(
+                    log_schema_version = LOG_SCHEMA_VERSION,
+                    component = "guard-edge",
+                    event_code = "EDGE_REQUEST_CAPACITY_REJECTED",
+                    origin_in_flight_requests =
+                        self.origin_in_flight_requests.load(Ordering::Acquire),
+                    max_in_flight_requests = self.config.max_in_flight_requests,
+                    occurrence,
+                    "active origin request capacity reached"
+                );
+            }
+            respond_text(
+                session,
+                503,
+                b"server busy; retry request\n",
+                &context.request_id,
+                Some(1),
+            )
+            .await?;
+            self.emit_telemetry(context, 503, DecisionKind::Throttle);
             return Ok(true);
         }
         Ok(false)
