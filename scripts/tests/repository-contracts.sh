@@ -60,13 +60,17 @@ grep -Fq '/usr/local/lib/vps-guard/releases' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
 grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/update-release.sh
+grep -Fq 'for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge' scripts/update-release.sh
+grep -Fq 'systemd/vps-guard-privileged.service' scripts/update-release.sh
+grep -Fq 'systemd/vps-guard-privileged.socket' scripts/update-release.sh
 stop_line="$(grep -nF 'systemctl stop vps-guard-edge.service vps-guard-control.service' scripts/update-release.sh | cut -d: -f1)"
 stage_line="$(grep -nF 'mv "${stage_dir}" "${release_dir}"' scripts/update-release.sh | cut -d: -f1)"
 switch_line="$(grep -nF 'atomic_symlink "${release_dir}" /usr/local/lib/vps-guard/current' scripts/update-release.sh | cut -d: -f1)"
+privileged_start_line="$(grep -nF 'systemctl start vps-guard-privileged.socket vps-guard-privileged.service' scripts/update-release.sh | cut -d: -f1)"
 control_start_line="$(grep -nF 'systemctl start vps-guard-control.service' scripts/update-release.sh | cut -d: -f1)"
 edge_start_line="$(grep -nF 'systemctl start vps-guard-edge.service' scripts/update-release.sh | cut -d: -f1)"
-[[ -n "${stage_line}" && -n "${stop_line}" && -n "${switch_line}" && -n "${control_start_line}" && -n "${edge_start_line}" ]]
-(( stage_line < stop_line && stop_line < switch_line && switch_line < control_start_line && control_start_line < edge_start_line ))
+[[ -n "${stage_line}" && -n "${stop_line}" && -n "${switch_line}" && -n "${privileged_start_line}" && -n "${control_start_line}" && -n "${edge_start_line}" ]]
+(( stage_line < stop_line && stop_line < switch_line && switch_line < privileged_start_line && privileged_start_line < control_start_line && control_start_line < edge_start_line ))
 grep -Fq 'public edge update is blocked until Nginx bypass owns 443' scripts/update-release.sh
 grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/deploy-g7devops.sh
 grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh

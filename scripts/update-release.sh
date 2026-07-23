@@ -51,11 +51,13 @@ if ss -H -ltnp 2>/dev/null | grep -Eq '(0\.0\.0\.0|\*):443.*vps-guard-edge'; the
   exit 2
 fi
 (cd "${bundle}" && sha256sum --check SHA256SUMS)
-for binary in vps-guard vps-guard-control vps-guard-edge; do
+for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge; do
   [[ -x "${bundle}/bin/${binary}" ]]
 done
 for required in \
   "${bundle}/systemd/vps-guard-control.service" \
+  "${bundle}/systemd/vps-guard-privileged.service" \
+  "${bundle}/systemd/vps-guard-privileged.socket" \
   "${bundle}/systemd/vps-guard-edge.service" \
   "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" \
   "${bundle}/tmpfiles/vps-guard.conf" \
@@ -117,13 +119,13 @@ if [[ ! -d "${release_dir}" ]]; then
   stage_dir="${release_root}/.${release_id}.stage-$$"
   [[ ! -e "${stage_dir}" ]] || { echo "release stage already exists" >&2; exit 1; }
   install -d -m 0755 "${stage_dir}/bin"
-  for binary in vps-guard vps-guard-control vps-guard-edge; do
+  for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge; do
     install -m 0755 "${bundle}/bin/${binary}" "${stage_dir}/bin/${binary}"
   done
   mv "${stage_dir}" "${release_dir}"
   release_created=true
 else
-  for binary in vps-guard vps-guard-control vps-guard-edge; do
+  for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge; do
     cmp -s "${bundle}/bin/${binary}" "${release_dir}/bin/${binary}" || {
       echo "existing release content mismatch: ${binary}" >&2
       exit 1
@@ -137,6 +139,8 @@ install -d -m 0755 /usr/local/libexec/vps-guard
 install -m 0755 "${bundle}/scripts/deployment-state.sh" /usr/local/libexec/vps-guard/deployment-state
 install -m 0644 "${bundle}/scripts/state-common.sh" /usr/local/libexec/vps-guard/state-common.sh
 install -m 0644 "${bundle}/systemd/vps-guard-control.service" /etc/systemd/system/vps-guard-control.service
+install -m 0644 "${bundle}/systemd/vps-guard-privileged.service" /etc/systemd/system/vps-guard-privileged.service
+install -m 0644 "${bundle}/systemd/vps-guard-privileged.socket" /etc/systemd/system/vps-guard-privileged.socket
 install -m 0644 "${bundle}/systemd/vps-guard-edge.service" /etc/systemd/system/vps-guard-edge.service
 if [[ -f /etc/vps-guard/secrets/cloudflare-token ]]; then
   install -d -m 0755 /etc/systemd/system/vps-guard-control.service.d
@@ -149,13 +153,15 @@ install -d -m 0750 /var/lib/vps-guard
 install -m 0644 "${bundle}/${manifest_name}" /var/lib/vps-guard/ownership-manifest.txt
 systemctl daemon-reload
 
-systemctl stop vps-guard-edge.service vps-guard-control.service
+systemctl stop vps-guard-edge.service vps-guard-control.service \
+  vps-guard-privileged.service vps-guard-privileged.socket
 install -d -m 0755 /usr/local/lib/vps-guard /usr/local/bin
 atomic_symlink "${release_dir}" /usr/local/lib/vps-guard/current
-for binary in vps-guard vps-guard-control vps-guard-edge; do
+for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge; do
   atomic_symlink "/usr/local/lib/vps-guard/current/bin/${binary}" "/usr/local/bin/${binary}"
 done
 /usr/local/bin/vps-guard check-config --config /etc/vps-guard/config.toml
+systemctl start vps-guard-privileged.socket vps-guard-privileged.service
 systemctl start vps-guard-control.service
 wait_for_http "${health_url}" >/dev/null
 systemctl start vps-guard-edge.service
