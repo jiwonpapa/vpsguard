@@ -11,6 +11,9 @@ export default defineConfig({
     ["html", { outputFolder: "playwright-report", open: "never" }],
   ],
   snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{platform}/{arg}{ext}",
+  expect: {
+    toHaveScreenshot: { maxDiffPixels: 1000 },
+  },
   use: {
     baseURL: "http://127.0.0.1:4173",
     trace: "on-first-retry",

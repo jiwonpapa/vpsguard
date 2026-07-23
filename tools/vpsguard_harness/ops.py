@@ -22,6 +22,16 @@ class OpsHarnessSummary:
     evidence_directory: Path
 
 
+_MISSING_INSTALL_BINARY_MESSAGES = tuple(
+    f"Command /usr/local/bin/{binary} is not executable: No such file or directory"
+    for binary in (
+        "vps-guard-control",
+        "vps-guard-privileged",
+        "vps-guard-edge",
+    )
+)
+
+
 def run_ops_harness(root: Path) -> OpsHarnessSummary:
     """Generate bounded plan evidence and validate compatibility adapters."""
 
@@ -135,15 +145,7 @@ def run_ops_harness(root: Path) -> OpsHarnessSummary:
             accepted_exit_codes=(0, 1),
         )
         if result.exit_code != 0:
-            ignored = (
-                "Command /" + "usr/local/bin/vps-guard-control is not executable: No such file or directory",
-                "Command /" + "usr/local/bin/vps-guard-edge is not executable: No such file or directory",
-            )
-            remaining = [
-                line
-                for line in (result.stdout + result.stderr).splitlines()
-                if not any(message in line for message in ignored)
-            ]
+            remaining = _remaining_systemd_verify_errors(result.stdout + result.stderr)
             if remaining:
                 _raise_ops("systemd unit validation failed", remaining)
 
@@ -169,6 +171,16 @@ def _require_contains(path: Path, expected: str) -> None:
         _raise_ops("evidence file is unavailable", [f"path={path}, error={error}"])
     if expected not in content:
         _raise_ops("evidence contract is missing", [f"path={path}, expected={expected}"])
+
+
+def _remaining_systemd_verify_errors(output: str) -> list[str]:
+    """Ignore only install-time binary absence while preserving real unit errors."""
+
+    return [
+        line
+        for line in output.splitlines()
+        if not any(message in line for message in _MISSING_INSTALL_BINARY_MESSAGES)
+    ]
 
 
 def _raise_ops(problem: str, details: list[str]) -> None:

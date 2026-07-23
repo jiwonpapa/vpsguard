@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from tools.vpsguard_harness.ops import _remaining_systemd_verify_errors
+
 
 class PrivilegedPackagingTests(unittest.TestCase):
     """Keep PAM and UFW authority behind a systemd-owned local socket."""
@@ -58,6 +60,20 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn('option_env!("VPS_GUARD_BUILD_COMMIT")', edge)
         self.assertIn("redacted command stderr", command)
         self.assertIn('"/api/v1/bots"', api)
+
+    def test_systemd_verify_ignores_all_packaged_binary_absence_only(self) -> None:
+        output = "\n".join(
+            [
+                "Command /usr/local/bin/vps-guard-control is not executable: No such file or directory",
+                "Command /usr/local/bin/vps-guard-privileged is not executable: No such file or directory",
+                "Command /usr/local/bin/vps-guard-edge is not executable: No such file or directory",
+                "Unknown lvalue 'UnsafeSetting' in section 'Service'",
+            ]
+        )
+        self.assertEqual(
+            _remaining_systemd_verify_errors(output),
+            ["Unknown lvalue 'UnsafeSetting' in section 'Service'"],
+        )
 
 
 if __name__ == "__main__":
