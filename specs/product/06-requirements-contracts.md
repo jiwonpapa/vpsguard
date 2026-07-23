@@ -66,6 +66,7 @@ last_reviewed: 2026-07-23
 | `OBS-011` | 관리자가 확정한 핵심 service별 CPU·memory·I/O·process/task 수를 cgroup v2 기준으로 수집 | 전체 process 감사 없이 allowlisted systemd unit 값과 semantic health를 동일 시간축에 표시 |
 | `OBS-012` | Edge와 Control 요청에 재시작 후에도 충돌하지 않는 canonical request ID를 부여하고 응답·신뢰 upstream·단기 상세 저장 계층에 전파 | 외부 입력 ID는 검증 또는 교체되고, 응답 header·upstream echo·SQLite 상세 조회가 같은 ID이며 process 재생성 뒤에도 중복되지 않음 |
 | `OBS-013` | 운영 로그는 version·component·안정적 event/error code와 적용 가능한 request·operation·event ID를 공통 필드로 기록 | JSON log contract test와 journal fixture에서 오류를 식별자 하나로 상관 조회하고 비밀값·원본 request를 포함하지 않음 |
+| `OBS-014` | 주요 방어 전이와 provider 조치 결과를 서버 밖의 관리자에게 비차단 HTTPS webhook으로 전달 | event ID 중복 방지, bounded queue·재시도, 마지막 성공·실패 read-back을 검증하고 webhook 장애가 Edge·provider 조치를 막지 않음 |
 
 ASN·국가 정보는 로컬 데이터베이스가 없으면 `알 수 없음`으로 표시합니다. 정확하지 않은 위치를 추정해서 확정값처럼 표시하지 않습니다.
 

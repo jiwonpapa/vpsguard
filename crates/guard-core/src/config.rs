@@ -45,6 +45,9 @@ pub struct GuardConfig {
     /// Cloudflare provider 설정입니다.
     #[serde(default)]
     pub cloudflare: CloudflareConfig,
+    /// 외부 관리자 notification 설정입니다.
+    #[serde(default)]
+    pub notifications: NotificationConfig,
     /// 데이터 보존 설정입니다.
     pub retention: RetentionConfig,
     /// Control 저장 설정입니다.
@@ -520,6 +523,47 @@ impl Default for CloudflareConfig {
             token_file: PathBuf::new(),
             ip_networks: Vec::new(),
             max_dns_ttl_seconds: default_cloudflare_max_dns_ttl_seconds(),
+        }
+    }
+}
+
+/// 주요 보호 사건을 외부 관리자에게 전달하는 HTTPS webhook 설정입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationConfig {
+    /// 외부 notification worker 활성 여부입니다.
+    #[serde(default)]
+    pub enabled: bool,
+    /// query·fragment·내장 인증 정보가 없는 HTTPS webhook URL입니다.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// 선택적인 bearer token의 절대 경로 또는 systemd credential 이름입니다.
+    #[serde(default)]
+    pub token_file: Option<PathBuf>,
+    /// process 안에서 대기할 최대 사건 수입니다.
+    #[serde(default = "default_notification_queue_capacity")]
+    pub queue_capacity: usize,
+    /// 사건 하나의 최대 전송 시도 횟수입니다.
+    #[serde(default = "default_notification_max_attempts")]
+    pub max_attempts: u8,
+    /// 재시도 사이 첫 backoff입니다.
+    #[serde(default = "default_notification_initial_backoff_ms")]
+    pub initial_backoff_ms: u64,
+    /// 단일 HTTPS 요청의 전체 제한 시간입니다.
+    #[serde(default = "default_notification_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            webhook_url: None,
+            token_file: None,
+            queue_capacity: default_notification_queue_capacity(),
+            max_attempts: default_notification_max_attempts(),
+            initial_backoff_ms: default_notification_initial_backoff_ms(),
+            request_timeout_ms: default_notification_request_timeout_ms(),
         }
     }
 }
@@ -1131,6 +1175,56 @@ impl GuardConfig {
                 );
             }
         }
+        if self.notifications.enabled && self.notifications.webhook_url.is_none() {
+            return invalid(
+                "notifications.webhook_url",
+                "notification 활성화 시 HTTPS webhook URL이 필요합니다",
+            );
+        }
+        if let Some(raw_url) = self.notifications.webhook_url.as_deref() {
+            let parsed = url::Url::parse(raw_url).ok();
+            let valid = parsed.as_ref().is_some_and(|url| {
+                url.scheme() == "https"
+                    && url.host().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+            });
+            if !valid {
+                return invalid(
+                    "notifications.webhook_url",
+                    "인증 정보·query·fragment 없는 HTTPS URL만 허용합니다",
+                );
+            }
+        }
+        if let Some(path) = self.notifications.token_file.as_deref()
+            && !path.is_absolute()
+            && !is_systemd_credential_name(path)
+        {
+            return invalid(
+                "notifications.token_file",
+                "절대 경로 또는 단일 systemd credential 이름이 필요합니다",
+            );
+        }
+        if !(16..=4_096).contains(&self.notifications.queue_capacity) {
+            return invalid("notifications.queue_capacity", "16..=4096 범위여야 합니다");
+        }
+        if !(1..=5).contains(&self.notifications.max_attempts) {
+            return invalid("notifications.max_attempts", "1..=5 범위여야 합니다");
+        }
+        if !(100..=60_000).contains(&self.notifications.initial_backoff_ms) {
+            return invalid(
+                "notifications.initial_backoff_ms",
+                "100..=60000ms 범위여야 합니다",
+            );
+        }
+        if !(500..=30_000).contains(&self.notifications.request_timeout_ms) {
+            return invalid(
+                "notifications.request_timeout_ms",
+                "500..=30000ms 범위여야 합니다",
+            );
+        }
         if self.retention.live_seconds == 0
             || self.retention.detail_hours == 0
             || self.retention.aggregate_days == 0
@@ -1519,6 +1613,22 @@ const fn default_keepalive_request_limit() -> u32 {
 
 const fn default_cloudflare_max_dns_ttl_seconds() -> u32 {
     300
+}
+
+const fn default_notification_queue_capacity() -> usize {
+    256
+}
+
+const fn default_notification_max_attempts() -> u8 {
+    3
+}
+
+const fn default_notification_initial_backoff_ms() -> u64 {
+    500
+}
+
+const fn default_notification_request_timeout_ms() -> u64 {
+    5_000
 }
 
 const fn default_collector_timeout_ms() -> u64 {

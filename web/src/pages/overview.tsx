@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { CloudCog, Pause, Play, RotateCcw, ShieldAlert } from "lucide-react";
+import { BellRing, CloudCog, Pause, Play, RotateCcw, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 
 import { useAuth } from "../auth";
@@ -198,6 +198,43 @@ export function OverviewPage() {
             </div>
           </ConsoleSection>
         ) : null}
+
+        <ConsoleSection
+          label="외부 알림"
+          title="관리자 webhook"
+          description={
+            state.notification.enabled
+              ? "주요 방어 전이와 provider 조치 결과를 서버 밖의 관리자에게 전달합니다."
+              : "HTTPS webhook이 비활성 상태입니다. 방어는 계속되지만 서버 밖 장애 통보는 없습니다."
+          }
+          action={
+            <Badge variant={!state.notification.enabled ? "warning" : state.notification.failed > 0 || !state.notification.storage_available ? "danger" : "live"}>
+              {!state.notification.enabled ? "비활성" : state.notification.failed > 0 ? "전송 실패" : "정상"}
+            </Badge>
+          }
+        >
+          <div className="grid gap-5 lg:grid-cols-[auto_1fr] lg:items-center">
+            <span className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary">
+              <BellRing className="size-4" aria-hidden="true" />
+            </span>
+            <div>
+              <div className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-[10px] text-muted-foreground">
+                <span>queue {state.notification.queue_depth}/{state.notification.queue_capacity}</span>
+                <span>delivered {state.notification.delivered}</span>
+                <span>pending {state.notification.pending}</span>
+                <span>failed {state.notification.failed}</span>
+                <span>dropped {state.notification.queue_dropped}</span>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {state.notification.last_error_code
+                  ? `마지막 실패 ${state.notification.last_error_code} · ${state.notification.last_failure_at ? formatTime(state.notification.last_failure_at) : "시각 없음"}`
+                  : state.notification.last_success_at
+                    ? `마지막 성공 ${formatTime(state.notification.last_success_at)}`
+                    : "아직 전송 이력이 없습니다."}
+              </p>
+            </div>
+          </div>
+        </ConsoleSection>
 
         {state.provider !== "unavailable" ? (
           <ConsoleSection label="외부 보호 전환" title="Cloudflare transaction" description={`read-back stage: ${state.provider}${state.provider_drain_deadline_unix_seconds == null ? "" : ` · origin lock 예정 ${formatTime(state.provider_drain_deadline_unix_seconds * 1_000)}`}`}>

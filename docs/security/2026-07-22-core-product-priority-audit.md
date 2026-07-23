@@ -5,6 +5,11 @@
 - 제외: 실제 서버 설치·ingress 전환, 공인 TLS, Cloudflare 실계정, 인터넷 공격·온라인 배포 증거
 - 제품 전제: GnuBoard 5 전용이 아닌 범용 HTTP reverse proxy. MVP는 단일 origin·단일 서비스 hostname을 우선 지원
 
+> 2026-07-23 후속 조치: `OBS-014` generic HTTPS webhook, event ID 영속
+> dedupe, bounded queue·retry, 재시작 재개와 관리자 read-back을 구현해 자동 gate를
+> 통과했습니다. SMTP adapter와 실제 외부 receiver·2GB VPS 증거는 후속 release
+> gate로 남습니다.
+
 ## 결론
 
 VPSGuard의 1차 제품 목표는 **범용 WAF가 아니라 트래픽 관측·기록, 봇과 과도한 요청의 로컬 억제, 서버 과부하 시 Cloudflare proxy 자동 활성화, 관리자 통지와 승인 기반 해제**로 고정하는 것이 맞습니다.

@@ -78,6 +78,17 @@ max_dns_ttl_seconds = 300
 # name = "example.com"
 # record_type = "A" # A, AAAA 또는 CNAME
 
+[notifications]
+enabled = false
+# query·fragment·내장 인증 정보가 없는 HTTPS endpoint만 허용합니다.
+# webhook_url = "https://alerts.example.com/vpsguard"
+# 선택적인 bearer token은 systemd credential로만 전달합니다.
+# token_file = "notification-webhook-token"
+queue_capacity = 256
+max_attempts = 3
+initial_backoff_ms = 500
+request_timeout_ms = 5000
+
 [retention]
 live_seconds = 900
 detail_hours = 24

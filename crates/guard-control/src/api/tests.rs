@@ -85,6 +85,9 @@ fn app_with_options(
         completed_actions: Mutex::new(VecDeque::new()),
         storage: Arc::new(SqliteStore::in_memory()?),
         events,
+        notification: crate::notification::NotificationHandle::disabled(Arc::new(
+            SqliteStore::in_memory()?,
+        )),
         sessions: Arc::new(SessionStore::in_memory(10)?),
         access: UiAccessPolicy::from_config(&ui),
         firewall: Arc::new(FirewallManager::system(
@@ -377,6 +380,8 @@ async fn status_exposes_the_active_inspection_mode() -> Result<(), Box<dyn std::
         json["security"]["auth_rate_limit_rpm"],
         serde_json::Value::Null
     );
+    assert_eq!(json["notification"]["enabled"], false);
+    assert_eq!(json["notification"]["storage_available"], true);
     Ok(())
 }
 
@@ -607,8 +612,17 @@ async fn unconfigured_provider_fails_without_changing_mode()
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(state.state.read().await.current_mode, GuardMode::Normal);
     let events = state.storage.events(10)?;
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].kind, "provider.action_failed");
+    assert_eq!(events.len(), 2);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == "provider.transaction_started")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == "provider.action_failed")
+    );
     Ok(())
 }
 

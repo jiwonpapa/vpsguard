@@ -60,6 +60,7 @@ last_reviewed: 2026-07-23
 | `OBS-011` | `crates/guard-agent/tests/systemd_cgroup_collector.rs` | 2GB VPS allowlisted unit과 cgroup 실제값 대조 |
 | `OBS-012` | `crates/guard-core/src/correlation.rs`, `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs`, `scripts/integration-gate.sh` | public 응답·Nginx upstream·Control UI의 동일 request ID 조회 report |
 | `OBS-013` | `crates/guard-control/src/api/tests.rs`, `scripts/tests/repository-contracts.sh`, `scripts/integration-gate.sh` | edge/control journal JSON field와 식별자 상관 조회 report |
+| `OBS-014` | `crates/guard-control/src/notification/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 실제 HTTPS receiver의 장애·복구와 2GB VPS 알림 read-back report |
 
 ### 3.3 Detection
 

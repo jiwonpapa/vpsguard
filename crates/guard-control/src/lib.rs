@@ -5,6 +5,7 @@ mod api;
 mod auth;
 mod auth_store;
 mod firewall;
+mod notification;
 mod pam_auth;
 mod pam_mfa;
 mod privileged;

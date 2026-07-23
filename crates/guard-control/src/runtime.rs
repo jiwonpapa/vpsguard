@@ -42,6 +42,7 @@ use crate::api::{AppState, router};
 use crate::auth::{AuthError, BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::auth_store::{AuthRepository, AuthStoreError};
 use crate::firewall::FirewallManager;
+use crate::notification;
 use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{RetentionCutoffs, SqliteStore, StorageError, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
@@ -117,6 +118,21 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     let auth_repository = Arc::new(AuthRepository::open(&config.storage.database_path)?);
     let sessions = SessionStore::from_ui_config(auth_repository, &config.ui)?;
     let provider = Arc::new(Mutex::new(ProviderController::from_config(&config)?));
+    let notification = match notification::start(&config.notifications, Arc::clone(&storage)) {
+        Ok(handle) => handle,
+        Err(error) => {
+            control_warn!(
+                "CONTROL_NOTIFICATION_DEGRADED",
+                error = %error,
+                "notification initialization failed without blocking control startup"
+            );
+            notification::NotificationHandle::unavailable(
+                &config.notifications,
+                Arc::clone(&storage),
+                &error,
+            )
+        }
+    };
     let initial_tls = {
         let tls = config.tls.clone();
         tokio::task::spawn_blocking(move || inspect_tls_management(&tls))
@@ -144,6 +160,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         completed_actions: Mutex::new(VecDeque::with_capacity(1_024)),
         storage: Arc::clone(&storage),
         events,
+        notification,
         sessions: Arc::new(sessions),
         access: UiAccessPolicy::from_config(&config.ui),
         firewall: Arc::new(FirewallManager::system(
@@ -708,14 +725,7 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             }
             if state_changed {
                 let event = transition_event(&current, &next, &assessment, occurred_at);
-                if let Err(error) = app.storage.record_event(&event) {
-                    control_warn!(
-                        "CONTROL_TRANSITION_EVENT_PERSISTENCE_FAILED",
-                        error = %error,
-                        "transition event persistence failed"
-                    );
-                }
-                let _send_result = app.events.send(event);
+                crate::api::publish_event(&app, event);
             }
         }
     });
@@ -800,7 +810,15 @@ async fn run_provider_transaction(
     let _lease = crate::api::ProviderActionLease::acquire(app)
         .ok_or_else(|| "PROVIDER_ACTION_IN_PROGRESS".to_owned())?;
     let provider = Arc::clone(&app.provider);
-    tokio::task::spawn_blocking(move || {
+    let operation_id = format!("auto-{}", Uuid::new_v4());
+    let action_name = if restore {
+        "automatic_provider_restore"
+    } else {
+        "automatic_emergency"
+    };
+    crate::api::record_provider_started(app, &operation_id, action_name);
+    let operation_for_task = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
         let mut guard = provider
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -811,12 +829,26 @@ async fn run_provider_transaction(
             controller.restore().map_err(|error| error.to_string())
         } else {
             controller
-                .enable(&format!("auto-{}", Uuid::new_v4()))
+                .enable(&operation_for_task)
                 .map_err(|error| error.to_string())
         }
     })
     .await
-    .map_err(|error| format!("PROVIDER_TASK_FAILED: {error}"))?
+    .map_err(|error| format!("PROVIDER_TASK_FAILED: {error}"))?;
+    if let Ok(stage) = result {
+        crate::api::record_provider_stage(
+            app,
+            &operation_id,
+            action_name,
+            if restore {
+                GuardMode::Recovering
+            } else {
+                GuardMode::EmergencyProxy
+            },
+            stage,
+        );
+    }
+    result
 }
 
 fn keep_local_guard(current: &GuardState, next: &mut GuardState) {

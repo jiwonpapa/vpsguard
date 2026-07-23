@@ -57,6 +57,9 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.tls.management, TlsManagementMode::Auto);
     assert!(!config.cloudflare.enabled);
     assert_eq!(config.cloudflare.max_dns_ttl_seconds, 300);
+    assert!(!config.notifications.enabled);
+    assert_eq!(config.notifications.queue_capacity, 256);
+    assert_eq!(config.notifications.max_attempts, 3);
     assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
     assert_eq!(config.detection.inspection, InspectionMode::Profiled);
     assert!(config.security.baseline_response_headers);
@@ -77,6 +80,52 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.retention.audit_days, 365);
     assert_eq!(config.storage.max_database_bytes, 512 * 1_024 * 1_024);
     assert_eq!(config.storage.min_disk_free_bytes, 256 * 1_024 * 1_024);
+}
+
+#[test]
+fn validates_bounded_https_notification_settings() {
+    let valid = VALID_CONFIG.replace(
+        "[retention]",
+        "[notifications]\nenabled = true\nwebhook_url = \"https://alerts.example.test/vpsguard\"\ntoken_file = \"notification-webhook-token\"\nqueue_capacity = 64\nmax_attempts = 3\ninitial_backoff_ms = 100\nrequest_timeout_ms = 1000\n\n[retention]",
+    );
+    let config = GuardConfig::from_toml(&valid).expect("HTTPS notification should parse");
+    assert!(config.notifications.enabled);
+    assert_eq!(config.notifications.queue_capacity, 64);
+
+    for (setting, expected_field) in [
+        (
+            "webhook_url = \"http://alerts.example.test/vpsguard\"",
+            "notifications.webhook_url",
+        ),
+        (
+            "webhook_url = \"https://token@alerts.example.test/vpsguard\"",
+            "notifications.webhook_url",
+        ),
+        (
+            "webhook_url = \"https://alerts.example.test/vpsguard?token=secret\"",
+            "notifications.webhook_url",
+        ),
+        ("queue_capacity = 0", "notifications.queue_capacity"),
+        ("max_attempts = 0", "notifications.max_attempts"),
+        (
+            "request_timeout_ms = 30001",
+            "notifications.request_timeout_ms",
+        ),
+    ] {
+        let input = match expected_field {
+            "notifications.webhook_url" => valid.replace(
+                "webhook_url = \"https://alerts.example.test/vpsguard\"",
+                setting,
+            ),
+            "notifications.queue_capacity" => valid.replace("queue_capacity = 64", setting),
+            "notifications.max_attempts" => valid.replace("max_attempts = 3", setting),
+            _ => valid.replace("request_timeout_ms = 1000", setting),
+        };
+        assert!(matches!(
+            GuardConfig::from_toml(&input),
+            Err(ConfigError::Invalid { field, .. }) if field == expected_field
+        ));
+    }
 }
 
 #[test]

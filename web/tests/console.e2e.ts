@@ -36,6 +36,20 @@ const status = {
     error_code: null,
     next_action: "현재 인증서 관리 설정을 유지하십시오.",
   },
+  notification: {
+    enabled: true,
+    configured: true,
+    queue_depth: 0,
+    queue_capacity: 256,
+    queue_dropped: 0,
+    delivered: 12,
+    failed: 0,
+    pending: 0,
+    last_success_at: "2026-07-14T12:00:00Z",
+    last_failure_at: null,
+    last_error_code: null,
+    storage_available: true,
+  },
 };
 
 async function mockApi(page: Page) {
@@ -307,6 +321,8 @@ test("organizes the overview as a sectioned operations console", async ({ page }
   await expect(page.getByRole("region", { name: "현재 보호 상태" })).toBeVisible();
   await expect(page.getByRole("region", { name: "실시간 트래픽" })).toBeVisible();
   await expect(page.getByRole("region", { name: "서버 압력" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "외부 알림" })).toBeVisible();
+  await expect(page.getByText("delivered 12", { exact: true })).toBeVisible();
   await expect(page.getByText("CPU 사용", { exact: true })).toBeVisible();
   await expect(page.getByText("37%", { exact: true })).toBeVisible();
   await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);

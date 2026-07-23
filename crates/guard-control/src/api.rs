@@ -37,6 +37,7 @@ use crate::auth::{
     unix_seconds,
 };
 use crate::firewall::{FirewallError, FirewallOperations};
+use crate::notification::{NotificationHandle, NotificationStatus};
 use crate::provider::ProviderController;
 use crate::storage::{
     AuditActionRow, BotRow, ClientRow, EventRow, RequestTraceRow, RouteRow, SqliteStore,
@@ -76,6 +77,7 @@ pub(crate) struct AppState {
     pub(crate) completed_actions: Mutex<VecDeque<(String, String, GuardMode)>>,
     pub(crate) storage: Arc<SqliteStore>,
     pub(crate) events: broadcast::Sender<GuardEvent>,
+    pub(crate) notification: NotificationHandle,
     pub(crate) sessions: Arc<SessionStore>,
     pub(crate) access: UiAccessPolicy,
     pub(crate) firewall: Arc<dyn FirewallOperations>,
@@ -102,6 +104,7 @@ struct StatusResponse {
     provider_drain_deadline_unix_seconds: Option<u64>,
     tls: String,
     tls_management: TlsManagementSnapshot,
+    notification: NotificationStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -542,6 +545,7 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
         provider_drain_deadline_unix_seconds,
         tls: tls_management.health.as_str().to_owned(),
         tls_management,
+        notification: app.notification.status(),
     })
 }
 
@@ -1132,6 +1136,7 @@ async fn apply_provider_action(
             "현재 단계가 완료된 뒤 다시 시도하십시오.",
         );
     };
+    record_provider_started(app, &operation_id, action_name);
     let provider = Arc::clone(&app.provider);
     let operation_for_task = operation_id.clone();
     let provider_result = tokio::task::spawn_blocking(move || {
@@ -1240,16 +1245,7 @@ async fn apply_provider_action(
         next.current_mode,
         stage,
     );
-    if let Err(error) = app.storage.record_event(&event) {
-        api_warn!(
-            error_code = "PROVIDER_EVENT_PERSISTENCE_FAILED",
-            error = %error,
-            operation_id,
-            event_id = %event.event_id,
-            "provider event persistence failed"
-        );
-    }
-    let _send_result = app.events.send(event);
+    publish_event(app, event);
     Json(ActionResponse {
         applied: true,
         mode: next.current_mode,
@@ -1326,16 +1322,7 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
         );
     }
     let event = action_event(operation_id.clone(), now, action_name, next.current_mode);
-    if let Err(error) = app.storage.record_event(&event) {
-        api_warn!(
-            error_code = "ACTION_EVENT_PERSISTENCE_FAILED",
-            error = %error,
-            operation_id,
-            event_id = %event.event_id,
-            "action event persistence failed"
-        );
-    }
-    let _send_result = app.events.send(event);
+    publish_event(app, event);
     Json(ActionResponse {
         applied: true,
         mode: next.current_mode,
@@ -1762,6 +1749,66 @@ fn provider_event(
     }
 }
 
+fn provider_started_event(
+    operation_id: &str,
+    occurred_at: String,
+    action_name: &str,
+) -> GuardEvent {
+    GuardEvent {
+        schema_version: 1,
+        event_id: format!("provider-started-{operation_id}"),
+        occurred_at,
+        severity: Severity::Warning,
+        kind: "provider.transaction_started".to_owned(),
+        summary: format!("Provider 명령 {action_name}을 시작했습니다."),
+        reason_codes: Vec::new(),
+        evidence: BTreeMap::from([("operation_id".to_owned(), operation_id.to_owned())]),
+        action: BTreeMap::from([("name".to_owned(), action_name.to_owned())]),
+        result: BTreeMap::from([("status".to_owned(), "started".to_owned())]),
+        recovery: BTreeMap::new(),
+    }
+}
+
+pub(crate) fn record_provider_started(app: &AppState, operation_id: &str, action_name: &str) {
+    publish_event(
+        app,
+        provider_started_event(operation_id, current_timestamp(), action_name),
+    );
+}
+
+pub(crate) fn record_provider_stage(
+    app: &AppState,
+    operation_id: &str,
+    action_name: &str,
+    mode: GuardMode,
+    stage: guard_provider::ProviderStage,
+) {
+    publish_event(
+        app,
+        provider_event(
+            operation_id.to_owned(),
+            current_timestamp(),
+            action_name,
+            mode,
+            stage,
+        ),
+    );
+}
+
+pub(crate) fn publish_event(app: &AppState, event: GuardEvent) {
+    if let Err(error) = app.storage.record_event(&event) {
+        api_warn!(
+            error_code = "EVENT_PERSISTENCE_FAILED",
+            error = %error,
+            event_id = %event.event_id,
+            event_kind = %event.kind,
+            "event persistence failed"
+        );
+    }
+    app.notification.enqueue(&event);
+    let _send_result = app.events.send(event);
+}
+
 pub(crate) fn record_provider_failure(
     app: &AppState,
     operation_id: &str,
@@ -1788,18 +1835,7 @@ pub(crate) fn record_provider_failure(
             "저장된 provider transaction 단계와 실제 DNS·firewall을 read-back하십시오.".to_owned(),
         )]),
     };
-    if let Err(storage_error) = app.storage.record_event(&event) {
-        tracing::warn!(
-            log_schema_version = LOG_SCHEMA_VERSION,
-            component = "guard-control",
-            error_code = "PROVIDER_FAILURE_EVENT_PERSISTENCE_FAILED",
-            error = %storage_error,
-            operation_id,
-            event_id = %event.event_id,
-            "provider failure event persistence failed"
-        );
-    }
-    let _send_result = app.events.send(event);
+    publish_event(app, event);
 }
 
 const fn mode_name(mode: GuardMode) -> &'static str {

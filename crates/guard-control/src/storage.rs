@@ -85,6 +85,25 @@ pub(crate) struct EventRow {
     pub(crate) payload: serde_json::Value,
 }
 
+/// 영속 notification 전송 상태입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NotificationDeliveryRecord {
+    pub(crate) attempts: u8,
+    pub(crate) delivered: bool,
+    pub(crate) exhausted: bool,
+}
+
+/// 관리자 UI에 제공할 notification 영속 전송 요약입니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct NotificationDeliverySummary {
+    pub(crate) delivered: u64,
+    pub(crate) failed: u64,
+    pub(crate) pending: u64,
+    pub(crate) last_success_at: Option<String>,
+    pub(crate) last_failure_at: Option<String>,
+    pub(crate) last_error_code: Option<String>,
+}
+
 /// detail retention 안에서 request ID로 찾은 비식별 요청 추적 row입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct RequestTraceRow {
@@ -472,6 +491,7 @@ impl SqliteStore {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.pragma_update(None, "wal_autocheckpoint", 1_000)?;
+        connection.pragma_update(None, "foreign_keys", true)?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -508,6 +528,16 @@ impl SqliteStore {
                 kind TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS notification_deliveries (
+                event_id TEXT PRIMARY KEY REFERENCES guard_events(event_id) ON DELETE CASCADE,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT,
+                delivered_at TEXT,
+                last_error_code TEXT
+            );
+            CREATE INDEX IF NOT EXISTS notification_delivery_status_idx
+                ON notification_deliveries(status, attempts);
             CREATE TABLE IF NOT EXISTS audit_actions (
                 operation_id TEXT PRIMARY KEY,
                 occurred_at TEXT NOT NULL,
@@ -777,9 +807,14 @@ impl SqliteStore {
     pub(crate) fn record_event(&self, event: &GuardEvent) -> Result<(), StorageError> {
         let payload = serde_json::to_string(event)?;
         self.lock().execute(
-            "INSERT OR REPLACE INTO guard_events(
+            "INSERT INTO guard_events(
                 event_id, occurred_at, severity, kind, payload
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(event_id) DO UPDATE SET
+                occurred_at = excluded.occurred_at,
+                severity = excluded.severity,
+                kind = excluded.kind,
+                payload = excluded.payload",
             params![
                 event.event_id,
                 event.occurred_at,
@@ -789,6 +824,163 @@ impl SqliteStore {
             ],
         )?;
         Ok(())
+    }
+
+    /// notification 대상 사건을 event ID 기준으로 한 번만 등록합니다.
+    pub(crate) fn register_notification(
+        &self,
+        event_id: &str,
+        max_attempts: u8,
+    ) -> Result<bool, StorageError> {
+        let connection = self.lock();
+        connection.execute(
+            "INSERT OR IGNORE INTO notification_deliveries(event_id, status, attempts)
+             VALUES (?1, 'pending', 0)",
+            [event_id],
+        )?;
+        let record = connection.query_row(
+            "SELECT attempts, status = 'delivered', status = 'failed'
+             FROM notification_deliveries WHERE event_id = ?1",
+            [event_id],
+            |row| {
+                Ok(NotificationDeliveryRecord {
+                    attempts: u8::try_from(row.get::<_, u64>(0)?).unwrap_or(u8::MAX),
+                    delivered: row.get(1)?,
+                    exhausted: row.get(2)?,
+                })
+            },
+        )?;
+        Ok(!record.delivered && !record.exhausted && record.attempts < max_attempts)
+    }
+
+    /// network 전송 직전에 attempt를 영속 증가시킵니다.
+    pub(crate) fn begin_notification_attempt(
+        &self,
+        event_id: &str,
+        attempted_at: &str,
+    ) -> Result<u8, StorageError> {
+        let connection = self.lock();
+        connection.execute(
+            "UPDATE notification_deliveries
+             SET status = 'delivering', attempts = attempts + 1, last_attempt_at = ?2
+             WHERE event_id = ?1 AND status != 'delivered'",
+            params![event_id, attempted_at],
+        )?;
+        let attempts = connection.query_row(
+            "SELECT attempts FROM notification_deliveries WHERE event_id = ?1",
+            [event_id],
+            |row| row.get::<_, u64>(0),
+        )?;
+        Ok(u8::try_from(attempts).unwrap_or(u8::MAX))
+    }
+
+    /// 성공한 notification을 영속 완료 처리합니다.
+    pub(crate) fn complete_notification(
+        &self,
+        event_id: &str,
+        delivered_at: &str,
+    ) -> Result<(), StorageError> {
+        self.lock().execute(
+            "UPDATE notification_deliveries
+             SET status = 'delivered', delivered_at = ?2, last_error_code = NULL
+             WHERE event_id = ?1",
+            params![event_id, delivered_at],
+        )?;
+        Ok(())
+    }
+
+    /// 실패한 notification을 재시도 대기 또는 최종 실패로 기록합니다.
+    pub(crate) fn fail_notification(
+        &self,
+        event_id: &str,
+        failed_at: &str,
+        error_code: &str,
+        exhausted: bool,
+    ) -> Result<(), StorageError> {
+        self.lock().execute(
+            "UPDATE notification_deliveries
+             SET status = ?2, last_attempt_at = ?3, last_error_code = ?4
+             WHERE event_id = ?1",
+            params![
+                event_id,
+                if exhausted { "failed" } else { "pending" },
+                failed_at,
+                error_code
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 재시작 뒤 이어서 보낼 bounded 미완료 사건을 반환합니다.
+    pub(crate) fn pending_notifications(
+        &self,
+        max_attempts: u8,
+        limit: usize,
+    ) -> Result<Vec<GuardEvent>, StorageError> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT events.payload
+             FROM notification_deliveries AS delivery
+             JOIN guard_events AS events ON events.event_id = delivery.event_id
+             WHERE delivery.status IN ('pending', 'delivering')
+               AND delivery.attempts < ?1
+             ORDER BY events.occurred_at ASC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![u64::from(max_attempts), to_i64(limit as u64)],
+            |row| row.get::<_, String>(0),
+        )?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    /// 영속 notification 전송 상태를 관리자 read-back 형태로 집계합니다.
+    pub(crate) fn notification_summary(&self) -> Result<NotificationDeliverySummary, StorageError> {
+        let connection = self.lock();
+        let (delivered, failed, pending) = connection.query_row(
+            "SELECT
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status IN ('pending', 'delivering') THEN 1 ELSE 0 END)
+             FROM notification_deliveries",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<u64>>(0)?.unwrap_or(0),
+                    row.get::<_, Option<u64>>(1)?.unwrap_or(0),
+                    row.get::<_, Option<u64>>(2)?.unwrap_or(0),
+                ))
+            },
+        )?;
+        let last_success_at = connection
+            .query_row(
+                "SELECT delivered_at FROM notification_deliveries
+                 WHERE delivered_at IS NOT NULL ORDER BY delivered_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let last_failure = connection
+            .query_row(
+                "SELECT last_attempt_at, last_error_code FROM notification_deliveries
+                 WHERE last_error_code IS NOT NULL ORDER BY last_attempt_at DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(NotificationDeliverySummary {
+            delivered,
+            failed,
+            pending,
+            last_success_at,
+            last_failure_at: last_failure.as_ref().and_then(|value| value.0.clone()),
+            last_error_code: last_failure.and_then(|value| value.1),
+        })
     }
 
     /// 최신 사건을 반환합니다.
@@ -1573,6 +1765,61 @@ mod tests {
             occurred_at_unix_ms,
             ..TelemetryEnvelope::default()
         }
+    }
+
+    fn notification_event(event_id: &str) -> GuardEvent {
+        GuardEvent {
+            schema_version: 1,
+            event_id: event_id.to_owned(),
+            occurred_at: "2026-07-23T00:00:00Z".to_owned(),
+            severity: Severity::Critical,
+            kind: "provider.action_failed".to_owned(),
+            summary: "Provider 조치가 실패했습니다.".to_owned(),
+            reason_codes: Vec::new(),
+            evidence: BTreeMap::new(),
+            action: BTreeMap::new(),
+            result: BTreeMap::new(),
+            recovery: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn notification_delivery_is_deduplicated_and_resumable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = SqliteStore::in_memory()?;
+        let event = notification_event("event-notification-1");
+        store.record_event(&event)?;
+
+        assert!(store.register_notification(&event.event_id, 3)?);
+        assert!(store.register_notification(&event.event_id, 3)?);
+        assert_eq!(
+            store.begin_notification_attempt(&event.event_id, "2026-07-23T00:00:01Z")?,
+            1
+        );
+        store.fail_notification(
+            &event.event_id,
+            "2026-07-23T00:00:02Z",
+            "WEBHOOK_TIMEOUT",
+            false,
+        )?;
+        assert_eq!(store.pending_notifications(3, 16)?, vec![event.clone()]);
+
+        assert_eq!(
+            store.begin_notification_attempt(&event.event_id, "2026-07-23T00:00:03Z")?,
+            2
+        );
+        store.complete_notification(&event.event_id, "2026-07-23T00:00:04Z")?;
+        store.record_event(&event)?;
+        assert!(!store.register_notification(&event.event_id, 3)?);
+        assert!(store.pending_notifications(3, 16)?.is_empty());
+        let summary = store.notification_summary()?;
+        assert_eq!(summary.delivered, 1);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(
+            summary.last_success_at.as_deref(),
+            Some("2026-07-23T00:00:04Z")
+        );
+        Ok(())
     }
 
     #[test]

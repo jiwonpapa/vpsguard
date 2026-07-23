@@ -23,6 +23,22 @@ export interface StatusResponse {
   provider_drain_deadline_unix_seconds: number | null;
   tls: string;
   tls_management: TlsManagementSnapshot;
+  notification: NotificationStatus;
+}
+
+export interface NotificationStatus {
+  enabled: boolean;
+  configured: boolean;
+  queue_depth: number;
+  queue_capacity: number;
+  queue_dropped: number;
+  delivered: number;
+  failed: number;
+  pending: number;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_error_code: string | null;
+  storage_available: boolean;
 }
 
 export interface TlsManagementSnapshot {

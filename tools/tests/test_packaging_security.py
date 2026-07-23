@@ -88,6 +88,17 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("VPS_GUARD_TLS_SERVER_NAME=www.g7devops.com", site_hook)
         self.assertIn("VPS_GUARD_TLS_ADDRESS=127.0.0.1:443", site_hook)
 
+    def test_notification_bearer_uses_a_systemd_credential(self) -> None:
+        credential = (
+            self.root
+            / "packaging/systemd/vps-guard-control-notification-credential.conf.example"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "LoadCredential=notification-webhook-token:"
+            "/etc/vps-guard/secrets/notification-webhook-token",
+            credential,
+        )
+
     def test_systemd_verify_ignores_all_packaged_binary_absence_only(self) -> None:
         output = "\n".join(
             [

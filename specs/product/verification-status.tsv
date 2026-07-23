@@ -26,6 +26,7 @@ OBS-010|PLANNED|-|-|-
 OBS-011|AUTO_PASS|crates/guard-agent/src/cgroup.rs|crates/guard-agent/tests/systemd_cgroup_collector.rs|-
 OBS-012|AUTO_PASS|crates/guard-core/src/correlation.rs|scripts/integration-gate.sh|-
 OBS-013|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
+OBS-014|AUTO_PASS|crates/guard-control/src/notification.rs|crates/guard-control/src/notification/tests.rs|-
 DET-001|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-002|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-
 DET-003|PLANNED|-|-|-
