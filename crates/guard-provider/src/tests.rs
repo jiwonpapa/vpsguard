@@ -6,13 +6,28 @@ use super::{
 };
 use guard_core::config::DnsRecordType;
 
-#[derive(Default)]
 struct FakeBackend {
     proxy_verified: bool,
     origin_verified: bool,
     origin_lock_calls: usize,
+    proxy_enable_calls: usize,
     restore_calls: usize,
     restore_error: bool,
+    ttl_seconds: u32,
+}
+
+impl Default for FakeBackend {
+    fn default() -> Self {
+        Self {
+            proxy_verified: false,
+            origin_verified: false,
+            origin_lock_calls: 0,
+            proxy_enable_calls: 0,
+            restore_calls: 0,
+            restore_error: false,
+            ttl_seconds: 300,
+        }
+    }
 }
 
 impl ProviderBackend for FakeBackend {
@@ -24,12 +39,14 @@ impl ProviderBackend for FakeBackend {
                 name: record_name.to_owned(),
                 record_type: DnsRecordType::A,
                 proxied: false,
+                ttl_seconds: self.ttl_seconds,
             }],
             origin_locked: false,
         })
     }
 
     fn request_proxy_enable(&mut self, _record_name: &str) -> Result<(), ProviderError> {
+        self.proxy_enable_calls += 1;
         Ok(())
     }
 
@@ -63,12 +80,23 @@ fn transaction() -> Result<ProviderTransaction, ProviderError> {
     )
 }
 
+fn enable_without_wait(
+    transaction: &mut ProviderTransaction,
+    backend: &mut FakeBackend,
+) -> Result<(), ProviderError> {
+    loop {
+        if transaction.enable_step_at(backend, u64::MAX, 300)? == ProviderStage::Complete {
+            return Ok(());
+        }
+    }
+}
+
 #[test]
 fn never_locks_origin_before_proxy_verification() -> Result<(), ProviderError> {
     let mut backend = FakeBackend::default();
     let mut transaction = transaction()?;
     assert_eq!(
-        transaction.enable(&mut backend),
+        enable_without_wait(&mut transaction, &mut backend),
         Err(ProviderError::ProxyNotVerified)
     );
     assert_eq!(backend.origin_lock_calls, 0);
@@ -90,11 +118,11 @@ fn exposes_single_steps_for_durable_checkpoints() -> Result<(), ProviderError> {
     };
     let mut transaction = transaction()?;
     assert_eq!(
-        transaction.enable_step(&mut backend)?,
+        transaction.enable_step_at(&mut backend, 100, 300)?,
         ProviderStage::Snapshotted
     );
     assert_eq!(
-        transaction.enable_step(&mut backend)?,
+        transaction.enable_step_at(&mut backend, 100, 300)?,
         ProviderStage::ProxyRequested
     );
     assert_eq!(backend.origin_lock_calls, 0);
@@ -109,8 +137,8 @@ fn completes_and_is_idempotent() -> Result<(), ProviderError> {
         ..FakeBackend::default()
     };
     let mut transaction = transaction()?;
-    transaction.enable(&mut backend)?;
-    transaction.enable(&mut backend)?;
+    enable_without_wait(&mut transaction, &mut backend)?;
+    enable_without_wait(&mut transaction, &mut backend)?;
     assert_eq!(transaction.stage, ProviderStage::Complete);
     assert_eq!(backend.origin_lock_calls, 1);
     Ok(())
@@ -124,7 +152,7 @@ fn restores_snapshot() -> Result<(), ProviderError> {
         ..FakeBackend::default()
     };
     let mut transaction = transaction()?;
-    transaction.enable(&mut backend)?;
+    enable_without_wait(&mut transaction, &mut backend)?;
     assert_eq!(
         transaction.restore_step(&mut backend)?,
         ProviderStage::RestoreRequested
@@ -144,11 +172,11 @@ fn can_restore_after_partial_provider_progress() -> Result<(), ProviderError> {
     let mut backend = FakeBackend::default();
     let mut transaction = transaction()?;
     assert_eq!(
-        transaction.enable_step(&mut backend)?,
+        transaction.enable_step_at(&mut backend, 100, 300)?,
         ProviderStage::Snapshotted
     );
     assert_eq!(
-        transaction.enable_step(&mut backend)?,
+        transaction.enable_step_at(&mut backend, 100, 300)?,
         ProviderStage::ProxyRequested
     );
     assert_eq!(
@@ -186,7 +214,7 @@ fn records_origin_readback_failure() -> Result<(), ProviderError> {
     };
     let mut transaction = transaction()?;
     assert_eq!(
-        transaction.enable(&mut backend),
+        enable_without_wait(&mut transaction, &mut backend),
         Err(ProviderError::OriginLockNotVerified)
     );
     assert_eq!(
@@ -204,7 +232,7 @@ fn restore_wrapper_is_idempotent() -> Result<(), ProviderError> {
         ..FakeBackend::default()
     };
     let mut transaction = transaction()?;
-    transaction.enable(&mut backend)?;
+    enable_without_wait(&mut transaction, &mut backend)?;
     transaction.restore(&mut backend)?;
     transaction.restore(&mut backend)?;
     assert_eq!(transaction.stage, ProviderStage::Restored);
@@ -221,7 +249,7 @@ fn restore_failures_keep_a_resumable_checkpoint() -> Result<(), ProviderError> {
         ..FakeBackend::default()
     };
     let mut transaction = transaction()?;
-    transaction.enable(&mut backend)?;
+    enable_without_wait(&mut transaction, &mut backend)?;
     assert_eq!(
         transaction.restore_step(&mut backend)?,
         ProviderStage::RestoreRequested
@@ -235,7 +263,105 @@ fn restore_failures_keep_a_resumable_checkpoint() -> Result<(), ProviderError> {
         transaction.last_error.as_deref(),
         Some("PROVIDER_BACKEND_FAILED")
     );
-    assert!(transaction.enable_step(&mut backend).is_err());
+    assert!(
+        transaction
+            .enable_step_at(&mut backend, u64::MAX, 300)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn dns_ttl_drain_prevents_early_origin_lock() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend {
+        proxy_verified: true,
+        origin_verified: true,
+        ttl_seconds: 300,
+        ..FakeBackend::default()
+    };
+    let mut transaction = transaction()?;
+
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 100, 300)?,
+        ProviderStage::Snapshotted
+    );
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 100, 300)?,
+        ProviderStage::ProxyRequested
+    );
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 100, 300)?,
+        ProviderStage::ProxyVerified
+    );
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 100, 300)?,
+        ProviderStage::ProxyDrain
+    );
+    assert_eq!(transaction.proxy_drain_deadline_unix_seconds, Some(400));
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 399, 300)?,
+        ProviderStage::ProxyDrain
+    );
+    assert_eq!(backend.origin_lock_calls, 0);
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 400, 300)?,
+        ProviderStage::OriginLockRequested
+    );
+    assert_eq!(backend.origin_lock_calls, 1);
+    Ok(())
+}
+
+#[test]
+fn dns_ttl_above_configured_limit_fails_before_proxy_change() -> Result<(), ProviderError> {
+    let mut backend = FakeBackend {
+        ttl_seconds: 3_600,
+        ..FakeBackend::default()
+    };
+    let mut transaction = transaction()?;
+
+    assert_eq!(
+        transaction.enable_step_at(&mut backend, 100, 300),
+        Err(ProviderError::DnsTtlTooHigh {
+            observed_seconds: 3_600,
+            allowed_seconds: 300,
+        })
+    );
+    assert_eq!(transaction.stage, ProviderStage::Pending);
+    assert_eq!(backend.proxy_enable_calls, 0);
+    assert_eq!(backend.origin_lock_calls, 0);
+    Ok(())
+}
+
+#[test]
+fn legacy_transaction_defaults_dns_drain_fields_safely() -> Result<(), Box<dyn std::error::Error>> {
+    let transaction = serde_json::from_str::<ProviderTransaction>(
+        r#"{
+            "idempotency_key":"legacy",
+            "record_name":"guard.example.com",
+            "stage":"snapshotted",
+            "snapshot":{
+                "record_name":"guard.example.com",
+                "records":[{
+                    "id":"11111111111111111111111111111111",
+                    "name":"guard.example.com",
+                    "record_type":"A",
+                    "proxied":false
+                }],
+                "origin_locked":false
+            },
+            "last_error":null,
+            "attempts":1
+        }"#,
+    )?;
+
+    assert_eq!(
+        transaction
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| { snapshot.records.first().map(|record| record.ttl_seconds) }),
+        Some(300)
+    );
+    assert_eq!(transaction.proxy_drain_deadline_unix_seconds, None);
     Ok(())
 }
 
@@ -280,6 +406,13 @@ fn provider_errors_have_stable_codes() {
             "PARTIAL_ROLLBACK_FAILED",
         ),
         (ProviderError::ProxyNotVerified, "PROXY_NOT_VERIFIED"),
+        (
+            ProviderError::DnsTtlTooHigh {
+                observed_seconds: 3_600,
+                allowed_seconds: 300,
+            },
+            "DNS_TTL_TOO_HIGH",
+        ),
         (
             ProviderError::OriginLockNotVerified,
             "ORIGIN_LOCK_NOT_VERIFIED",

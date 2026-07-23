@@ -550,6 +550,52 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
         let mut last_policy_refresh = None;
         loop {
             interval.tick().await;
+            let activation_pending = provider_activation_pending(&app);
+            let manual_hold = app.state.read().await.manual_hold;
+            if activation_pending && !manual_hold {
+                let current = app.state.read().await.clone();
+                if let Some(reconciled) =
+                    reconcile_provider_activation_state(current, &current_timestamp())
+                    && let Some(refreshed) = write_policy_for_mode(
+                        &policy_store,
+                        reconciled,
+                        max_body_bytes,
+                        max_tracked_clients,
+                    )
+                    .await
+                    && persist_state(&app, &refreshed).await.is_ok()
+                {
+                    *app.state.write().await = refreshed;
+                    last_policy_refresh = Some(Instant::now());
+                }
+                match run_provider_transaction(&app, false).await {
+                    Ok(
+                        guard_provider::ProviderStage::Complete
+                        | guard_provider::ProviderStage::ProxyDrain,
+                    ) => {}
+                    Ok(stage) => control_warn!(
+                        "CONTROL_PROVIDER_RESUME_INCOMPLETE",
+                        operation_id = "automatic-provider-resume",
+                        ?stage,
+                        "provider activation resume stopped before a durable wait or completion"
+                    ),
+                    Err(error) if error == "PROVIDER_ACTION_IN_PROGRESS" => {}
+                    Err(error) => {
+                        control_warn!(
+                            "CONTROL_PROVIDER_RESUME_FAILED",
+                            operation_id = "automatic-provider-resume",
+                            error,
+                            "provider activation resume failed"
+                        );
+                        crate::api::record_provider_failure(
+                            &app,
+                            "automatic-provider-resume",
+                            "emergency_proxy",
+                            &error,
+                        );
+                    }
+                }
+            }
             let policy_refresh_due =
                 enforce && policy_renewal_due(last_policy_refresh, Instant::now());
             let pressure = {
@@ -580,7 +626,7 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             let provider_verified = app.provider.try_lock().ok().is_some_and(|provider| {
                 provider
                     .as_ref()
-                    .is_some_and(ProviderController::recovery_ready)
+                    .is_some_and(ProviderController::protection_active)
             });
             let mut next = current.clone().transition(&TransitionInput {
                 assessment: assessment.clone(),
@@ -601,7 +647,10 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                 && next.current_mode == GuardMode::EmergencyProxy
             {
                 match run_provider_transaction(&app, false).await {
-                    Ok(guard_provider::ProviderStage::Complete) => {}
+                    Ok(
+                        guard_provider::ProviderStage::Complete
+                        | guard_provider::ProviderStage::ProxyDrain,
+                    ) => {}
                     Ok(stage) => {
                         control_warn!(
                             "CONTROL_PROVIDER_TRANSACTION_INCOMPLETE",
@@ -631,44 +680,6 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                             &error,
                         );
                         keep_local_guard(&current, &mut next);
-                    }
-                }
-            }
-            if enforce
-                && current.current_mode == GuardMode::EmergencyProxy
-                && next.current_mode == GuardMode::Recovering
-            {
-                match run_provider_transaction(&app, true).await {
-                    Ok(guard_provider::ProviderStage::Restored) => {}
-                    Ok(stage) => {
-                        control_warn!(
-                            "CONTROL_PROVIDER_RESTORE_INCOMPLETE",
-                            operation_id = "automatic-recovery",
-                            ?stage,
-                            "provider restore stopped before completion"
-                        );
-                        crate::api::record_provider_failure(
-                            &app,
-                            "automatic-recovery",
-                            "provider_restore",
-                            &format!("INCOMPLETE_STAGE_{stage:?}"),
-                        );
-                        keep_emergency(&current, &mut next);
-                    }
-                    Err(error) => {
-                        control_warn!(
-                            "CONTROL_PROVIDER_RESTORE_FAILED",
-                            operation_id = "automatic-recovery",
-                            error,
-                            "automatic provider restore failed"
-                        );
-                        crate::api::record_provider_failure(
-                            &app,
-                            "automatic-recovery",
-                            "provider_restore",
-                            &error,
-                        );
-                        keep_emergency(&current, &mut next);
                     }
                 }
             }
@@ -746,6 +757,30 @@ async fn write_policy_for_mode(
     Some(state)
 }
 
+fn provider_activation_pending(app: &AppState) -> bool {
+    app.provider.try_lock().ok().is_some_and(|provider| {
+        provider
+            .as_ref()
+            .is_some_and(ProviderController::activation_pending)
+    })
+}
+
+fn reconcile_provider_activation_state(
+    mut state: GuardState,
+    occurred_at: &str,
+) -> Option<GuardState> {
+    if matches!(
+        state.current_mode,
+        GuardMode::EmergencyProxy | GuardMode::RecoveryReady | GuardMode::ManualHold
+    ) {
+        return None;
+    }
+    state.current_mode = GuardMode::EmergencyProxy;
+    state.last_transition_at = occurred_at.to_owned();
+    update_incident(&mut state);
+    Some(state)
+}
+
 fn automatic_enforcement_enabled(config: &GuardConfig) -> bool {
     config.detection.mode == DetectionMode::Enforce
 }
@@ -786,12 +821,6 @@ async fn run_provider_transaction(
 
 fn keep_local_guard(current: &GuardState, next: &mut GuardState) {
     next.current_mode = GuardMode::LocalGuard;
-    next.last_transition_at
-        .clone_from(&current.last_transition_at);
-}
-
-fn keep_emergency(current: &GuardState, next: &mut GuardState) {
-    next.current_mode = GuardMode::EmergencyProxy;
     next.last_transition_at
         .clone_from(&current.last_transition_at);
 }
@@ -846,7 +875,7 @@ fn build_policy(
                 requests_per_minute: 15,
             },
         ],
-        GuardMode::EmergencyProxy => vec![
+        GuardMode::EmergencyProxy | GuardMode::RecoveryReady => vec![
             RouteRule {
                 route_class: "strict".to_owned(),
                 requests_per_minute: 10,
@@ -884,7 +913,7 @@ mod tests;
 fn update_incident(state: &mut GuardState) {
     if matches!(
         state.current_mode,
-        GuardMode::LocalGuard | GuardMode::EmergencyProxy
+        GuardMode::LocalGuard | GuardMode::EmergencyProxy | GuardMode::RecoveryReady
     ) && state.active_incident_id.is_none()
     {
         state.active_incident_id = Some(format!("incident-{}", Uuid::new_v4().simple()));

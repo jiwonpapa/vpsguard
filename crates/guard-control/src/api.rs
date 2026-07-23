@@ -99,6 +99,7 @@ struct StatusResponse {
     origin: &'static str,
     agent: CollectorState,
     provider: String,
+    provider_drain_deadline_unix_seconds: Option<u64>,
     tls: String,
     tls_management: TlsManagementSnapshot,
 }
@@ -480,17 +481,31 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
     let reasons = match state.current_mode {
         GuardMode::Normal => vec!["고정 안전 한도 안에서 관찰 중입니다."],
         GuardMode::ManualHold => vec!["관리자가 자동 상태 전이를 중지했습니다."],
+        GuardMode::RecoveryReady => {
+            vec!["서버가 안정됐지만 외부 보호 해제는 관리자 승인을 기다립니다."]
+        }
         _ => vec!["최근 요청 비용과 자원 압력을 상세 관찰 중입니다."],
     };
-    let provider = match app.provider.try_lock() {
-        Ok(guard) => guard
-            .as_ref()
-            .map_or_else(|| "unavailable".to_owned(), ProviderController::status),
-        Err(TryLockError::WouldBlock) => "running".to_owned(),
-        Err(TryLockError::Poisoned(error)) => error
-            .into_inner()
-            .as_ref()
-            .map_or_else(|| "unavailable".to_owned(), ProviderController::status),
+    let (provider, provider_drain_deadline_unix_seconds) = match app.provider.try_lock() {
+        Ok(guard) => guard.as_ref().map_or_else(
+            || ("unavailable".to_owned(), None),
+            |controller| {
+                (
+                    controller.status(),
+                    controller.drain_deadline_unix_seconds(),
+                )
+            },
+        ),
+        Err(TryLockError::WouldBlock) => ("running".to_owned(), None),
+        Err(TryLockError::Poisoned(error)) => error.into_inner().as_ref().map_or_else(
+            || ("unavailable".to_owned(), None),
+            |controller| {
+                (
+                    controller.status(),
+                    controller.drain_deadline_unix_seconds(),
+                )
+            },
+        ),
     };
     let tls_management = app.tls_management.read().await.clone();
     let app_layer_active = app.inspection_mode == InspectionMode::Profiled;
@@ -524,6 +539,7 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
         origin: "unknown",
         agent,
         provider,
+        provider_drain_deadline_unix_seconds,
         tls: tls_management.health.as_str().to_owned(),
         tls_management,
     })
@@ -1178,6 +1194,10 @@ async fn apply_provider_action(
     } else {
         GuardMode::EmergencyProxy
     };
+    if restore {
+        next.breach_windows = 0;
+        next.stable_windows = 0;
+    }
     next.last_transition_at.clone_from(&now);
     if !restore && next.active_incident_id.is_none() {
         next.active_incident_id = Some(format!("provider-{operation_id}"));
@@ -1788,6 +1808,7 @@ const fn mode_name(mode: GuardMode) -> &'static str {
         GuardMode::Watch => "WATCH",
         GuardMode::LocalGuard => "LOCAL_GUARD",
         GuardMode::EmergencyProxy => "EMERGENCY_PROXY",
+        GuardMode::RecoveryReady => "RECOVERY_READY",
         GuardMode::Recovering => "RECOVERING",
         GuardMode::ManualHold => "MANUAL_HOLD",
     }
@@ -1799,6 +1820,7 @@ fn parse_mode(value: &str) -> Option<GuardMode> {
         "WATCH" => Some(GuardMode::Watch),
         "LOCAL_GUARD" => Some(GuardMode::LocalGuard),
         "EMERGENCY_PROXY" => Some(GuardMode::EmergencyProxy),
+        "RECOVERY_READY" => Some(GuardMode::RecoveryReady),
         "RECOVERING" => Some(GuardMode::Recovering),
         "MANUAL_HOLD" => Some(GuardMode::ManualHold),
         _ => None,

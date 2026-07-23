@@ -20,6 +20,7 @@ export interface StatusResponse {
   origin: string;
   agent: string;
   provider: string;
+  provider_drain_deadline_unix_seconds: number | null;
   tls: string;
   tls_management: TlsManagementSnapshot;
 }

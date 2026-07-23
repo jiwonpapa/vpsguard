@@ -93,6 +93,7 @@ test("keeps the authenticated operations overview consistent", async ({ page }, 
         origin: "live",
         agent: "live",
         provider: "unavailable",
+        provider_drain_deadline_unix_seconds: null,
         tls: "valid",
         tls_management: {
           health: "valid",

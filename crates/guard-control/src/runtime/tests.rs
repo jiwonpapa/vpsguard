@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 
 use super::{
     POLICY_REFRESH_INTERVAL, automatic_enforcement_enabled, build_policy, host_pressure,
-    is_distributed_pressure, keep_emergency, keep_local_guard, policy_renewal_due,
-    storage_writer_loop, transition_event, update_incident,
+    is_distributed_pressure, keep_local_guard, policy_renewal_due,
+    reconcile_provider_activation_state, storage_writer_loop, transition_event, update_incident,
 };
 use crate::storage::{SqliteStore, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::TelemetryEnvelope;
@@ -39,6 +39,20 @@ fn generated_policy_keeps_a_ten_minute_bounded_lease() -> Result<(), Box<dyn std
     let generated = OffsetDateTime::parse(&policy.generated_at, &Rfc3339)?;
     let expires = OffsetDateTime::parse(&policy.expires_at, &Rfc3339)?;
     assert_eq!(expires - generated, time::Duration::minutes(10));
+    Ok(())
+}
+
+#[test]
+fn recovery_ready_keeps_emergency_route_limits() -> Result<(), Box<dyn std::error::Error>> {
+    let policy = build_policy(GuardMode::RecoveryReady, 8, 1_024, 100)?;
+    assert_eq!(
+        policy
+            .route_rules
+            .iter()
+            .find(|rule| rule.route_class == "strict")
+            .map(|rule| rule.requests_per_minute),
+        Some(10)
+    );
     Ok(())
 }
 
@@ -80,7 +94,7 @@ fn dedicated_writer_drains_queue_as_one_transaction_batch() -> Result<(), Box<dy
 }
 
 #[test]
-fn provider_failure_fallbacks_preserve_the_previous_transition_time() {
+fn provider_failure_fallback_preserves_the_previous_transition_time() {
     let mut current = GuardState::normal("2026-07-22T00:00:00Z");
     current.current_mode = GuardMode::LocalGuard;
     let mut next = current.clone();
@@ -89,13 +103,6 @@ fn provider_failure_fallbacks_preserve_the_previous_transition_time() {
 
     keep_local_guard(&current, &mut next);
     assert_eq!(next.current_mode, GuardMode::LocalGuard);
-    assert_eq!(next.last_transition_at, current.last_transition_at);
-
-    current.current_mode = GuardMode::EmergencyProxy;
-    next.current_mode = GuardMode::Recovering;
-    next.last_transition_at = "2026-07-22T00:00:10Z".to_owned();
-    keep_emergency(&current, &mut next);
-    assert_eq!(next.current_mode, GuardMode::EmergencyProxy);
     assert_eq!(next.last_transition_at, current.last_transition_at);
 }
 
@@ -207,4 +214,17 @@ fn sustained_host_pressure_reaches_emergency_but_one_window_does_not() {
         });
     }
     assert_eq!(state.current_mode, GuardMode::EmergencyProxy);
+}
+
+#[test]
+fn pending_provider_activation_is_visible_after_control_restart() {
+    let current = GuardState::normal("2026-07-23T00:00:00Z");
+    let reconciled = reconcile_provider_activation_state(current, "2026-07-23T00:00:05Z");
+    assert!(reconciled.as_ref().is_some_and(|state| {
+        state.current_mode == GuardMode::EmergencyProxy && state.active_incident_id.is_some()
+    }));
+
+    let mut held = GuardState::normal("2026-07-23T00:00:00Z");
+    held = held.hold("2026-07-23T00:00:01Z");
+    assert!(reconcile_provider_activation_state(held, "2026-07-23T00:00:05Z").is_none());
 }

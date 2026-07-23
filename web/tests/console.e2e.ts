@@ -24,6 +24,7 @@ const status = {
   origin: "live",
   agent: "live",
   provider: "unavailable",
+  provider_drain_deadline_unix_seconds: null,
   tls: "valid",
   tls_management: {
     health: "valid",
@@ -309,6 +310,19 @@ test("organizes the overview as a sectioned operations console", async ({ page }
   await expect(page.getByText("CPU 사용", { exact: true })).toBeVisible();
   await expect(page.getByText("37%", { exact: true })).toBeVisible();
   await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);
+});
+
+test("explains that Cloudflare recovery requires explicit approval", async ({ page }) => {
+  await page.route("**/api/v1/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...status, mode: "RECOVERY_READY", provider: "complete" }),
+    });
+  });
+  await page.goto("/");
+  await expect(page.getByText("복구 승인 대기", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "보호 해제 승인" })).toBeVisible();
 });
 
 test("renders bounded storage health and retention state", async ({ page }) => {

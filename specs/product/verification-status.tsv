@@ -46,7 +46,7 @@ ACT-004|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
 ACT-005|CODE_ONLY|crates/guard-core/src/policy.rs|-|-
 ACT-006|CODE_ONLY|crates/guard-provider/src/lib.rs|-|-
 ACT-007|AUTO_PASS|crates/guard-provider/src/lib.rs|crates/guard-provider/src/tests.rs|-
-ACT-008|CODE_ONLY|crates/guard-provider/src/lib.rs|-|-
+ACT-008|AUTO_PASS|crates/guard-core/src/state.rs|crates/guard-core/src/state/tests.rs|-
 ACT-009|AUTO_PASS|crates/guard-core/src/state.rs|crates/guard-core/src/state/tests.rs|-
 ACT-010|CODE_ONLY|crates/guard-system/src/nftables.rs|-|-
 ACT-011|CODE_ONLY|crates/guard-control/src/runtime.rs|-|-

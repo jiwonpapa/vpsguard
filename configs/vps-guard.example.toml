@@ -71,6 +71,7 @@ records = []
 # 운영에서는 systemd credential 이름을 사용합니다. 로컬 개발만 0600 절대 경로를 허용합니다.
 token_file = "cloudflare-token"
 ip_networks = []
+max_dns_ttl_seconds = 300
 # 활성화 전 Cloudflare dashboard/API에서 ID를 확인해 record별로 추가합니다.
 # [[cloudflare.records]]
 # id = "0123456789abcdef0123456789abcdef"

@@ -48,7 +48,7 @@ fn manual_hold_blocks_automatic_transition() {
 }
 
 #[test]
-fn emergency_requires_five_stable_windows_before_recovery() {
+fn emergency_requires_five_stable_windows_before_recovery_approval() {
     let mut state = GuardState::normal("2026-07-14T00:00:00Z");
     state.current_mode = GuardMode::EmergencyProxy;
     for second in 1..5 {
@@ -59,5 +59,21 @@ fn emergency_requires_five_stable_windows_before_recovery() {
         assert_eq!(state.current_mode, GuardMode::EmergencyProxy);
     }
     state = state.transition(&input(Decision::Allow, "2026-07-14T00:01:05Z"));
-    assert_eq!(state.current_mode, GuardMode::Recovering);
+    assert_eq!(state.current_mode, GuardMode::RecoveryReady);
+}
+
+#[test]
+fn recovery_ready_never_auto_restores_and_risk_reactivates_emergency() {
+    let mut state = GuardState::normal("2026-07-14T00:00:00Z");
+    state.current_mode = GuardMode::RecoveryReady;
+    for second in 1..=10 {
+        state = state.transition(&input(
+            Decision::Allow,
+            &format!("2026-07-14T00:02:{second:02}Z"),
+        ));
+    }
+    assert_eq!(state.current_mode, GuardMode::RecoveryReady);
+
+    state = state.transition(&input(Decision::Throttle, "2026-07-14T00:03:00Z"));
+    assert_eq!(state.current_mode, GuardMode::EmergencyProxy);
 }

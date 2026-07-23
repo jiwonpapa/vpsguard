@@ -56,6 +56,7 @@ fn parses_valid_observe_only_config() {
     assert!(config.tls.certificates.is_empty());
     assert_eq!(config.tls.management, TlsManagementMode::Auto);
     assert!(!config.cloudflare.enabled);
+    assert_eq!(config.cloudflare.max_dns_ttl_seconds, 300);
     assert_eq!(config.detection.profile, DetectionProfile::Gnuboard5);
     assert_eq!(config.detection.inspection, InspectionMode::Profiled);
     assert!(config.security.baseline_response_headers);
@@ -625,6 +626,30 @@ fn accepts_single_hostname_multi_record_cloudflare_config() {
         )
     );
     assert!(GuardConfig::from_toml(&input).is_ok());
+}
+
+#[test]
+fn cloudflare_dns_ttl_policy_is_bounded() {
+    let base = VALID_CONFIG.replace(
+        "allowed_hosts = [\"g7devops.com\", \"*.g7devops.com\"]",
+        "allowed_hosts = [\"g7devops.com\"]",
+    );
+    let provider = cloudflare_config(
+        &[("11111111111111111111111111111111", "g7devops.com", "A")],
+        "[\"192.0.2.0/24\", \"2001:db8::/32\"]",
+    )
+    .replace(
+        "enabled = true",
+        "enabled = true\nmax_dns_ttl_seconds = 3601",
+    );
+    let input = format!("{base}\n{provider}");
+    assert!(matches!(
+        GuardConfig::from_toml(&input),
+        Err(ConfigError::Invalid {
+            field: "cloudflare.max_dns_ttl_seconds",
+            ..
+        })
+    ));
 }
 
 #[test]

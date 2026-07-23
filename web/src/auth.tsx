@@ -448,7 +448,7 @@ function authDescription(view: AuthView, provider?: AuthStatus["auth_provider"])
 
 function actionDescription(path: string): string {
   if (path.includes("emergency-proxy")) return "Cloudflare 비상 보호와 검증된 원본 잠금을";
-  if (path.includes("provider-restore")) return "저장된 provider snapshot 복구를";
+  if (path.includes("provider-restore")) return "Cloudflare proxy와 원본 잠금을 해제하고 저장된 DNS-only snapshot으로 복구하는 명령을";
   if (path.includes("manual-hold")) return "자동 상태 전이의 수동 고정을";
   return "자동 상태 전이 재개를";
 }

@@ -30,6 +30,9 @@ pub struct ProviderRecordSnapshot {
     pub record_type: DnsRecordType,
     /// snapshot 시점의 proxy 상태입니다.
     pub proxied: bool,
+    /// proxy 활성화 전 DNS cache 소진에 필요한 정규화 TTL 초입니다.
+    #[serde(default = "default_dns_ttl_seconds")]
+    pub ttl_seconds: u32,
 }
 
 /// 비상 전환 단계입니다.
@@ -44,6 +47,8 @@ pub enum ProviderStage {
     ProxyRequested,
     /// 외부 HTTPS 경유가 검증됐습니다.
     ProxyVerified,
+    /// 기존 DNS-only cache가 소진되기를 기다립니다.
+    ProxyDrain,
     /// 원본 보호를 요청했습니다.
     OriginLockRequested,
     /// 원본 보호 read-back을 검증했습니다.
@@ -71,6 +76,9 @@ pub struct ProviderTransaction {
     /// 외부 adapter 단계 실행 시도 횟수입니다.
     #[serde(default)]
     pub attempts: u32,
+    /// DNS cache 소진 뒤 origin lock을 허용할 Unix 초입니다.
+    #[serde(default)]
+    pub proxy_drain_deadline_unix_seconds: Option<u64>,
 }
 
 /// provider 외부 작업의 최소 adapter 계약입니다.
@@ -125,6 +133,16 @@ pub enum ProviderError {
     /// proxy API 성공 후 외부 경유가 검증되지 않았습니다.
     #[error("provider proxy 경유를 검증하지 못했습니다")]
     ProxyNotVerified,
+    /// 기존 DNS record TTL이 운영 정책 상한보다 큽니다.
+    #[error(
+        "provider DNS TTL이 허용 상한보다 큽니다: observed={observed_seconds}, allowed={allowed_seconds}"
+    )]
+    DnsTtlTooHigh {
+        /// snapshot에서 확인한 최대 정규화 TTL입니다.
+        observed_seconds: u32,
+        /// 설정이 허용한 최대 TTL입니다.
+        allowed_seconds: u32,
+    },
     /// 원본 보호 read-back이 실패했습니다.
     #[error("provider 원본 보호를 검증하지 못했습니다")]
     OriginLockNotVerified,
@@ -169,30 +187,21 @@ impl ProviderTransaction {
             snapshot: None,
             last_error: None,
             attempts: 0,
+            proxy_drain_deadline_unix_seconds: None,
         })
-    }
-
-    /// API success가 아니라 read-back 순서로 비상 보호를 완료합니다.
-    ///
-    /// # Errors
-    ///
-    /// backend 실패 또는 검증 실패를 반환하며 proxy 검증 전에는 origin lock을 호출하지 않습니다.
-    pub fn enable<B: ProviderBackend>(&mut self, backend: &mut B) -> Result<(), ProviderError> {
-        loop {
-            if self.enable_step(backend)? == ProviderStage::Complete {
-                return Ok(());
-            }
-        }
     }
 
     /// 외부 side effect를 한 단계만 실행해 호출자가 즉시 checkpoint할 수 있게 합니다.
     ///
     /// # Errors
     ///
-    /// backend 실패, read-back 불일치 또는 복구 완료 transaction 재사용을 반환합니다.
-    pub fn enable_step<B: ProviderBackend>(
+    /// backend 실패, TTL 상한 위반, read-back 불일치 또는 복구 완료 transaction 재사용을
+    /// 반환합니다.
+    pub fn enable_step_at<B: ProviderBackend>(
         &mut self,
         backend: &mut B,
+        now_unix_seconds: u64,
+        max_dns_ttl_seconds: u32,
     ) -> Result<ProviderStage, ProviderError> {
         if self.stage == ProviderStage::Complete {
             return Ok(self.stage);
@@ -209,7 +218,15 @@ impl ProviderTransaction {
         let result = (|| {
             match self.stage {
                 ProviderStage::Pending => {
-                    self.snapshot = Some(backend.snapshot(&self.record_name)?);
+                    let snapshot = backend.snapshot(&self.record_name)?;
+                    let observed_seconds = snapshot_max_dns_ttl_seconds(&snapshot);
+                    if observed_seconds > max_dns_ttl_seconds {
+                        return Err(ProviderError::DnsTtlTooHigh {
+                            observed_seconds,
+                            allowed_seconds: max_dns_ttl_seconds,
+                        });
+                    }
+                    self.snapshot = Some(snapshot);
                     self.stage = ProviderStage::Snapshotted;
                 }
                 ProviderStage::Snapshotted => {
@@ -223,6 +240,22 @@ impl ProviderTransaction {
                     self.stage = ProviderStage::ProxyVerified;
                 }
                 ProviderStage::ProxyVerified => {
+                    let drain_seconds = self
+                        .snapshot
+                        .as_ref()
+                        .map(snapshot_max_dns_ttl_seconds)
+                        .ok_or(ProviderError::MissingSnapshot)?;
+                    self.proxy_drain_deadline_unix_seconds =
+                        Some(now_unix_seconds.saturating_add(u64::from(drain_seconds)));
+                    self.stage = ProviderStage::ProxyDrain;
+                }
+                ProviderStage::ProxyDrain => {
+                    let deadline = self.proxy_drain_deadline_unix_seconds.ok_or_else(|| {
+                        ProviderError::Backend("PROXY_DRAIN_DEADLINE_MISSING".to_owned())
+                    })?;
+                    if now_unix_seconds < deadline {
+                        return Ok(self.stage);
+                    }
                     backend.request_origin_lock()?;
                     self.stage = ProviderStage::OriginLockRequested;
                 }
@@ -294,6 +327,7 @@ impl ProviderTransaction {
             ProviderStage::Snapshotted
             | ProviderStage::ProxyRequested
             | ProviderStage::ProxyVerified
+            | ProviderStage::ProxyDrain
             | ProviderStage::OriginLockRequested
             | ProviderStage::Complete => {
                 if self.snapshot.is_none() {
@@ -320,10 +354,28 @@ fn provider_error_code(error: &ProviderError) -> &'static str {
         ProviderError::RecordMismatch(_) => "RECORD_MISMATCH",
         ProviderError::PartialRollbackFailed => "PARTIAL_ROLLBACK_FAILED",
         ProviderError::ProxyNotVerified => "PROXY_NOT_VERIFIED",
+        ProviderError::DnsTtlTooHigh { .. } => "DNS_TTL_TOO_HIGH",
         ProviderError::OriginLockNotVerified => "ORIGIN_LOCK_NOT_VERIFIED",
         ProviderError::Backend(_) => "PROVIDER_BACKEND_FAILED",
         ProviderError::MissingSnapshot => "MISSING_SNAPSHOT",
     }
+}
+
+fn snapshot_max_dns_ttl_seconds(snapshot: &ProviderSnapshot) -> u32 {
+    snapshot
+        .records
+        .iter()
+        .map(|record| normalize_dns_ttl_seconds(record.ttl_seconds))
+        .max()
+        .unwrap_or_else(default_dns_ttl_seconds)
+}
+
+const fn normalize_dns_ttl_seconds(ttl_seconds: u32) -> u32 {
+    if ttl_seconds == 1 { 300 } else { ttl_seconds }
+}
+
+const fn default_dns_ttl_seconds() -> u32 {
+    300
 }
 
 #[cfg(test)]

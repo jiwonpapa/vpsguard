@@ -381,6 +381,33 @@ async fn status_exposes_the_active_inspection_mode() -> Result<(), Box<dyn std::
 }
 
 #[tokio::test]
+async fn status_explains_recovery_ready_without_disabling_provider()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    state.state.write().await.current_mode = GuardMode::RecoveryReady;
+    let issued = issue_session(&state)?;
+    let response = router(state)
+        .oneshot(
+            Request::get("/api/v1/status")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4_096).await?;
+    let json = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(json["mode"], "RECOVERY_READY");
+    assert!(
+        json["reasons"][0]
+            .as_str()
+            .is_some_and(|reason| reason.contains("관리자 승인"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn status_exposes_effective_application_security_posture()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;

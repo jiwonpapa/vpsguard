@@ -17,6 +17,8 @@ pub enum GuardMode {
     LocalGuard,
     /// 외부 비상 보호가 필요한 상태입니다.
     EmergencyProxy,
+    /// 외부 보호를 유지한 채 관리자의 해제 승인을 기다립니다.
+    RecoveryReady,
     /// 안정 구간을 확인하며 제한을 해제합니다.
     Recovering,
     /// 관리자가 자동 전이를 고정했습니다.
@@ -132,8 +134,9 @@ impl GuardState {
             GuardMode::EmergencyProxy
                 if !risky && self.stable_windows >= 5 && input.provider_verified =>
             {
-                GuardMode::Recovering
+                GuardMode::RecoveryReady
             }
+            GuardMode::RecoveryReady if risky => GuardMode::EmergencyProxy,
             GuardMode::LocalGuard if self.stable_windows >= 3 => GuardMode::Recovering,
             GuardMode::Watch if self.stable_windows >= 2 => GuardMode::Normal,
             GuardMode::Recovering if self.stable_windows >= 5 => GuardMode::Normal,

@@ -1,6 +1,7 @@
 //! Cloudflare transaction의 재개 가능한 상태 저장과 production adapter 조립입니다.
 
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use guard_core::GuardConfig;
 use guard_provider::cloudflare::{CloudflareBackend, NftOriginProtection};
@@ -44,6 +45,7 @@ pub(crate) struct ProviderController {
     record_name: String,
     allowed_records: Vec<String>,
     preflight_error: Option<ProviderError>,
+    max_dns_ttl_seconds: u32,
 }
 
 impl ProviderController {
@@ -84,6 +86,7 @@ impl ProviderController {
                 .map(|record| record.name.clone())
                 .collect(),
             preflight_error,
+            max_dns_ttl_seconds: config.cloudflare.max_dns_ttl_seconds,
         }))
     }
 
@@ -98,15 +101,25 @@ impl ProviderController {
         }
     }
 
-    /// 외부 보호가 완료됐거나 이미 snapshot 복구돼 recovery를 진행할 수 있는지 반환합니다.
-    pub(crate) fn recovery_ready(&self) -> bool {
-        self.transaction.as_ref().is_some_and(|transaction| {
-            transaction.snapshot.is_some()
-                && !matches!(
-                    transaction.stage,
-                    ProviderStage::Pending | ProviderStage::Restored
-                )
-        })
+    /// 외부 proxy와 origin 보호가 모두 read-back 완료됐는지 반환합니다.
+    pub(crate) fn protection_active(&self) -> bool {
+        self.transaction
+            .as_ref()
+            .is_some_and(|transaction| transaction.stage == ProviderStage::Complete)
+    }
+
+    /// 재시작 또는 drain 대기 뒤 이어서 진행할 활성화 transaction인지 반환합니다.
+    pub(crate) fn activation_pending(&self) -> bool {
+        self.transaction
+            .as_ref()
+            .is_some_and(|transaction| activation_stage_pending(transaction.stage))
+    }
+
+    /// 저장된 DNS cache drain deadline Unix 초를 반환합니다.
+    pub(crate) fn drain_deadline_unix_seconds(&self) -> Option<u64> {
+        self.transaction
+            .as_ref()
+            .and_then(|transaction| transaction.proxy_drain_deadline_unix_seconds)
     }
 
     /// 새 transaction을 시작하거나 저장된 단계에서 재개합니다.
@@ -114,15 +127,22 @@ impl ProviderController {
         &mut self,
         operation_id: &str,
     ) -> Result<ProviderStage, ProviderControllerError> {
-        if let Err(error) = self.backend.preflight() {
-            self.preflight_error = Some(error.clone());
-            return Err(error.into());
-        }
-        self.preflight_error = None;
         let create_new = self.transaction.as_ref().is_none_or(|transaction| {
             transaction.stage == ProviderStage::Restored
                 || transaction.record_name != self.record_name
         });
+        let preflight_required = create_new
+            || self
+                .transaction
+                .as_ref()
+                .is_some_and(|transaction| transaction.stage == ProviderStage::Pending);
+        if preflight_required {
+            if let Err(error) = self.backend.preflight() {
+                self.preflight_error = Some(error.clone());
+                return Err(error.into());
+            }
+            self.preflight_error = None;
+        }
         if create_new {
             self.transaction = Some(ProviderTransaction::new(
                 operation_id,
@@ -135,13 +155,19 @@ impl ProviderController {
             .as_mut()
             .ok_or_else(|| ProviderError::Backend("TRANSACTION_UNAVAILABLE".to_owned()))?;
         loop {
-            let result = transaction.enable_step(&mut self.backend);
+            let result = transaction.enable_step_at(
+                &mut self.backend,
+                current_unix_seconds(),
+                self.max_dns_ttl_seconds,
+            );
             if let Err(error) = &result {
                 transaction.last_error = Some(error.code().to_owned());
             }
             self.store.write(transaction)?;
             match result? {
-                ProviderStage::Complete => return Ok(transaction.stage),
+                ProviderStage::Complete | ProviderStage::ProxyDrain => {
+                    return Ok(transaction.stage);
+                }
                 ProviderStage::Restored => {
                     return Err(ProviderError::Backend(
                         "RESTORED_TRANSACTION_CANNOT_RESUME".to_owned(),
@@ -176,17 +202,35 @@ impl ProviderController {
     }
 }
 
+const fn activation_stage_pending(stage: ProviderStage) -> bool {
+    matches!(
+        stage,
+        ProviderStage::Snapshotted
+            | ProviderStage::ProxyRequested
+            | ProviderStage::ProxyVerified
+            | ProviderStage::ProxyDrain
+            | ProviderStage::OriginLockRequested
+    )
+}
+
 fn stage_name(stage: ProviderStage) -> &'static str {
     match stage {
         ProviderStage::Pending => "pending",
         ProviderStage::Snapshotted => "snapshotted",
         ProviderStage::ProxyRequested => "proxy_requested",
         ProviderStage::ProxyVerified => "proxy_verified",
+        ProviderStage::ProxyDrain => "proxy_drain",
         ProviderStage::OriginLockRequested => "origin_lock_requested",
         ProviderStage::Complete => "complete",
         ProviderStage::RestoreRequested => "restore_requested",
         ProviderStage::Restored => "restored",
     }
+}
+
+fn current_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 fn provider_state_path(config: &GuardConfig) -> PathBuf {

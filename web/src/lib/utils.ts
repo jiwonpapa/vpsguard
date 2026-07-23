@@ -10,6 +10,7 @@ export const MODE_LABELS: Record<string, string> = {
   WATCH: "주의 관찰",
   LOCAL_GUARD: "로컬 방어",
   EMERGENCY_PROXY: "비상 보호",
+  RECOVERY_READY: "복구 승인 대기",
   RECOVERING: "복구 중",
   MANUAL_HOLD: "수동 고정",
 }

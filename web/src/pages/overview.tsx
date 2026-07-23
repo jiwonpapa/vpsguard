@@ -200,14 +200,14 @@ export function OverviewPage() {
         ) : null}
 
         {state.provider !== "unavailable" ? (
-          <ConsoleSection label="외부 보호 전환" title="Cloudflare transaction" description={`read-back stage: ${state.provider}`}>
+          <ConsoleSection label="외부 보호 전환" title="Cloudflare transaction" description={`read-back stage: ${state.provider}${state.provider_drain_deadline_unix_seconds == null ? "" : ` · origin lock 예정 ${formatTime(state.provider_drain_deadline_unix_seconds * 1_000)}`}`}>
             <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
               <div className="h-2 max-w-2xl overflow-hidden rounded-full bg-muted" aria-label={`Provider 진행률 ${providerProgress(state.provider)}%`}>
                 <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${providerProgress(state.provider)}%` }} />
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="destructive" onClick={() => void runAction("/api/v1/actions/emergency-proxy")}><CloudCog className="size-3.5" /> 비상 보호</Button>
-                <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}><RotateCcw className="size-3.5" /> Snapshot 복구</Button>
+                <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}><RotateCcw className="size-3.5" /> {state.mode === "RECOVERY_READY" ? "보호 해제 승인" : "긴급 Snapshot 복구"}</Button>
               </div>
             </div>
           </ConsoleSection>
@@ -228,7 +228,7 @@ function serviceDot(state: string): string {
 }
 
 function providerProgress(stage: string): number {
-  return { ready: 0, pending: 5, snapshotted: 20, proxy_requested: 40, proxy_verified: 60, origin_lock_requested: 80, running: 90, complete: 100, restored: 100 }[stage] ?? 0;
+  return { ready: 0, pending: 5, snapshotted: 20, proxy_requested: 40, proxy_verified: 55, proxy_drain: 70, origin_lock_requested: 85, running: 90, complete: 100, restored: 100 }[stage] ?? 0;
 }
 
 function CompactMetric({ label, value }: { label: string; value: string }) {

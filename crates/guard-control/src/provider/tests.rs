@@ -3,7 +3,7 @@
 use guard_core::GuardConfig;
 use guard_provider::ProviderStage;
 
-use super::{ProviderController, provider_state_path, stage_name};
+use super::{ProviderController, activation_stage_pending, provider_state_path, stage_name};
 
 fn smoke_config() -> Result<GuardConfig, guard_core::ConfigError> {
     GuardConfig::from_toml(include_str!("../../../../configs/vps-guard.smoke.toml"))
@@ -24,6 +24,7 @@ fn provider_stage_names_are_stable() {
         (ProviderStage::Snapshotted, "snapshotted"),
         (ProviderStage::ProxyRequested, "proxy_requested"),
         (ProviderStage::ProxyVerified, "proxy_verified"),
+        (ProviderStage::ProxyDrain, "proxy_drain"),
         (ProviderStage::OriginLockRequested, "origin_lock_requested"),
         (ProviderStage::Complete, "complete"),
         (ProviderStage::RestoreRequested, "restore_requested"),
@@ -31,6 +32,27 @@ fn provider_stage_names_are_stable() {
     ];
     for (stage, name) in expected {
         assert_eq!(stage_name(stage), name);
+    }
+}
+
+#[test]
+fn incomplete_activation_stages_are_resumable() {
+    for stage in [
+        ProviderStage::Snapshotted,
+        ProviderStage::ProxyRequested,
+        ProviderStage::ProxyVerified,
+        ProviderStage::ProxyDrain,
+        ProviderStage::OriginLockRequested,
+    ] {
+        assert!(activation_stage_pending(stage));
+    }
+    for stage in [
+        ProviderStage::Pending,
+        ProviderStage::Complete,
+        ProviderStage::RestoreRequested,
+        ProviderStage::Restored,
+    ] {
+        assert!(!activation_stage_pending(stage));
     }
 }
 

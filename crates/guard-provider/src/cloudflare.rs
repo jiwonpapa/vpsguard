@@ -216,20 +216,33 @@ where
         target: &CloudflareRecordConfig,
         proxied: bool,
     ) -> Result<(), ProviderError> {
+        self.set_record_state(target, proxied, None)
+    }
+
+    fn set_record_state(
+        &self,
+        target: &CloudflareRecordConfig,
+        proxied: bool,
+        ttl: Option<u32>,
+    ) -> Result<(), ProviderError> {
         let url = format!(
             "{}/zones/{}/dns_records/{}",
             self.api_base, self.zone_id, target.id
+        );
+        let body = ttl.map_or_else(
+            || json!({ "proxied": proxied }),
+            |ttl| json!({ "proxied": proxied, "ttl": ttl }),
         );
         let response = self
             .client
             .patch(url)
             .headers(self.headers()?)
-            .json(&json!({ "proxied": proxied }))
+            .json(&body)
             .send()
             .map_err(http_error)?;
         let record = decode_response::<DnsRecord>(response)?;
         validate_record(target, &record)?;
-        if record.proxied == proxied {
+        if record.proxied == proxied && ttl.is_none_or(|expected| record.ttl == expected) {
             Ok(())
         } else {
             Err(ProviderError::RecordMismatch(target.id.clone()))
@@ -254,7 +267,8 @@ where
                         .iter()
                         .find(|candidate| candidate.id == previous.id)
                         .is_some_and(|candidate| {
-                            self.set_record_proxied(candidate, previous.proxied).is_ok()
+                            self.set_record_state(candidate, previous.proxied, Some(previous.ttl))
+                                .is_ok()
                         })
                 });
                 return if rollback_ok {
@@ -298,6 +312,7 @@ where
                     name: record.name,
                     record_type: record.record_type,
                     proxied: record.proxied,
+                    ttl_seconds: record.ttl,
                 })
                 .collect(),
             origin_locked: self.origin.is_locked()?,
@@ -343,7 +358,9 @@ where
             });
             let result = target.map_or_else(
                 || Err(ProviderError::RecordMismatch(previous.id.clone())),
-                |target| self.set_record_proxied(target, previous.proxied),
+                |target| {
+                    self.set_record_state(target, previous.proxied, Some(previous.ttl_seconds))
+                },
             );
             if first_error.is_none()
                 && let Err(error) = result
@@ -361,6 +378,7 @@ where
                     && record.name.eq_ignore_ascii_case(&previous.name)
                     && record.record_type == previous.record_type
                     && record.proxied == previous.proxied
+                    && record.ttl == previous.ttl_seconds
             })
         });
         let origin_matches = self.origin.is_locked()? == snapshot.origin_locked;
@@ -400,6 +418,7 @@ struct DnsRecord {
     record_type: DnsRecordType,
     proxied: bool,
     proxiable: bool,
+    ttl: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -696,7 +715,7 @@ mod tests {
                 format!("/zones/{ZONE_ID}/dns_records/{RECORD_ID}").as_str(),
             )
             .match_body(mockito::Matcher::JsonString(
-                r#"{"proxied":false}"#.to_owned(),
+                r#"{"proxied":false,"ttl":300}"#.to_owned(),
             ))
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -746,7 +765,7 @@ mod tests {
 
     fn record_body_for(id: &str, record_type: &str, proxied: bool) -> String {
         format!(
-            r#"{{"success":true,"result":{{"id":"{id}","name":"example.com","type":"{record_type}","proxied":{proxied},"proxiable":true}}}}"#
+            r#"{{"success":true,"result":{{"id":"{id}","name":"example.com","type":"{record_type}","proxied":{proxied},"proxiable":true,"ttl":300}}}}"#
         )
     }
 }

@@ -13,7 +13,7 @@ last_reviewed: 2026-07-23
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 121개 중 `PLANNED` 10개, `CODE_ONLY` 32개, `AUTO_PASS` 65개, `VPS_PASS` 14개입니다. 즉 111개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 79개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 121개 중 `PLANNED` 10개, `CODE_ONLY` 31개, `AUTO_PASS` 66개, `VPS_PASS` 14개입니다. 즉 111개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 80개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -33,7 +33,8 @@ last_reviewed: 2026-07-23
 | `DET-013` | 공식 CIDR feed의 Google·Naver·Bing 판정, 위조 crawler와 미허용 declared AI bot 분리 | crawler/config/updater unit와 VM GPTBot·Meta·위조 Googlebot 403; 실제 공식 crawler source allow는 미완료 |
 | `DET-014` | traffic latency·5xx와 실제 CPU·core-normalized load·memory·swap host pressure를 합성하고 `protocol_only + enforce` 자동 전이를 유지 | `/proc` fixture, host pressure reason code, 단일 WATCH·연속 LOCAL/EMERGENCY 회귀; 실제 2GB pressure timeline은 미완료 |
 | `ACT-001`~`ACT-005` | client·route 제한, 429, signed clearance, 기능별 정책, TTL client rule | edge limiter·challenge·policy tests |
-| `ACT-006`~`ACT-012` 코드 | User token preflight, 동일 hostname의 명시적 A·AAAA/CNAME record ID별 checkpoint·즉시 rollback, Cloudflare read-back·외부 `cf-ray` 코드 경로, dual-stack nftables 원자 교체·정확 read-back, 중간 단계 복구·idempotency | fake API/provider/system/control tests; 실제 test zone 변경 증거 없음 |
+| `ACT-006`~`ACT-012` 코드 | User token preflight, 동일 hostname의 명시적 A·AAAA/CNAME record ID별 checkpoint·TTL snapshot·즉시 rollback, Cloudflare read-back·외부 `cf-ray`·DNS cache drain, dual-stack nftables 원자 교체·정확 read-back, 재시작 재개·idempotency | fake API/provider/system/control tests; 실제 test zone 변경 증거 없음 |
+| `ACT-008` 자동 검증 | 안정 뒤 `RECOVERY_READY`에서 Cloudflare와 origin lock 유지, 관리자 인증·CSRF·재확인·idempotency 이후에만 snapshot 복구 | state·API·Playwright 회귀; 실제 test zone 승인 전후 read-back은 미완료 |
 | `ACT-013`, `ACT-014` | standalone UFW, JW-agent delegated, disabled 소유권과 typed IP/CIDR·port rule transaction | 실제 VM UFW active, 외부 규칙 8개 보존, 임시 deny add/read-back/remove, SSH·관리 HTTPS 보존과 delegated mutation 거부 |
 | `TLS-001` 일부 | 단일 certificate chain의 key·유효기간·SAN 검사 | TLS unit tests |
 | `TLS-002`, `TLS-005`, `TLS-006` 하네스 | startup cert/key·SAN·유효기간 preflight, 6시간 공개 cert·Certbot renewal/timer 관측, external/assisted/manual 소유권, systemd credential 경계, 승인 전 HTTP-01 plan, deploy hook과 보존 | typed unit/API/UI tests; 실제 staging 발급·renew·served cert 비교와 graceful reload 증거는 미수집 |

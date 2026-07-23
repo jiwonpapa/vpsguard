@@ -488,7 +488,7 @@ pub struct BotPolicyConfig {
 }
 
 /// Cloudflare provider 설정입니다.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CloudflareConfig {
     /// provider adapter 활성 여부입니다.
@@ -506,6 +506,22 @@ pub struct CloudflareConfig {
     /// 원본 80/443에 허용할 Cloudflare network CIDR입니다.
     #[serde(default)]
     pub ip_networks: Vec<IpNet>,
+    /// DNS-only cache 소진을 기다릴 수 있는 최대 기존 record TTL입니다.
+    #[serde(default = "default_cloudflare_max_dns_ttl_seconds")]
+    pub max_dns_ttl_seconds: u32,
+}
+
+impl Default for CloudflareConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            zone_id: String::new(),
+            records: Vec::new(),
+            token_file: PathBuf::new(),
+            ip_networks: Vec::new(),
+            max_dns_ttl_seconds: default_cloudflare_max_dns_ttl_seconds(),
+        }
+    }
 }
 
 /// Cloudflare에서 변경할 수 있는 단일 DNS record 식별자입니다.
@@ -1027,6 +1043,12 @@ impl GuardConfig {
             );
         }
         if self.cloudflare.enabled {
+            if !(60..=3_600).contains(&self.cloudflare.max_dns_ttl_seconds) {
+                return invalid(
+                    "cloudflare.max_dns_ttl_seconds",
+                    "60..=3600초 범위여야 합니다",
+                );
+            }
             if !is_cloudflare_identifier(&self.cloudflare.zone_id) {
                 return invalid(
                     "cloudflare.zone_id",
@@ -1493,6 +1515,10 @@ const fn default_downstream_min_send_rate_bps() -> usize {
 
 const fn default_keepalive_request_limit() -> u32 {
     1_000
+}
+
+const fn default_cloudflare_max_dns_ttl_seconds() -> u32 {
+    300
 }
 
 const fn default_collector_timeout_ms() -> u64 {
