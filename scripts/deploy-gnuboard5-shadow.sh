@@ -23,7 +23,6 @@ install -d -m 0750 -o vps-guard -g vps-guard /var/lib/vps-guard /var/lib/vps-gua
 install -m 0755 -o root -g root "${bundle}"/bin/vps-guard{,-control,-privileged,-edge} /usr/local/bin/
 install -m 0644 -o root -g root "${bundle}"/systemd/{vps-guard-control.service,vps-guard-privileged.service,vps-guard-privileged.socket,vps-guard-edge.service} /etc/systemd/system/
 install -m 0644 -o root -g root "${bundle}/tmpfiles/vps-guard.conf" /usr/lib/tmpfiles.d/vps-guard.conf
-test -f /usr/lib/x86_64-linux-gnu/security/pam_google_authenticator.so
 install -m 0644 -o root -g root "${bundle}/pam/vps-guard" /etc/pam.d/vps-guard
 install -m 0640 -o root -g vps-guard "${bundle}/gnuboard5/vps-guard.observe.toml" /etc/vps-guard/config.toml
 install -m 0644 -o root -g root "${bundle}/gnuboard5/crawler-networks.json" /etc/vps-guard/crawler-networks.json

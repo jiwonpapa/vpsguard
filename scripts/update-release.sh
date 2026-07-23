@@ -59,6 +59,7 @@ for required in \
   "${bundle}/systemd/vps-guard-edge.service" \
   "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" \
   "${bundle}/tmpfiles/vps-guard.conf" \
+  "${bundle}/pam/vps-guard" \
   "${bundle}/scripts/deployment-state.sh" \
   "${bundle}/scripts/state-common.sh" \
   "${bundle}/scripts/operation-lock.sh" \
@@ -138,17 +139,16 @@ install -m 0644 "${bundle}/systemd/vps-guard-privileged.socket" /etc/systemd/sys
 install -m 0644 "${bundle}/systemd/vps-guard-edge.service" /etc/systemd/system/vps-guard-edge.service
 if [[ -f /etc/vps-guard/secrets/cloudflare-token ]]; then
   install -d -m 0755 /etc/systemd/system/vps-guard-control.service.d
-  install -m 0644 \
-    "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" \
-    /etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf
+  install -m 0644 "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" /etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf
 fi
 install -m 0644 "${bundle}/tmpfiles/vps-guard.conf" /usr/lib/tmpfiles.d/vps-guard.conf
+install -m 0644 "${bundle}/pam/vps-guard" /etc/pam.d/vps-guard
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/vps-guard.conf
 install -d -m 0750 /var/lib/vps-guard
 install -m 0644 "${bundle}/${manifest_name}" /var/lib/vps-guard/ownership-manifest.txt
 systemctl daemon-reload
 
-systemctl stop vps-guard-edge.service vps-guard-control.service \
-  vps-guard-privileged.service vps-guard-privileged.socket
+systemctl stop vps-guard-edge.service vps-guard-control.service vps-guard-privileged.service vps-guard-privileged.socket
 install -d -m 0755 /usr/local/lib/vps-guard /usr/local/bin
 atomic_symlink "${release_dir}" /usr/local/lib/vps-guard/current
 for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge; do

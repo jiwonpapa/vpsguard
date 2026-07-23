@@ -118,14 +118,14 @@ last_reviewed: 2026-07-22
 | `UI-012` | `web/tests/permissions.spec.ts` | role별 IP·export·action matrix |
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |
-| `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 계정·TOTP 로그인과 terminal 없는 일상 접속 browser report |
+| `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 PAM 미등록 gate·사용자 QR 등록·계정/TOTP 로그인과 terminal 없는 일상 접속 browser report |
 | `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime.rs`, `web/tests/console.e2e.ts` | [Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure PAM session과 Control public port scan](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | [standalone typed UFW 화면과 JW-agent 위임 read-only browser/API report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |
-| `SEC-012`, `SEC-013`, `SEC-014` | `crates/guard-control/src/auth/tests.rs`, `crates/guard-control/src/api/tests.rs` | 2GB VPS 재시작 session, TOTP·복구 코드와 auth DB secret scan report |
-| `SEC-015` | `crates/guard-control/src/pam_auth.rs`, `crates/guard-control/src/auth/tests.rs`, `tools/vm/pam-login-probe.sh` | [Ubuntu PAM group·root/locked denial unit와 실제 PAM+MFA session·credential 비저장 report](evidence/gnuboard5-standalone-security-20260722.md) |
+| `SEC-012`, `SEC-013`, `SEC-014` | `crates/guard-control/src/auth/tests.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/api/tests.rs` | 2GB VPS 재시작 session, root-only AEAD TOTP·hash-only 복구 코드와 auth 저장소 secret scan report |
+| `SEC-015` | `crates/guard-control/src/pam_auth.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/auth/tests.rs`, `tools/vm/pam-login-probe.sh` | Ubuntu PAM group·root/locked denial, 실제 사용자 QR 등록과 사용자 입력 TOTP session report. 2026-07-22 자동 생성 test seed 증거는 사용자 등록 증거에서 제외 |
 | `SEC-016` | `crates/guard-edge/src/security/tests.rs`, `scripts/integration-gate.sh` | [중복 Host·Content-Length·CL+TE raw VM 거부와 정상 HTTP/1.1 report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `SEC-017` | `tools/tests/test_vm_lab.py`, `tests/vm/gnuboard5-toolkit.json`, `configs/apache/waf-tuned-enforce.conf` | [ModSecurity·CRS detection/tuned enforce SQLi·XSS와 anonymous 정상 GET report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `NFR-001`, `NFR-002` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/vm/gnuboard5-toolkit.json` | [실제 2GB 정상·burst·AI bot 응답과 service memory peak·OOM report](evidence/gnuboard5-standalone-security-20260722.md) |

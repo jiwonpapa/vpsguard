@@ -93,7 +93,7 @@ SEC-009|AUTO_PASS|crates/guard-edge/src/security.rs|scripts/integration-gate.sh|
 SEC-010|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 SEC-011|AUTO_PASS|docs/APP_SECURITY.md|scripts/integration-gate.sh|-
 SEC-012|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
-SEC-013|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
+SEC-013|AUTO_PASS|crates/guard-control/src/pam_mfa.rs|crates/guard-control/src/auth/tests.rs|-
 SEC-014|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
 NFR-001|PLANNED|-|-|-
 NFR-002|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|specs/product/evidence/gnuboard5-standalone-security-20260722.md
@@ -116,6 +116,6 @@ ACT-013|VPS_PASS|crates/guard-system/src/ufw.rs|crates/guard-control/src/api/tes
 ACT-014|VPS_PASS|crates/guard-system/src/ufw.rs|tools/vm/standalone-security-probe.sh|specs/product/evidence/gnuboard5-standalone-security-20260722.md
 UI-016|VPS_PASS|crates/guard-control/src/api.rs|web/tests/console.e2e.ts|specs/product/evidence/gnuboard5-standalone-security-20260722.md
 UI-017|AUTO_PASS|web/src/pages/firewall.tsx|web/tests/console.e2e.ts|specs/product/evidence/gnuboard5-standalone-security-20260722.md
-SEC-015|VPS_PASS|crates/guard-control/src/pam_auth.rs|tools/vm/pam-login-probe.sh|specs/product/evidence/gnuboard5-standalone-security-20260722.md
+SEC-015|AUTO_PASS|crates/guard-control/src/pam_auth.rs|tools/vm/pam-login-probe.sh|-
 SEC-016|AUTO_PASS|crates/guard-edge/src/security.rs|crates/guard-edge/src/security/tests.rs|specs/product/evidence/gnuboard5-standalone-security-20260722.md
 SEC-017|AUTO_PASS|configs/apache/waf-tuned-enforce.conf|tests/vm/gnuboard5-toolkit.json|specs/product/evidence/gnuboard5-standalone-security-20260722.md

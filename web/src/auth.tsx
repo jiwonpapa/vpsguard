@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound, ShieldCheck } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 
 import {
   ApiError,
@@ -161,7 +162,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const submitSetupAccount = async (event: FormEvent) => {
     event.preventDefault();
-    const validationError = validateAdminSetup(username, password, passwordConfirm);
+    const validationError = validateAdminSetup(
+      username,
+      password,
+      passwordConfirm,
+      status?.auth_provider ?? "local",
+    );
     if (validationError) {
       setMessage(validationError);
       return;
@@ -306,7 +312,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               <LoginForm username={username} password={password} secondFactor={secondFactor} useRecovery={useRecovery} busy={busy} onUsername={setUsername} onPassword={setPassword} onSecondFactor={setSecondFactor} onUseRecovery={setUseRecovery} onSubmit={submitLogin} onBreakGlass={() => setView("break-glass")} />
             ) : null}
             {view === "setup-account" ? (
-              <SetupAccountForm username={username} password={password} passwordConfirm={passwordConfirm} bootstrapCode={bootstrapCode} busy={busy} onUsername={setUsername} onPassword={setPassword} onPasswordConfirm={setPasswordConfirm} onBootstrapCode={setBootstrapCode} onSubmit={submitSetupAccount} />
+              <SetupAccountForm provider={status?.auth_provider ?? "local"} username={username} password={password} passwordConfirm={passwordConfirm} bootstrapCode={bootstrapCode} busy={busy} onUsername={setUsername} onPassword={setPassword} onPasswordConfirm={setPasswordConfirm} onBootstrapCode={setBootstrapCode} onSubmit={submitSetupAccount} />
             ) : null}
             {view === "setup-totp" && enrollment ? (
               <TotpSetupForm enrollment={enrollment} code={secondFactor} busy={busy} onCode={setSecondFactor} onSubmit={submitSetupTotp} />
@@ -358,6 +364,7 @@ function LoginForm(props: FormStateProps & {
 }
 
 function SetupAccountForm(props: FormStateProps & {
+  provider: AuthStatus["auth_provider"];
   username: string; password: string; passwordConfirm: string; bootstrapCode: string;
   onUsername: (value: string) => void; onPassword: (value: string) => void;
   onPasswordConfirm: (value: string) => void; onBootstrapCode: (value: string) => void;
@@ -365,9 +372,9 @@ function SetupAccountForm(props: FormStateProps & {
   return (
     <form className="mt-4 space-y-4" onSubmit={props.onSubmit}>
       <Field id="setup-code" label="최초 설정 단회 코드" type="password" value={props.bootstrapCode} onValue={props.onBootstrapCode} autoComplete="one-time-code" />
-      <Field id="setup-username" label="VPSGuard 관리자 ID" value={props.username} onValue={props.onUsername} autoComplete="username" />
-      <Field id="setup-password" label="비밀번호 (12자 이상)" type="password" value={props.password} onValue={props.onPassword} autoComplete="new-password" minLength={12} />
-      <Field id="setup-password-confirm" label="비밀번호 확인" type="password" value={props.passwordConfirm} onValue={props.onPasswordConfirm} autoComplete="new-password" minLength={12} />
+      <Field id="setup-username" label={props.provider === "pam" ? "Linux 서버 계정" : "VPSGuard 관리자 ID"} value={props.username} onValue={props.onUsername} autoComplete="username" />
+      <Field id="setup-password" label={props.provider === "pam" ? "서버 계정 비밀번호" : "비밀번호 (12자 이상)"} type="password" value={props.password} onValue={props.onPassword} autoComplete={props.provider === "pam" ? "current-password" : "new-password"} minLength={props.provider === "pam" ? 1 : 12} />
+      <Field id="setup-password-confirm" label={props.provider === "pam" ? "서버 계정 비밀번호 확인" : "비밀번호 확인"} type="password" value={props.passwordConfirm} onValue={props.onPasswordConfirm} autoComplete={props.provider === "pam" ? "current-password" : "new-password"} minLength={props.provider === "pam" ? 1 : 12} />
       <Button className="w-full" disabled={props.busy} type="submit">{props.busy ? "보호 중" : "2단계 인증 등록 계속"}</Button>
     </form>
   );
@@ -377,7 +384,10 @@ function TotpSetupForm({ enrollment, code, busy, onCode, onSubmit }: FormStatePr
   return (
     <form className="mt-4 space-y-4" onSubmit={onSubmit}>
       <div className="rounded-lg border bg-muted/50 p-4">
-        <div className="text-xs text-muted-foreground">인증 앱에 아래 키를 직접 입력하십시오.</div>
+        <div className="mx-auto w-fit rounded-xl bg-white p-3 shadow-sm" role="img" aria-label="VPSGuard TOTP 등록 QR 코드">
+          <QRCodeSVG value={enrollment.otpauth_uri} size={176} level="M" />
+        </div>
+        <div className="mt-4 text-xs text-muted-foreground">QR을 인증 앱으로 스캔하거나 아래 키를 직접 입력하십시오.</div>
         <code className="mt-2 block break-all font-mono text-sm text-primary">{enrollment.secret_base32}</code>
         <a className="mt-3 inline-block text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" href={enrollment.otpauth_uri}>이 기기의 인증 앱에서 열기</a>
       </div>
@@ -427,11 +437,12 @@ function authTitle(view: AuthView): string {
 }
 
 function authDescription(view: AuthView, provider?: AuthStatus["auth_provider"]): string {
+  if (view === "setup-account" && provider === "pam") return "서버 단회 코드와 기존 Linux 계정 비밀번호를 확인한 뒤 새 TOTP를 직접 등록합니다. 비밀번호는 저장하지 않습니다.";
   if (view === "setup-account") return "Linux·SSH 계정과 분리된 VPSGuard 전용 관리자를 만듭니다.";
   if (view === "setup-totp") return "인증 앱에 VPSGuard 계정을 추가한 뒤 현재 코드를 확인합니다.";
   if (view === "recovery-codes") return "인증기를 잃었을 때 비밀번호와 함께 사용할 일회용 코드입니다.";
   if (view === "break-glass") return "터미널은 최초 설정과 계정 복구 때만 사용합니다.";
-  if (provider === "pam") return "서버 계정·비밀번호와 PAM이 요구하는 2차 인증 코드를 입력하십시오.";
+  if (provider === "pam") return "서버 계정·비밀번호와 VPSGuard에 직접 등록한 TOTP 또는 복구 코드를 입력하십시오.";
   return "관리자 ID·비밀번호와 인증기 코드를 입력하십시오.";
 }
 

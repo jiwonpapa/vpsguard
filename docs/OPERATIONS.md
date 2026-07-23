@@ -11,7 +11,7 @@
 
 ## 단독 설치 관리자·UFW·WAF
 
-`gnuboard5` 파일럿의 직접 관리자 주소는 `https://192.168.0.143:7443`입니다. SSH tunnel이 아니라 Apache TLS virtual host가 loopback Control로 전달합니다. 로그인 ID는 `vpsguard-admin` group에 속한 Linux 서버 계정이며 서버 비밀번호와 등록된 TOTP를 함께 사용합니다. root·system·잠김·만료 계정은 거부하고 비밀번호 원문이나 verifier를 VPSGuard DB에 저장하지 않습니다.
+`gnuboard5` 파일럿의 직접 관리자 주소는 `https://192.168.0.143:7443`입니다. SSH tunnel이 아니라 Apache TLS virtual host가 loopback Control로 전달합니다. 최초 접속은 `sudo vps-guard issue-login-code --ttl-seconds 600`으로 단회 code를 발급하고, `vpsguard-admin` group의 Linux 계정·서버 비밀번호를 확인한 뒤 화면 QR을 실제 운영자 인증 앱에 등록합니다. 이후 서버 계정·비밀번호와 등록한 TOTP 또는 일회용 복구 코드를 사용합니다. root·system·잠김·만료 계정은 거부하고 비밀번호 원문이나 verifier를 VPSGuard DB에 저장하지 않습니다.
 
 단독 설치는 다음 순서를 지킵니다.
 

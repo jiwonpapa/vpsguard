@@ -25,6 +25,18 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("SocketMode=0660", socket)
         self.assertIn("DirectoryMode=0750", socket)
         self.assertIn("d /run/vps-guard-privileged 0750 root vps-guard -", tmpfiles)
+        self.assertIn("d /var/lib/vps-guard/pam 0700 root root -", tmpfiles)
+
+    def test_pam_password_and_sealed_mfa_are_separate_and_update_owned(self) -> None:
+        pam = (self.root / "packaging/pam/vps-guard").read_text(encoding="utf-8")
+        update = (self.root / "scripts/update-release.sh").read_text(encoding="utf-8")
+        probe = (self.root / "tools/vm/pam-login-probe.sh").read_text(encoding="utf-8")
+        self.assertIn("auth    required  pam_unix.so", pam)
+        self.assertNotIn("pam_google_authenticator", pam)
+        self.assertIn('"${bundle}/pam/vps-guard"', update)
+        self.assertIn("/etc/pam.d/vps-guard", update)
+        self.assertNotIn(".google_authenticator", probe)
+        self.assertIn('read -r -s -p "PAM_TOTP:" token', probe)
 
     def test_helper_cannot_change_identity_and_control_has_no_firewall_capability(self) -> None:
         helper = (self.root / "packaging/systemd/vps-guard-privileged.service").read_text(

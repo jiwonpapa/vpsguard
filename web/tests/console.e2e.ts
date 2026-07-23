@@ -380,6 +380,80 @@ test("anonymous administrator is gated by two-factor login", async ({ page }) =>
   await expect(page.getByLabel("인증기 6자리 코드")).toBeVisible();
 });
 
+test("PAM administrator enrolls a new authenticator before first login", async ({ page }) => {
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
+    if (path === "/api/v1/auth/status") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          auth_provider: "pam",
+          setup_required: true,
+          enrollment_enabled: true,
+          password_login_enabled: false,
+          totp_required: false,
+          break_glass_available: true,
+        }),
+      });
+      return;
+    }
+    if (path === "/api/v1/session" && method === "GET") {
+      await route.fulfill({ status: 401, contentType: "application/json", body: "{}" });
+      return;
+    }
+    if (path === "/api/v1/auth/enrollment" && method === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          enrollment_id: "pam-enrollment",
+          secret_base32: "JBSWY3DPEHPK3PXP",
+          otpauth_uri: "otpauth://totp/VPSGuard:operator?secret=JBSWY3DPEHPK3PXP&issuer=VPSGuard",
+          expires_in_seconds: 600,
+        }),
+      });
+      return;
+    }
+    if (path === "/api/v1/auth/enrollment/confirm" && method === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "set-cookie": "__Host-vps_guard_session=fixture; Secure; HttpOnly" },
+        body: JSON.stringify({
+          recovery_codes: ["AAAAAAAA-BBBBBBBB-CCCCCCCC-DDDDDDDD"],
+          session: {
+            csrf_token: "csrf-fixture",
+            expires_in_seconds: 43200,
+            actor: "operator",
+            authentication_method: "pam_mfa",
+          },
+        }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.goto("/");
+  const dialog = page.getByRole("dialog", { name: "최초 관리자 등록" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/비밀번호는 저장하지 않습니다/)).toBeVisible();
+  await dialog.getByLabel("최초 설정 단회 코드").fill("a".repeat(64));
+  await dialog.getByLabel("Linux 서버 계정").fill("operator");
+  await dialog.getByLabel("서버 계정 비밀번호", { exact: true }).fill("server-password");
+  await dialog.getByLabel("서버 계정 비밀번호 확인").fill("server-password");
+  await dialog.getByRole("button", { name: "2단계 인증 등록 계속" }).click();
+
+  const totpDialog = page.getByRole("dialog", { name: "2단계 인증 연결" });
+  await expect(totpDialog.getByRole("img", { name: "VPSGuard TOTP 등록 QR 코드" })).toBeVisible();
+  await totpDialog.getByLabel("인증기 6자리 코드").fill("123456");
+  await totpDialog.getByRole("button", { name: "등록 완료" }).click();
+  await expect(page.getByRole("dialog", { name: "복구 코드 보관" })).toBeVisible();
+  await expect(page.getByText("AAAAAAAA-BBBBBBBB-CCCCCCCC-DDDDDDDD")).toBeVisible();
+});
+
 test("uses the shadcn component contract for shared controls and dialogs", async ({ page }) => {
   await mockAnonymousSession(page);
   await page.goto("/");

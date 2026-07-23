@@ -6,6 +6,7 @@ mod auth;
 mod auth_store;
 mod firewall;
 mod pam_auth;
+mod pam_mfa;
 mod privileged;
 mod provider;
 mod runtime;

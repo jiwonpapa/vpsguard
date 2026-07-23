@@ -15,4 +15,10 @@ describe("VPSGuard 관리자 입력", () => {
     expect(isTotpCode("１２３４５６")).toBe(false);
     expect(isTotpCode("12345 6")).toBe(false);
   });
+
+  test("PAM 최초 등록은 서버 비밀번호 정책을 복제하지 않는다", () => {
+    expect(validateAdminSetup("operator", "short-os-password", "short-os-password", "pam")).toBeNull();
+    expect(validateAdminSetup("operator", "", "", "pam")).toContain("서버 계정");
+    expect(validateAdminSetup("operator", "server-password", "different", "pam")).toContain("일치");
+  });
 });

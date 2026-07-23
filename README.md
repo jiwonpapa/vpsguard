@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-현재는 **pre-MVP 파일럿**입니다. Pingora edge, 정책 hot reload, telemetry, SQLite/SSE control plane, Bun/React·Tailwind CSS·shadcn/ui 운영 SPA, Linux-PAM/TOTP, standalone UFW와 선택형 ModSecurity·OWASP CRS를 구현했습니다. `gnuboard5` VM의 public 80/443, 직접 웹 관리자, 공격 replay와 실제 2GB 검증은 통과했지만 Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증은 남아 있습니다. 현재 검증 단계는 [`verification-status.tsv`](specs/product/verification-status.tsv)가 정본입니다.
+현재는 **pre-MVP 파일럿**입니다. Pingora edge, 정책 hot reload, telemetry, SQLite/SSE control plane, Bun/React·Tailwind CSS·shadcn/ui 운영 SPA, Linux-PAM/TOTP, standalone UFW와 선택형 ModSecurity·OWASP CRS를 구현했습니다. `gnuboard5` VM의 public 80/443, 직접 웹 관리자, 공격 replay와 실제 2GB 검증은 통과했습니다. 다만 2026-07-22 PAM 증거가 자동 생성 test seed를 사용한 사실을 확인해 실제 운영자 QR 등록·로그인은 재검증 대상으로 되돌렸습니다. Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증도 남아 있습니다. 현재 검증 단계는 [`verification-status.tsv`](specs/product/verification-status.tsv)가 정본입니다.
 
 ## 제품 핵심
 
@@ -78,7 +78,7 @@ sudo systemctl is-active nginx.service
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl ufw libpam-google-authenticator
+sudo apt-get install -y ca-certificates curl ufw
 ```
 
 ### 2. 검증된 release bundle 생성·전송
@@ -342,16 +342,17 @@ curl --fail --silent --show-error --dump-header - --output /dev/null \
 
 ### 5. 관리자 로그인과 UFW
 
-관리자 계정별 TOTP secret을 root-only 경로에 등록합니다. 아래 명령의 QR 또는 secret은 외부에 기록하지 않습니다.
+PAM 관리자는 installer나 테스트가 TOTP를 미리 만들지 않습니다. 먼저 실제 Linux 관리자 계정을 allowlist group에 넣고 Control·privileged helper를 시작합니다.
 
 ```bash
-sudo google-authenticator -t -d -f -r 3 -R 30 -W \
-  -s /var/lib/vps-guard/pam/<관리자계정>
-sudo chown root:root /var/lib/vps-guard/pam/<관리자계정>
-sudo chmod 0600 /var/lib/vps-guard/pam/<관리자계정>
+sudo usermod -aG vpsguard-admin <관리자계정>
+sudo systemctl restart vps-guard-privileged.service vps-guard-control.service
+sudo vps-guard issue-login-code --ttl-seconds 600
 ```
 
-`https://guard.example.com`에서 Linux 계정명, 서버 비밀번호와 TOTP로 로그인합니다. root·system·잠김·만료 계정과 `vpsguard-admin` group 밖의 계정은 거부됩니다.
+`https://guard.example.com`을 열고 단회 코드, Linux 계정명과 서버 비밀번호를 입력합니다. 화면의 QR을 실제 인증 앱으로 스캔하고 현재 6자리 코드를 확인해야 등록이 완료됩니다. 서버 비밀번호는 저장하지 않으며 TOTP seed는 `/var/lib/vps-guard/pam`의 root-only key로 AEAD 봉인됩니다. 복구 코드는 최초 등록 직후 한 번만 표시되고 keyed hash만 저장됩니다.
+
+등록 후에는 Linux 계정명, 서버 비밀번호와 직접 등록한 TOTP 또는 일회용 복구 코드로 로그인합니다. root·system·잠김·만료 계정과 `vpsguard-admin` group 밖의 계정은 거부됩니다. 사용자 home의 `.google_authenticator`나 테스트 seed를 VPSGuard credential로 복사하면 안 됩니다.
 
 UFW는 VPSGuard가 자동 활성화하지 않습니다. 먼저 현재 SSH port, HTTP와 HTTPS를 운영자 규칙으로 허용하고 새 SSH session과 관리자 HTTPS를 확인한 뒤 활성화합니다.
 

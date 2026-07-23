@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::Zeroize;
 
-use crate::pam_auth::{PamAuthError, PamCredentials, PamIdentity};
+use crate::pam_auth::{PamAuthError, PamCredentials, PamIdentity, PamPasswordCredentials};
+use crate::pam_mfa::{PamMfaEnrollmentComplete, PamMfaEnrollmentStart, PamMfaMethod};
 
 const MAX_REQUEST_BYTES: u64 = 32 * 1024;
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
@@ -27,6 +28,24 @@ const fn ufw_mode_allows_mutation(mode: FirewallMode) -> bool {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 enum PrivilegedRequest {
+    PamSetupStatus {
+        service: String,
+        allowed_group: String,
+    },
+    PamEnrollmentStart {
+        service: String,
+        allowed_group: String,
+        username: String,
+        password: String,
+        now: i64,
+    },
+    PamEnrollmentConfirm {
+        service: String,
+        allowed_group: String,
+        enrollment_id: String,
+        totp_code: String,
+        now: i64,
+    },
     PamAuthenticate {
         service: String,
         allowed_group: String,
@@ -41,14 +60,25 @@ enum PrivilegedRequest {
 
 impl PrivilegedRequest {
     fn zeroize_secrets(&mut self) {
-        if let Self::PamAuthenticate {
-            password,
-            second_factor,
-            ..
-        } = self
-        {
-            password.zeroize();
-            second_factor.zeroize();
+        match self {
+            Self::PamEnrollmentStart { password, .. } => password.zeroize(),
+            Self::PamEnrollmentConfirm {
+                enrollment_id,
+                totp_code,
+                ..
+            } => {
+                enrollment_id.zeroize();
+                totp_code.zeroize();
+            }
+            Self::PamAuthenticate {
+                password,
+                second_factor,
+                ..
+            } => {
+                password.zeroize();
+                second_factor.zeroize();
+            }
+            Self::PamSetupStatus { .. } | Self::Ufw { .. } => {}
         }
     }
 }
@@ -56,9 +86,29 @@ impl PrivilegedRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 enum PrivilegedResponse {
-    PamAuthenticated { actor: String },
-    UfwOutput { output: CommandOutput },
-    Error { code: String },
+    PamSetupStatus {
+        setup_required: bool,
+    },
+    PamEnrollmentStarted {
+        enrollment_id: String,
+        secret_base32: String,
+        otpauth_uri: String,
+        expires_in_seconds: u64,
+    },
+    PamEnrollmentCompleted {
+        actor: String,
+        recovery_codes: Vec<String>,
+    },
+    PamAuthenticated {
+        actor: String,
+        mfa_method: PamMfaMethod,
+    },
+    UfwOutput {
+        output: CommandOutput,
+    },
+    Error {
+        code: String,
+    },
 }
 
 /// 최소 권한 helper IPC 실패입니다.
@@ -85,12 +135,15 @@ fn round_trip(
     let mut stream = StdUnixStream::connect(path)?;
     stream.set_read_timeout(Some(IPC_TIMEOUT))?;
     stream.set_write_timeout(Some(IPC_TIMEOUT))?;
-    let payload = serde_json::to_vec(&*request).map_err(|_| PrivilegedError::Protocol)?;
+    let mut payload = serde_json::to_vec(&*request).map_err(|_| PrivilegedError::Protocol)?;
     request.zeroize_secrets();
     if payload.len() > usize::try_from(MAX_REQUEST_BYTES).unwrap_or(usize::MAX) {
+        payload.zeroize();
         return Err(PrivilegedError::Protocol);
     }
-    stream.write_all(&payload)?;
+    let write_result = stream.write_all(&payload);
+    payload.zeroize();
+    write_result?;
     stream.shutdown(std::net::Shutdown::Write)?;
     let mut response = Vec::new();
     stream
@@ -100,6 +153,84 @@ fn round_trip(
         return Err(PrivilegedError::Protocol);
     }
     serde_json::from_slice(&response).map_err(|_| PrivilegedError::Protocol)
+}
+
+/// Root helper의 봉인 PAM credential 존재 여부를 조회합니다.
+pub(crate) fn pam_setup_required(
+    path: &Path,
+    service: &str,
+    allowed_group: &str,
+) -> Result<bool, PamAuthError> {
+    let mut request = PrivilegedRequest::PamSetupStatus {
+        service: service.to_owned(),
+        allowed_group: allowed_group.to_owned(),
+    };
+    match round_trip(path, &mut request).map_err(|_| PamAuthError::Unavailable)? {
+        PrivilegedResponse::PamSetupStatus { setup_required } => Ok(setup_required),
+        PrivilegedResponse::Error { code } => Err(pam_error(&code)),
+        _ => Err(PamAuthError::Unavailable),
+    }
+}
+
+/// Root helper에서 서버 계정을 검증하고 PAM TOTP 등록을 시작합니다.
+pub(crate) fn start_pam_enrollment(
+    path: &Path,
+    service: &str,
+    allowed_group: &str,
+    credentials: PamPasswordCredentials,
+    now: i64,
+) -> Result<PamMfaEnrollmentStart, PamAuthError> {
+    let mut request = PrivilegedRequest::PamEnrollmentStart {
+        service: service.to_owned(),
+        allowed_group: allowed_group.to_owned(),
+        username: credentials.username,
+        password: credentials.password.expose_secret().to_owned(),
+        now,
+    };
+    match round_trip(path, &mut request).map_err(|_| PamAuthError::Unavailable)? {
+        PrivilegedResponse::PamEnrollmentStarted {
+            enrollment_id,
+            secret_base32,
+            otpauth_uri,
+            expires_in_seconds,
+        } => Ok(PamMfaEnrollmentStart {
+            enrollment_id,
+            secret_base32,
+            otpauth_uri,
+            expires_in_seconds,
+        }),
+        PrivilegedResponse::Error { code } => Err(pam_error(&code)),
+        _ => Err(PamAuthError::Unavailable),
+    }
+}
+
+/// Root helper에서 PAM TOTP를 확인하고 credential을 봉인합니다.
+pub(crate) fn confirm_pam_enrollment(
+    path: &Path,
+    service: &str,
+    allowed_group: &str,
+    enrollment_id: &str,
+    totp_code: &str,
+    now: i64,
+) -> Result<PamMfaEnrollmentComplete, PamAuthError> {
+    let mut request = PrivilegedRequest::PamEnrollmentConfirm {
+        service: service.to_owned(),
+        allowed_group: allowed_group.to_owned(),
+        enrollment_id: enrollment_id.to_owned(),
+        totp_code: totp_code.to_owned(),
+        now,
+    };
+    match round_trip(path, &mut request).map_err(|_| PamAuthError::Unavailable)? {
+        PrivilegedResponse::PamEnrollmentCompleted {
+            actor,
+            recovery_codes,
+        } => Ok(PamMfaEnrollmentComplete {
+            actor,
+            recovery_codes,
+        }),
+        PrivilegedResponse::Error { code } => Err(pam_error(&code)),
+        _ => Err(PamAuthError::Unavailable),
+    }
 }
 
 pub(crate) fn authenticate(
@@ -116,17 +247,26 @@ pub(crate) fn authenticate(
         second_factor: credentials.second_factor.expose_secret().to_owned(),
     };
     match round_trip(path, &mut request).map_err(|_| PamAuthError::Unavailable)? {
-        PrivilegedResponse::PamAuthenticated { actor } => Ok(PamIdentity { actor }),
-        PrivilegedResponse::Error { code } => Err(match code.as_str() {
-            "account_rejected" => PamAuthError::AccountRejected,
-            "system_account" => PamAuthError::SystemAccount,
-            "group_rejected" => PamAuthError::GroupRejected,
-            "mfa_not_enforced" => PamAuthError::MfaNotEnforced,
-            "busy" => PamAuthError::Busy,
-            "invalid_credentials" => PamAuthError::InvalidCredentials,
-            _ => PamAuthError::Unavailable,
-        }),
-        PrivilegedResponse::UfwOutput { .. } => Err(PamAuthError::Unavailable),
+        PrivilegedResponse::PamAuthenticated { actor, mfa_method } => {
+            Ok(PamIdentity { actor, mfa_method })
+        }
+        PrivilegedResponse::Error { code } => Err(pam_error(&code)),
+        _ => Err(PamAuthError::Unavailable),
+    }
+}
+
+fn pam_error(code: &str) -> PamAuthError {
+    match code {
+        "account_rejected" => PamAuthError::AccountRejected,
+        "system_account" => PamAuthError::SystemAccount,
+        "group_rejected" => PamAuthError::GroupRejected,
+        "mfa_not_enrolled" => PamAuthError::MfaNotEnrolled,
+        "enrollment_unavailable" => PamAuthError::EnrollmentUnavailable,
+        "already_configured" => PamAuthError::AlreadyConfigured,
+        "invalid_totp" => PamAuthError::InvalidTotp,
+        "busy" => PamAuthError::Busy,
+        "invalid_credentials" => PamAuthError::InvalidCredentials,
+        _ => PamAuthError::Unavailable,
     }
 }
 
@@ -153,9 +293,15 @@ impl UfwExecutor for PrivilegedUfwExecutor {
                 std::io::ErrorKind::PermissionDenied,
                 code,
             ))),
-            Ok(PrivilegedResponse::PamAuthenticated { .. }) => Err(CommandError::Io(
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "helper response mismatch"),
-            )),
+            Ok(
+                PrivilegedResponse::PamSetupStatus { .. }
+                | PrivilegedResponse::PamEnrollmentStarted { .. }
+                | PrivilegedResponse::PamEnrollmentCompleted { .. }
+                | PrivilegedResponse::PamAuthenticated { .. },
+            ) => Err(CommandError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "helper response mismatch",
+            ))),
             Err(error) => Err(CommandError::Io(std::io::Error::other(error))),
         }
     }
@@ -183,12 +329,14 @@ mod platform {
     use tokio::net::{UnixListener, UnixStream};
     use tokio::sync::Semaphore;
     use uzers::get_user_by_name;
+    use zeroize::Zeroize;
 
     use super::{
         MAX_REQUEST_BYTES, PrivilegedError, PrivilegedRequest, PrivilegedResponse,
         ufw_mode_allows_mutation,
     };
-    use crate::pam_auth::{PamAuthError, PamCredentials, system_authenticator};
+    use crate::pam_auth::{PamAuthError, PamPasswordCredentials, system_password_authenticator};
+    use crate::pam_mfa::{PamMfaError, PamMfaManager};
 
     pub(super) async fn run(config_path: &Path) -> Result<(), PrivilegedError> {
         if !rustix::process::geteuid().is_root() {
@@ -206,6 +354,7 @@ mod platform {
         std_listener.set_nonblocking(true)?;
         let listener = UnixListener::from_std(std_listener)?;
         let gate = Arc::new(Semaphore::new(8));
+        let pam_mfa = Arc::new(PamMfaManager::system());
         loop {
             let (stream, _) = listener.accept().await?;
             let peer_uid = stream.peer_cred()?.uid();
@@ -219,10 +368,18 @@ mod platform {
             let allowed_group = config.ui.pam_allowed_group.clone();
             let ssh_port = config.firewall.ssh_port;
             let firewall_mode = config.firewall.mode;
+            let pam_mfa = Arc::clone(&pam_mfa);
             tokio::spawn(async move {
                 let _permit = permit;
-                let _result =
-                    handle(stream, pam_service, allowed_group, firewall_mode, ssh_port).await;
+                let _result = handle(
+                    stream,
+                    pam_service,
+                    allowed_group,
+                    firewall_mode,
+                    ssh_port,
+                    pam_mfa,
+                )
+                .await;
             });
         }
     }
@@ -233,6 +390,7 @@ mod platform {
         allowed_group: String,
         firewall_mode: FirewallMode,
         ssh_port: u16,
+        pam_mfa: Arc<PamMfaManager>,
     ) -> Result<(), PrivilegedError> {
         let mut payload = Vec::new();
         (&mut stream)
@@ -240,11 +398,14 @@ mod platform {
             .read_to_end(&mut payload)
             .await?;
         let response = if payload.len() > usize::try_from(MAX_REQUEST_BYTES).unwrap_or(usize::MAX) {
+            payload.zeroize();
             PrivilegedResponse::Error {
                 code: "request_too_large".to_owned(),
             }
         } else {
-            match serde_json::from_slice::<PrivilegedRequest>(&payload) {
+            let request = serde_json::from_slice::<PrivilegedRequest>(&payload);
+            payload.zeroize();
+            match request {
                 Ok(request) => {
                     dispatch(
                         request,
@@ -252,6 +413,7 @@ mod platform {
                         &allowed_group,
                         firewall_mode,
                         ssh_port,
+                        pam_mfa,
                     )
                     .await
                 }
@@ -272,8 +434,80 @@ mod platform {
         allowed_group: &str,
         firewall_mode: FirewallMode,
         ssh_port: u16,
+        pam_mfa: Arc<PamMfaManager>,
     ) -> PrivilegedResponse {
         match request {
+            PrivilegedRequest::PamSetupStatus {
+                service,
+                allowed_group: requested_group,
+            } if service == pam_service && requested_group == allowed_group => {
+                match pam_mfa.setup_required() {
+                    Ok(setup_required) => PrivilegedResponse::PamSetupStatus { setup_required },
+                    Err(error) => PrivilegedResponse::Error {
+                        code: pam_mfa_code(error).to_owned(),
+                    },
+                }
+            }
+            PrivilegedRequest::PamSetupStatus { .. } => PrivilegedResponse::Error {
+                code: "policy_mismatch".to_owned(),
+            },
+            PrivilegedRequest::PamEnrollmentStart {
+                service,
+                allowed_group: requested_group,
+                username,
+                password,
+                now,
+            } if service == pam_service && requested_group == allowed_group => {
+                let service = service.clone();
+                let group = requested_group.clone();
+                let pam_mfa = Arc::clone(&pam_mfa);
+                match tokio::task::spawn_blocking(move || {
+                    let authenticator = system_password_authenticator(&service, &group)?;
+                    let actor = authenticator.authenticate_password(PamPasswordCredentials {
+                        username,
+                        password: SecretString::from(password),
+                    })?;
+                    pam_mfa.start_enrollment(actor, now).map_err(map_mfa_error)
+                })
+                .await
+                {
+                    Ok(Ok(enrollment)) => PrivilegedResponse::PamEnrollmentStarted {
+                        enrollment_id: enrollment.enrollment_id,
+                        secret_base32: enrollment.secret_base32,
+                        otpauth_uri: enrollment.otpauth_uri,
+                        expires_in_seconds: enrollment.expires_in_seconds,
+                    },
+                    Ok(Err(error)) => PrivilegedResponse::Error {
+                        code: pam_code(error).to_owned(),
+                    },
+                    Err(_) => PrivilegedResponse::Error {
+                        code: "unavailable".to_owned(),
+                    },
+                }
+            }
+            PrivilegedRequest::PamEnrollmentStart { .. } => PrivilegedResponse::Error {
+                code: "policy_mismatch".to_owned(),
+            },
+            PrivilegedRequest::PamEnrollmentConfirm {
+                service,
+                allowed_group: requested_group,
+                enrollment_id,
+                totp_code,
+                now,
+            } if service == pam_service && requested_group == allowed_group => {
+                match pam_mfa.confirm_enrollment(&enrollment_id, &totp_code, now) {
+                    Ok(complete) => PrivilegedResponse::PamEnrollmentCompleted {
+                        actor: complete.actor,
+                        recovery_codes: complete.recovery_codes,
+                    },
+                    Err(error) => PrivilegedResponse::Error {
+                        code: pam_mfa_code(error).to_owned(),
+                    },
+                }
+            }
+            PrivilegedRequest::PamEnrollmentConfirm { .. } => PrivilegedResponse::Error {
+                code: "policy_mismatch".to_owned(),
+            },
             PrivilegedRequest::PamAuthenticate {
                 service,
                 allowed_group: requested_group,
@@ -284,18 +518,21 @@ mod platform {
                 let service = service.clone();
                 let group = requested_group.clone();
                 match tokio::task::spawn_blocking(move || {
-                    let authenticator = system_authenticator(&service, &group)?;
-                    authenticator.authenticate(PamCredentials {
+                    let authenticator = system_password_authenticator(&service, &group)?;
+                    let actor = authenticator.authenticate_password(PamPasswordCredentials {
                         username,
                         password: SecretString::from(password),
-                        second_factor: SecretString::from(second_factor),
-                    })
+                    })?;
+                    let mfa_method = pam_mfa
+                        .verify(&actor, &second_factor, unix_seconds())
+                        .map_err(map_mfa_error)?;
+                    Ok::<_, PamAuthError>((actor, mfa_method))
                 })
                 .await
                 {
-                    Ok(Ok(identity)) => PrivilegedResponse::PamAuthenticated {
-                        actor: identity.actor,
-                    },
+                    Ok(Ok((actor, mfa_method))) => {
+                        PrivilegedResponse::PamAuthenticated { actor, mfa_method }
+                    }
                     Ok(Err(error)) => PrivilegedResponse::Error {
                         code: pam_code(error).to_owned(),
                     },
@@ -365,10 +602,47 @@ mod platform {
             PamAuthError::AccountRejected => "account_rejected",
             PamAuthError::SystemAccount => "system_account",
             PamAuthError::GroupRejected => "group_rejected",
-            PamAuthError::MfaNotEnforced => "mfa_not_enforced",
+            PamAuthError::MfaNotEnrolled => "mfa_not_enrolled",
+            PamAuthError::EnrollmentUnavailable => "enrollment_unavailable",
+            PamAuthError::AlreadyConfigured => "already_configured",
+            PamAuthError::InvalidTotp => "invalid_totp",
             PamAuthError::Busy => "busy",
             PamAuthError::Unavailable => "unavailable",
         }
+    }
+
+    const fn pam_mfa_code(error: PamMfaError) -> &'static str {
+        match error {
+            PamMfaError::AlreadyConfigured => "already_configured",
+            PamMfaError::EnrollmentUnavailable => "enrollment_unavailable",
+            PamMfaError::InvalidTotp => "invalid_totp",
+            PamMfaError::NotConfigured => "mfa_not_enrolled",
+            PamMfaError::InvalidFactor => "invalid_credentials",
+            PamMfaError::Storage | PamMfaError::Crypto | PamMfaError::InvalidUsername => {
+                "unavailable"
+            }
+        }
+    }
+
+    const fn map_mfa_error(error: PamMfaError) -> PamAuthError {
+        match error {
+            PamMfaError::AlreadyConfigured => PamAuthError::AlreadyConfigured,
+            PamMfaError::EnrollmentUnavailable => PamAuthError::EnrollmentUnavailable,
+            PamMfaError::InvalidTotp => PamAuthError::InvalidTotp,
+            PamMfaError::NotConfigured => PamAuthError::MfaNotEnrolled,
+            PamMfaError::InvalidFactor => PamAuthError::InvalidCredentials,
+            PamMfaError::Storage | PamMfaError::Crypto | PamMfaError::InvalidUsername => {
+                PamAuthError::Unavailable
+            }
+        }
+    }
+
+    fn unix_seconds() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+            .unwrap_or(0)
     }
 }
 

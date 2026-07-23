@@ -870,7 +870,9 @@ async fn start_enrollment(
     if let Err(error) = app.sessions.allow_login_attempt() {
         return auth_error_response(error);
     }
-    if let Err(error) = SessionStore::validate_new_credentials(&request.username, &request.password)
+    if let Err(error) = app
+        .sessions
+        .validate_new_credentials(&request.username, &request.password)
     {
         return auth_error_response(error);
     }
@@ -1430,9 +1432,9 @@ fn auth_error_response(error: AuthError) -> Response {
         AuthError::EnrollmentDisabled => api_error(
             StatusCode::CONFLICT,
             "ADMIN_ENROLLMENT_DISABLED",
-            "PAM mode에서는 VPSGuard 비밀번호 등록을 사용하지 않습니다.",
-            "서버 계정과 PAM MFA 설정을 변경하지 않았습니다.",
-            "vpsguard-admin 그룹과 서버의 PAM MFA를 먼저 설정하십시오.",
+            "선택한 관리자 인증 provider는 최초 등록을 지원하지 않습니다.",
+            "관리자 credential을 변경하지 않았습니다.",
+            "인증 provider 설정과 privileged helper 상태를 확인하십시오.",
         ),
         AuthError::InvalidTotp => api_error(
             StatusCode::UNAUTHORIZED,

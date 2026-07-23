@@ -24,7 +24,9 @@ source_state: candidate-implementation
 
 ## 판정
 
-단독 설치에 필요한 직접 HTTPS 관리자, Linux-PAM+TOTP, VPSGuard 소유 UFW 규칙 transaction, declared AI bot 차단, 계층형 rate limit, ambiguous request framing 거부와 선택형 ModSecurity·OWASP CRS가 실제 Ubuntu VM에서 동작했습니다. `ACT-013`, `ACT-014`, `UI-016`, `SEC-015`, `NFR-014`는 **VPS_PASS**입니다.
+2026-07-23 재감사에서 Linux-PAM+TOTP probe가 실제 운영자 QR 등록이 아니라 자동 생성된 사용자 home test seed를 읽어 통과한 사실을 확인했습니다. 따라서 이 문서의 PAM session은 코드·배포 경로 증거로만 남기고 `SEC-015`의 실제 사용자 등록 증거로는 폐기합니다. `SEC-015`는 **AUTO_PASS**로 되돌리며 새 운영자가 직접 QR을 등록한 뒤 재검증해야 합니다.
+
+그 외 직접 HTTPS 관리자 경로, VPSGuard 소유 UFW 규칙 transaction, declared AI bot 차단, 계층형 rate limit, ambiguous request framing 거부와 선택형 ModSecurity·OWASP CRS의 Ubuntu VM 증거는 유지합니다. `ACT-013`, `ACT-014`, `UI-016`, `NFR-014`는 **VPS_PASS**입니다.
 
 공식 crawler의 실제 source IP, authenticated upload WAF 오탐, HTTP/2·WebSocket smuggling, 실제 회전 source high-cardinality는 실환경 증거가 부족합니다. 관련 `EDGE-014`, `DET-013`, `UI-017`, `SEC-016`, `SEC-017`, `NFR-002`는 자동 회귀는 통과했지만 이 보고서만으로 release 완료를 주장하지 않습니다.
 
@@ -35,14 +37,14 @@ source_state: candidate-implementation
 | VM | Ubuntu 24.04.4 LTS, 4 vCPU, 실행 중 8GB → 2GB → 8GB 복구 |
 | 공개 경로 | Apache TLS `80/443` → VPSGuard `127.0.0.1:18080` → Apache `127.0.0.1:18081` |
 | 관리자 | `https://192.168.0.143:7443`, Apache TLS → loopback Control `127.0.0.1:7727` |
-| 인증 | Linux-PAM `vpsguard-admin` group + TOTP, 12시간 bounded session |
+| 인증 | Linux-PAM `vpsguard-admin` group + TOTP 코드 경로. 당시 seed 출처 문제로 실제 사용자 등록 증거는 무효 |
 | 서비스 | Apache, edge, control, root privileged helper와 systemd socket 모두 active |
 | 방화벽 | UFW active, default deny incoming, 기존 운영자 규칙 8개 보존 |
 | 공개 listener | `22`, `80`, `443`, `7443` open |
 | 차단 listener | `3306`, `7727`, `18080`, `18081` filtered 또는 비공개 |
 | WAF | ModSecurity + OWASP CRS `tuned_enforce`, 실제 mode가 status API에 표시됨 |
 
-관리자는 서버 계정명, 서버 비밀번호와 등록된 TOTP로 로그인합니다. 비밀번호·TOTP seed·cookie·CSRF·원문 request body는 이 evidence와 테스트 artifact에 저장하지 않았습니다.
+당시 probe는 서버 계정명·비밀번호와 test seed에서 계산한 TOTP를 사용했습니다. 비밀번호·cookie·CSRF·원문 request body는 evidence에 저장하지 않았지만 test seed가 사용자 home에 존재했으므로 운영 credential 비저장 증거로 인정하지 않습니다.
 
 ## UFW와 권한 경계
 

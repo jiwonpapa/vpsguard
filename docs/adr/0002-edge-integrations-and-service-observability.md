@@ -54,9 +54,9 @@ VPSGuard는 public HTTP gateway이지만 범용 L4 proxy, ACME client, DB protoc
 | Nginx/PHP status text | HTTP transport는 crate를 쓰고 작고 bounded된 domain parser만 직접 유지 |
 | rate limit·policy·atomic state·owned nftables | VPSGuard 고유 bounded·read-back·ownership 불변조건이므로 직접 typed model 유지 |
 | 관리자 비밀번호 | PHC·salt·Argon2id 구현은 `argon2` crate를 사용하고 password hash/KDF를 직접 구현하지 않음 |
-| 관리자 TOTP | RFC 호환 code·`otpauth` URI는 `totp-rs`를 사용하고 QR dependency는 추가하지 않음 |
-| TOTP seed 봉인 | password 유래 key와 `XChaCha20Poly1305` AEAD는 RustCrypto `chacha20poly1305`를 사용하고 암호 primitive를 직접 구현하지 않음 |
-| Linux-PAM | `pam-client`의 safe API로 `pam_authenticate`·`pam_acct_mgmt`를 호출하고 C FFI를 직접 구현하지 않음 |
+| 관리자 TOTP | RFC 호환 code·`otpauth` URI는 `totp-rs`, 브라우저 QR SVG는 MIT `qrcode.react`를 사용. QR dependency는 embedded UI에만 포함되고 운영 VPS에 JS runtime을 추가하지 않음 |
+| TOTP seed 봉인 | local password 유래 key와 PAM root-only master key의 `XChaCha20Poly1305` AEAD는 RustCrypto `chacha20poly1305`를 사용하고 암호 primitive를 직접 구현하지 않음 |
+| Linux-PAM | `pam-client`의 safe API로 서버 비밀번호·`pam_authenticate`·`pam_acct_mgmt`를 호출하고 C FFI를 직접 구현하지 않음. MFA는 root helper의 봉인 credential adapter에서 별도 검증 |
 | systemd socket activation | `listenfd`로 systemd가 소유한 inherited Unix listener만 받고 runtime world-writable socket bind를 금지 |
 
 새 crate를 고르는 것 자체가 목적은 아닙니다. protocol·crypto·database driver처럼 재구현 위험이 큰 곳은 외부 구현을 우선하고, 작은 고정 형식과 제품 고유 상태 전이는 의존성 fanout·RSS·공격면을 비교해 결정합니다.

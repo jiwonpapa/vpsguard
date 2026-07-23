@@ -1,6 +1,6 @@
 //! 관리자 계정, TOTP·복구 code와 영속 session 회귀 테스트입니다.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::http::{HeaderMap, HeaderValue};
@@ -12,18 +12,70 @@ use super::{
     SessionStore, UiAccessPolicy, session_cookie,
 };
 use crate::auth_store::AuthRepository;
-use crate::pam_auth::{PamAuthError, PamAuthenticator, PamCredentials, PamIdentity};
+use crate::pam_auth::{
+    PamAuthError, PamAuthenticator, PamCredentials, PamIdentity, PamPasswordCredentials,
+};
+use crate::pam_mfa::{PamMfaEnrollmentComplete, PamMfaEnrollmentStart, PamMfaMethod};
 
-struct FakePam;
+#[derive(Default)]
+struct FakePam {
+    configured: Mutex<bool>,
+}
 
 impl PamAuthenticator for FakePam {
+    fn setup_required(&self) -> Result<bool, PamAuthError> {
+        Ok(!*self
+            .configured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    fn start_enrollment(
+        &self,
+        credentials: PamPasswordCredentials,
+        _now: i64,
+    ) -> Result<PamMfaEnrollmentStart, PamAuthError> {
+        if credentials.username != "operator"
+            || credentials.password.expose_secret() != "server-password"
+        {
+            return Err(PamAuthError::InvalidCredentials);
+        }
+        Ok(PamMfaEnrollmentStart {
+            enrollment_id: "fake-enrollment".to_owned(),
+            secret_base32: "JBSWY3DPEHPK3PXP".to_owned(),
+            otpauth_uri: "otpauth://totp/VPSGuard:operator".to_owned(),
+            expires_in_seconds: 600,
+        })
+    }
+
+    fn confirm_enrollment(
+        &self,
+        enrollment_id: &str,
+        totp_code: &str,
+        _now: i64,
+    ) -> Result<PamMfaEnrollmentComplete, PamAuthError> {
+        if enrollment_id != "fake-enrollment" || totp_code != "123456" {
+            return Err(PamAuthError::InvalidTotp);
+        }
+        *self
+            .configured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        Ok(PamMfaEnrollmentComplete {
+            actor: "operator".to_owned(),
+            recovery_codes: vec!["AAAAAAAA-BBBBBBBB-CCCCCCCC-DDDDDDDD".to_owned()],
+        })
+    }
+
     fn authenticate(&self, credentials: PamCredentials) -> Result<PamIdentity, PamAuthError> {
-        if credentials.username == "operator"
+        if !self.setup_required()?
+            && credentials.username == "operator"
             && credentials.password.expose_secret() == "server-password"
             && credentials.second_factor.expose_secret() == "123456"
         {
             Ok(PamIdentity {
                 actor: credentials.username,
+                mfa_method: PamMfaMethod::Totp,
             })
         } else {
             Err(PamAuthError::InvalidCredentials)
@@ -135,27 +187,49 @@ fn account_totp_and_recovery_login_are_distinct_and_one_time()
 fn pam_login_issues_session_without_a_local_password_verifier()
 -> Result<(), Box<dyn std::error::Error>> {
     let repository = Arc::new(AuthRepository::in_memory()?);
+    let pam = Arc::new(FakePam::default());
     let store = SessionStore::with_authenticator(
         Arc::clone(&repository),
         10,
-        AccountAuthenticator::Pam(Arc::new(FakePam)),
+        AccountAuthenticator::Pam(pam),
     )?;
+    let now = super::unix_seconds()?;
+    assert!(store.setup_required()?);
+    assert!(store.enrollment_enabled());
+    let stale = store.issue_session(
+        "operator".to_owned(),
+        super::AuthenticationMethod::PamMfa,
+        false,
+        now,
+    )?;
+    let mut stale_headers = HeaderMap::new();
+    stale_headers.insert(
+        "cookie",
+        HeaderValue::from_str(cookie_header(&stale.set_cookie))?,
+    );
+    assert!(store.authenticate(&stale_headers)?.is_none());
+    let break_glass = store.issue_break_glass(false, now)?;
+    let mut break_glass_headers = HeaderMap::new();
+    break_glass_headers.insert(
+        "cookie",
+        HeaderValue::from_str(cookie_header(&break_glass.set_cookie))?,
+    );
+    assert!(store.authenticate(&break_glass_headers)?.is_some());
+    let enrollment = store.start_enrollment(
+        "operator".to_owned(),
+        SecretString::from("server-password".to_owned()),
+        now,
+    )?;
+    let complete = store.confirm_enrollment(&enrollment.enrollment_id, "123456", true, now)?;
+    assert_eq!(complete.session.actor, "operator");
+    assert_eq!(complete.recovery_codes.len(), 1);
     assert!(!store.setup_required()?);
-    assert!(!store.enrollment_enabled());
-    assert!(matches!(
-        store.start_enrollment(
-            "operator".to_owned(),
-            SecretString::from("not-stored-password".to_owned()),
-            1_784_108_000,
-        ),
-        Err(AuthError::EnrollmentDisabled)
-    ));
     let issued = store.login(
         "operator".to_owned(),
         SecretString::from("server-password".to_owned()),
         LoginSecondFactor::Totp("123456".to_owned()),
         true,
-        1_784_108_000,
+        now,
     )?;
     assert_eq!(issued.actor, "operator");
     assert_eq!(issued.authentication_method.as_str(), "pam_mfa");

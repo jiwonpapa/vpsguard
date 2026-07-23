@@ -4,18 +4,18 @@ set -euo pipefail
 umask 077
 endpoint="${VPS_GUARD_ADMIN_URL:-https://192.168.0.143:7443}"
 username="${VPS_GUARD_PAM_USER:-gnuboard5}"
-secret_file="${VPS_GUARD_TOTP_FILE:-${HOME}/.google_authenticator}"
 response="$(mktemp)"
 cookie="$(mktemp)"
 cleanup() {
-  unset password secret token payload
+  unset password token payload
   rm -f "${response}" "${cookie}"
 }
 trap cleanup EXIT
 read -r -s -p "PAM_PASSWORD:" password
 printf '\n'
-secret="$(head -n 1 "${secret_file}")"
-token="$(oathtool --totp -b "${secret}")"
+read -r -s -p "PAM_TOTP:" token
+printf '\n'
+[[ "${token}" =~ ^[0-9]{6}$ ]] || { echo "PAM_TOTP must be six ASCII digits" >&2; exit 2; }
 payload="$(jq -nc --arg username "${username}" --arg password "${password}" \
   --arg token "${token}" '{username:$username,password:$password,totp_code:$token}')"
 status="$(curl --insecure --silent --show-error --output "${response}" \

@@ -24,7 +24,11 @@ use totp_rs::{Algorithm, TOTP};
 use crate::auth_store::{
     AuthRepository, AuthStoreError, NewAdminAccount, NewStoredSession, StoredAdminAccount,
 };
-use crate::pam_auth::{PamAuthenticator, PamCredentials, privileged_authenticator};
+use crate::pam_auth::{
+    PamAuthError, PamAuthenticator, PamCredentials, PamPasswordCredentials,
+    privileged_authenticator,
+};
+use crate::pam_mfa::PamMfaMethod;
 
 const SESSION_COOKIE: &str = "vps_guard_session";
 const SECURE_SESSION_COOKIE: &str = "__Host-vps_guard_session";
@@ -234,6 +238,8 @@ pub(crate) enum AuthenticationMethod {
     PasswordRecovery,
     /// Linux-PAM password와 PAM stack의 두 번째 factor를 확인했습니다.
     PamMfa,
+    /// Linux-PAM password와 일회용 복구 코드를 확인했습니다.
+    PamRecovery,
     /// root local 단회 code를 사용한 break-glass session입니다.
     BreakGlass,
 }
@@ -244,6 +250,7 @@ impl AuthenticationMethod {
             Self::PasswordTotp => "password_totp",
             Self::PasswordRecovery => "password_recovery",
             Self::PamMfa => "pam_mfa",
+            Self::PamRecovery => "pam_recovery",
             Self::BreakGlass => "break_glass",
         }
     }
@@ -426,13 +433,15 @@ impl SessionStore {
     pub(crate) fn setup_required(&self) -> Result<bool, AuthError> {
         match &self.authenticator {
             AccountAuthenticator::Local => Ok(!self.repository.is_configured()?),
-            AccountAuthenticator::Pam(_) => Ok(false),
+            AccountAuthenticator::Pam(authenticator) => {
+                authenticator.setup_required().map_err(|_| AuthError::Pam)
+            }
         }
     }
 
-    /// VPSGuard 전용 password/TOTP 등록 화면이 활성인지 반환합니다.
+    /// 선택한 provider의 TOTP 최초 등록 화면이 활성인지 반환합니다.
     pub(crate) const fn enrollment_enabled(&self) -> bool {
-        matches!(&self.authenticator, AccountAuthenticator::Local)
+        true
     }
 
     /// UI에 노출할 활성 credential provider를 반환합니다.
@@ -445,11 +454,18 @@ impl SessionStore {
 
     /// 단회 bootstrap 검증 후 실행할 관리자 ID·비밀번호 정책 검사입니다.
     pub(crate) fn validate_new_credentials(
+        &self,
         username: &str,
         password: &str,
     ) -> Result<(), AuthError> {
         normalize_username(username)?;
-        validate_password(password)
+        match &self.authenticator {
+            AccountAuthenticator::Local => validate_password(password),
+            AccountAuthenticator::Pam(_) => (!password.is_empty()
+                && password.len() <= PASSWORD_MAX_BYTES)
+                .then_some(())
+                .ok_or(AuthError::InvalidCredentials),
+        }
     }
 
     /// 최초 관리자 TOTP 등록 session을 시작합니다.
@@ -459,8 +475,16 @@ impl SessionStore {
         password: SecretString,
         now: i64,
     ) -> Result<EnrollmentStart, AuthError> {
-        if !self.enrollment_enabled() {
-            return Err(AuthError::EnrollmentDisabled);
+        if let AccountAuthenticator::Pam(authenticator) = &self.authenticator {
+            let enrollment = authenticator
+                .start_enrollment(PamPasswordCredentials { username, password }, now)
+                .map_err(map_pam_enrollment_error)?;
+            return Ok(EnrollmentStart {
+                enrollment_id: enrollment.enrollment_id,
+                secret_base32: enrollment.secret_base32,
+                otpauth_uri: enrollment.otpauth_uri,
+                expires_in_seconds: enrollment.expires_in_seconds,
+            });
         }
         if self.repository.is_configured()? {
             return Err(AuthError::AlreadyConfigured);
@@ -497,8 +521,21 @@ impl SessionStore {
         secure_cookie: bool,
         now: i64,
     ) -> Result<EnrollmentComplete, AuthError> {
-        if !self.enrollment_enabled() {
-            return Err(AuthError::EnrollmentDisabled);
+        if let AccountAuthenticator::Pam(authenticator) = &self.authenticator {
+            let complete = authenticator
+                .confirm_enrollment(enrollment_id, totp_code, now)
+                .map_err(map_pam_enrollment_error)?;
+            self.repository.delete_actor_sessions(&complete.actor)?;
+            let session = self.issue_session(
+                complete.actor,
+                AuthenticationMethod::PamMfa,
+                secure_cookie,
+                now,
+            )?;
+            return Ok(EnrollmentComplete {
+                recovery_codes: complete.recovery_codes,
+                session,
+            });
         }
         validate_totp_shape(totp_code)?;
         let mut pending_slot = self.lock_pending();
@@ -581,12 +618,11 @@ impl SessionStore {
                     second_factor: SecretString::from(second_factor),
                 })
                 .map_err(|_error| AuthError::Pam)?;
-            return self.issue_session(
-                identity.actor,
-                AuthenticationMethod::PamMfa,
-                secure_cookie,
-                now,
-            );
+            let method = match identity.mfa_method {
+                PamMfaMethod::Totp => AuthenticationMethod::PamMfa,
+                PamMfaMethod::Recovery => AuthenticationMethod::PamRecovery,
+            };
+            return self.issue_session(identity.actor, method, secure_cookie, now);
         }
         let normalized =
             normalize_username(&username).unwrap_or_else(|_| username.to_ascii_lowercase());
@@ -677,15 +713,17 @@ impl SessionStore {
         };
         let digest = keyed_digest(SESSION_CONTEXT, raw_session.as_bytes())?;
         let now = unix_seconds()?;
-        Ok(self
-            .repository
-            .session(&digest, now)?
-            .map(|session| SessionIdentity {
-                actor: session.actor,
-                authentication_method: session.authentication_method,
-                expires_in_seconds: u64::try_from(session.expires_at.saturating_sub(now))
-                    .unwrap_or(0),
-            }))
+        let setup_required = self.setup_required()?;
+        Ok(self.repository.session(&digest, now)?.and_then(|session| {
+            (!setup_required || session.authentication_method == "break_glass").then(|| {
+                SessionIdentity {
+                    actor: session.actor,
+                    authentication_method: session.authentication_method,
+                    expires_in_seconds: u64::try_from(session.expires_at.saturating_sub(now))
+                        .unwrap_or(0),
+                }
+            })
+        }))
     }
 
     /// Cookie session과 CSRF header를 함께 검증합니다.
@@ -974,6 +1012,21 @@ fn normalize_recovery_code(code: &str) -> Option<String> {
         .to_ascii_uppercase();
     (normalized.len() == 32 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .then_some(normalized)
+}
+
+fn map_pam_enrollment_error(error: PamAuthError) -> AuthError {
+    match error {
+        PamAuthError::AlreadyConfigured => AuthError::AlreadyConfigured,
+        PamAuthError::EnrollmentUnavailable | PamAuthError::MfaNotEnrolled => {
+            AuthError::EnrollmentUnavailable
+        }
+        PamAuthError::InvalidTotp => AuthError::InvalidTotp,
+        PamAuthError::InvalidCredentials
+        | PamAuthError::AccountRejected
+        | PamAuthError::SystemAccount
+        | PamAuthError::GroupRejected => AuthError::InvalidCredentials,
+        PamAuthError::Busy | PamAuthError::Unavailable => AuthError::Pam,
+    }
 }
 
 fn random_token() -> Result<String, AuthError> {

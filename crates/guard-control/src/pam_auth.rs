@@ -8,6 +8,8 @@ use std::sync::Mutex;
 use secrecy::SecretString;
 use thiserror::Error;
 
+use crate::pam_mfa::{PamMfaEnrollmentComplete, PamMfaEnrollmentStart, PamMfaMethod};
+
 #[cfg(any(test, target_os = "linux"))]
 const MIN_HUMAN_UID: u32 = 1_000;
 #[cfg(any(test, target_os = "linux"))]
@@ -21,10 +23,18 @@ pub(crate) struct PamCredentials {
     pub(crate) second_factor: SecretString,
 }
 
+/// Linux-PAM의 서버 비밀번호 검증에만 전달하는 credential입니다.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct PamPasswordCredentials {
+    pub(crate) username: String,
+    pub(crate) password: SecretString,
+}
+
 /// PAM과 Unix identity 검증을 통과한 actor입니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PamIdentity {
     pub(crate) actor: String,
+    pub(crate) mfa_method: PamMfaMethod,
 }
 
 /// PAM 인증·계정·group 검증 실패입니다.
@@ -39,8 +49,14 @@ pub(crate) enum PamAuthError {
     SystemAccount,
     #[error("PAM 계정이 허용 Unix group에 속하지 않습니다")]
     GroupRejected,
-    #[error("PAM stack이 두 번째 인증 factor를 요구하지 않았습니다")]
-    MfaNotEnforced,
+    #[error("PAM 관리자 TOTP 등록이 필요합니다")]
+    MfaNotEnrolled,
+    #[error("PAM 관리자 등록 session이 없거나 만료됐습니다")]
+    EnrollmentUnavailable,
+    #[error("PAM 관리자가 이미 등록됐습니다")]
+    AlreadyConfigured,
+    #[error("PAM 관리자 TOTP가 올바르지 않습니다")]
+    InvalidTotp,
     #[error("동시에 다른 PAM 인증이 실행 중입니다")]
     Busy,
     #[error("이 platform에서 Linux-PAM을 사용할 수 없습니다")]
@@ -49,15 +65,44 @@ pub(crate) enum PamAuthError {
 
 /// 실제 PAM 또는 test fake의 credential 검증 경계입니다.
 pub(crate) trait PamAuthenticator: Send + Sync {
+    /// 최초 PAM 관리자 TOTP 등록 필요 여부를 반환합니다.
+    fn setup_required(&self) -> Result<bool, PamAuthError>;
+
+    /// 서버 계정 검증 뒤 PAM 관리자 TOTP 등록을 시작합니다.
+    fn start_enrollment(
+        &self,
+        credentials: PamPasswordCredentials,
+        now: i64,
+    ) -> Result<PamMfaEnrollmentStart, PamAuthError>;
+
+    /// TOTP 확인 뒤 PAM 관리자 credential을 원자 저장합니다.
+    fn confirm_enrollment(
+        &self,
+        enrollment_id: &str,
+        totp_code: &str,
+        now: i64,
+    ) -> Result<PamMfaEnrollmentComplete, PamAuthError>;
+
+    /// 서버 비밀번호와 등록된 TOTP 또는 복구 코드를 검증합니다.
     fn authenticate(&self, credentials: PamCredentials) -> Result<PamIdentity, PamAuthError>;
 }
 
-/// 현재 Linux host의 PAM authenticator를 생성합니다.
+/// Linux-PAM 서버 비밀번호·계정·group 검증 경계입니다.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) trait PamPasswordAuthenticator: Send + Sync {
+    /// 두 번째 인증 factor와 분리해 서버 비밀번호와 account 상태만 검증합니다.
+    fn authenticate_password(
+        &self,
+        credentials: PamPasswordCredentials,
+    ) -> Result<String, PamAuthError>;
+}
+
+/// 현재 Linux host의 비밀번호 전용 PAM authenticator를 생성합니다.
 #[cfg(target_os = "linux")]
-pub(crate) fn system_authenticator(
+pub(crate) fn system_password_authenticator(
     service: &str,
     allowed_group: &str,
-) -> Result<Arc<dyn PamAuthenticator>, PamAuthError> {
+) -> Result<Arc<dyn PamPasswordAuthenticator>, PamAuthError> {
     platform::build(service, allowed_group)
 }
 
@@ -81,6 +126,40 @@ struct PrivilegedPamAuthenticator {
 }
 
 impl PamAuthenticator for PrivilegedPamAuthenticator {
+    fn setup_required(&self) -> Result<bool, PamAuthError> {
+        crate::privileged::pam_setup_required(&self.socket, &self.service, &self.allowed_group)
+    }
+
+    fn start_enrollment(
+        &self,
+        credentials: PamPasswordCredentials,
+        now: i64,
+    ) -> Result<PamMfaEnrollmentStart, PamAuthError> {
+        crate::privileged::start_pam_enrollment(
+            &self.socket,
+            &self.service,
+            &self.allowed_group,
+            credentials,
+            now,
+        )
+    }
+
+    fn confirm_enrollment(
+        &self,
+        enrollment_id: &str,
+        totp_code: &str,
+        now: i64,
+    ) -> Result<PamMfaEnrollmentComplete, PamAuthError> {
+        crate::privileged::confirm_pam_enrollment(
+            &self.socket,
+            &self.service,
+            &self.allowed_group,
+            enrollment_id,
+            totp_code,
+            now,
+        )
+    }
+
     fn authenticate(&self, credentials: PamCredentials) -> Result<PamIdentity, PamAuthError> {
         crate::privileged::authenticate(
             &self.socket,
@@ -97,7 +176,7 @@ fn validate_unix_identity(
     uid: u32,
     groups: &[String],
     allowed_group: &str,
-) -> Result<PamIdentity, PamAuthError> {
+) -> Result<String, PamAuthError> {
     if username.eq_ignore_ascii_case("root")
         || !(MIN_HUMAN_UID..MAX_HUMAN_UID_EXCLUSIVE).contains(&uid)
     {
@@ -106,9 +185,7 @@ fn validate_unix_identity(
     if !groups.iter().any(|group| group == allowed_group) {
         return Err(PamAuthError::GroupRejected);
     }
-    Ok(PamIdentity {
-        actor: username.to_owned(),
-    })
+    Ok(username.to_owned())
 }
 
 #[cfg(target_os = "linux")]
@@ -120,14 +197,13 @@ mod platform {
     use uzers::get_user_by_name;
 
     use super::{
-        Arc, Mutex, PamAuthError, PamAuthenticator, PamCredentials, PamIdentity,
+        Arc, Mutex, PamAuthError, PamPasswordAuthenticator, PamPasswordCredentials,
         validate_unix_identity,
     };
 
     struct WebConversation {
         username: String,
         password: SecretString,
-        second_factor: SecretString,
         secret_prompts: usize,
     }
 
@@ -138,14 +214,10 @@ mod platform {
 
         fn prompt_echo_off(&mut self, _prompt: &CStr) -> Result<CString, ErrorCode> {
             self.secret_prompts = self.secret_prompts.saturating_add(1);
-            let value = if self.secret_prompts == 1 {
-                self.password.expose_secret()
-            } else if self.secret_prompts == 2 {
-                self.second_factor.expose_secret()
-            } else {
+            if self.secret_prompts != 1 {
                 return Err(ErrorCode::CONV_ERR);
-            };
-            CString::new(value.as_bytes()).map_err(|_| ErrorCode::CONV_ERR)
+            }
+            CString::new(self.password.expose_secret().as_bytes()).map_err(|_| ErrorCode::CONV_ERR)
         }
 
         fn text_info(&mut self, _message: &CStr) {}
@@ -153,19 +225,21 @@ mod platform {
         fn error_msg(&mut self, _message: &CStr) {}
     }
 
-    struct LinuxPamAuthenticator {
+    struct LinuxPamPasswordAuthenticator {
         service: String,
         allowed_group: String,
         gate: Mutex<()>,
     }
 
-    impl PamAuthenticator for LinuxPamAuthenticator {
-        fn authenticate(&self, credentials: PamCredentials) -> Result<PamIdentity, PamAuthError> {
+    impl PamPasswordAuthenticator for LinuxPamPasswordAuthenticator {
+        fn authenticate_password(
+            &self,
+            credentials: PamPasswordCredentials,
+        ) -> Result<String, PamAuthError> {
             let _lease = self.gate.try_lock().map_err(|_| PamAuthError::Busy)?;
             let conversation = WebConversation {
                 username: credentials.username.clone(),
                 password: credentials.password,
-                second_factor: credentials.second_factor,
                 secret_prompts: 0,
             };
             let mut context =
@@ -174,8 +248,8 @@ mod platform {
             context
                 .authenticate(Flag::DISALLOW_NULL_AUTHTOK)
                 .map_err(|_| PamAuthError::InvalidCredentials)?;
-            if context.conversation().secret_prompts < 2 {
-                return Err(PamAuthError::MfaNotEnforced);
+            if context.conversation().secret_prompts != 1 {
+                return Err(PamAuthError::Unavailable);
             }
             context
                 .acct_mgmt(Flag::DISALLOW_NULL_AUTHTOK)
@@ -195,8 +269,8 @@ mod platform {
     pub(super) fn build(
         service: &str,
         allowed_group: &str,
-    ) -> Result<Arc<dyn PamAuthenticator>, PamAuthError> {
-        Ok(Arc::new(LinuxPamAuthenticator {
+    ) -> Result<Arc<dyn PamPasswordAuthenticator>, PamAuthError> {
+        Ok(Arc::new(LinuxPamPasswordAuthenticator {
             service: service.to_owned(),
             allowed_group: allowed_group.to_owned(),
             gate: Mutex::new(()),
@@ -237,7 +311,7 @@ mod tests {
             &["sudo".to_owned(), "vpsguard-admin".to_owned()],
             "vpsguard-admin",
         )?;
-        assert_eq!(identity.actor, "operator");
+        assert_eq!(identity, "operator");
         Ok(())
     }
 }

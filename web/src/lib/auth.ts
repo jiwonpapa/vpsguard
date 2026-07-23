@@ -3,11 +3,17 @@ export function validateAdminSetup(
   username: string,
   password: string,
   confirmation: string,
+  provider: "local" | "pam" = "local",
 ): string | null {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/.test(username.trim())) {
     return "관리자 ID 형식을 확인하십시오.";
   }
-  if ([...password].length < 12 || new TextEncoder().encode(password).length > 1024) {
+  if (
+    (provider === "local" && [...password].length < 12)
+    || password.length === 0
+    || new TextEncoder().encode(password).length > 1024
+  ) {
+    if (provider === "pam") return "서버 계정 비밀번호를 입력하십시오.";
     return "비밀번호는 12자 이상 1,024 byte 이하여야 합니다.";
   }
   if (password !== confirmation) return "비밀번호 확인이 일치하지 않습니다.";

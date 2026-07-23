@@ -37,3 +37,12 @@ VPSGuard는 해당 crate를 수정하지 않습니다. binary 배포 시 이 고
 - 라이선스: SIL Open Font License 1.1 (`OFL-1.1`)
 - 원본 source: <https://github.com/vercel/geist-font>
 - 배포 package: <https://www.npmjs.com/package/@fontsource-variable/geist/v/5.3.0>
+
+## qrcode.react 4.2.0
+
+- 용도: PAM·local 최초 TOTP 등록의 `otpauth` URI를 브라우저 내 SVG QR로 표시
+- 라이선스: MIT
+- 원본 source: <https://github.com/zpao/qrcode.react>
+- 배포 package: <https://www.npmjs.com/package/qrcode.react/v/4.2.0>
+
+QR은 embedded SPA에서 로컬 생성하며 secret 또는 `otpauth` URI를 외부 QR API로 전송하지 않습니다.
