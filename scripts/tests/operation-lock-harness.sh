@@ -6,7 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$(mktemp -d)"
 trap 'operation_lock_release; rm -rf "${fixture}"' EXIT
 
-# shellcheck source=../operation-lock.sh
+# shellcheck source=scripts/operation-lock.sh
 source "${repo_root}/scripts/operation-lock.sh"
 VPS_GUARD_OPERATION_LOCK_ROOT="${fixture}" operation_lock_acquire fixture-first
 if VPS_GUARD_OPERATION_LOCK_ROOT="${fixture}" bash -c \

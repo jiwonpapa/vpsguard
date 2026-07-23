@@ -19,7 +19,6 @@ wait_for_http() {
   curl --disable --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
     --connect-timeout 1 --max-time 15 "$@"
 }
-
 atomic_symlink() {
   local target="$1"
   local link="$2"
@@ -28,7 +27,6 @@ atomic_symlink() {
   ln -s "${target}" "${temporary}"
   mv -Tf "${temporary}" "${link}"
 }
-
 echo "mode: ${mode}"
 echo "bundle: ${bundle:-<required for apply>}"
 echo "preserve: /etc/vps-guard, /var/lib/vps-guard, /etc/letsencrypt, Nginx site data"
@@ -70,18 +68,15 @@ for required in \
 done
 release_id="$(tail -1 "${bundle}/BUILD-INFO.txt")"
 [[ "${release_id}" =~ ^[0-9a-f]{40}$ ]] || { echo "release commit is invalid" >&2; exit 2; }
-
 operation_lock_acquire "update-$$"
 operation_started="${SECONDS}"
 operation_progress preflight completed
-
 snapshot_output="$(bash "${bundle}/scripts/deployment-state.sh" --snapshot)"
 snapshot="${snapshot_output#snapshot=}"
 [[ "${snapshot}" =~ ^/var/backups/vps-guard/deployments/deploy-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || {
   echo "deployment snapshot was not created" >&2
   exit 1
 }
-
 rollback() {
   local rc=$?
   local rollback_started="${SECONDS}"
@@ -104,7 +99,6 @@ rollback() {
   exit "${rc}"
 }
 trap rollback EXIT
-
 release_root="/usr/local/lib/vps-guard/releases"
 release_dir="${release_root}/${release_id}"
 if [[ -L "/usr/local/lib/vps-guard" || -L "${release_root}" || -L "${release_dir}" ]]; then

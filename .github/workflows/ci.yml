@@ -38,10 +38,8 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
-          if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes shellcheck
-          fi
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck libclang-dev libpam0g-dev
       - name: Repository contracts
         run: |
           python3 -W error::ResourceWarning -m unittest discover -s tools/tests -p 'test_*.py'
@@ -75,6 +73,8 @@ jobs:
         with:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Install Linux native dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libclang-dev libpam0g-dev
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: nextest
@@ -101,6 +101,8 @@ jobs:
           toolchain: 1.96.0
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Install Linux native dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libclang-dev libpam0g-dev
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cargo-llvm-cov
@@ -125,6 +127,8 @@ jobs:
         with:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Install Linux native dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libclang-dev libpam0g-dev
       - run: bash scripts/integration-gate.sh
       - run: bash scripts/ops-harness.sh
       - name: Upload integration evidence

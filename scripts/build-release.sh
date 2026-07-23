@@ -8,7 +8,8 @@ version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | he
 bundle="${repo_root}/target/release-bundle/${target}/vpsguard-${version}"
 cd "${repo_root}"
 trap 'bash scripts/build-storage.sh --auto || true' EXIT
-export VPS_GUARD_BUILD_COMMIT="$(git rev-parse --verify HEAD)"
+VPS_GUARD_BUILD_COMMIT="$(git rev-parse --verify HEAD)"
+export VPS_GUARD_BUILD_COMMIT
 (cd web && bun ci && bun run check)
 "${build_tool}" build --locked --release --target "${target}" \
   -p guard-cli -p guard-control -p guard-edge --bins
@@ -19,7 +20,7 @@ mkdir -p "${bundle}/bin" \
   "${bundle}/tmpfiles" "${bundle}/certbot" "${bundle}/pam" "${bundle}/scripts" "${bundle}/sbom" \
   "${bundle}/g7devops/nginx" "${bundle}/g7devops/systemd" \
   "${bundle}/g7devops/certbot" "${bundle}/gnuboard5/apache"
-install -m 0755 target/${target}/release/vps-guard{,-control,-privileged,-edge} "${bundle}/bin/"
+install -m 0755 target/"${target}"/release/vps-guard{,-control,-privileged,-edge} "${bundle}/bin/"
 install -m 0644 packaging/systemd/*.service packaging/systemd/*.socket "${bundle}/systemd/"
 install -m 0644 packaging/systemd/vps-guard-control-cloudflare-credential.conf \
   "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf"

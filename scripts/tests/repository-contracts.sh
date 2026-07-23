@@ -74,12 +74,12 @@ edge_start_line="$(grep -nF 'systemctl start vps-guard-edge.service' scripts/upd
 grep -Fq 'public edge update is blocked until Nginx bypass owns 443' scripts/update-release.sh
 grep -Fq -- '--retry 40 --retry-connrefused --retry-delay 0' scripts/deploy-g7devops.sh
 grep -Fq 'VPS_GUARD_BYPASS_VERIFIED' scripts/uninstall.sh
-
 # OPS-007, NFR-005: CI evidence must be generated at the exact paths uploaded by
 # the workflow, and repository linters must remain available on a clean runner.
 # shellcheck disable=SC2016 # GitHub workflow의 literal shell expression을 검사합니다.
 grep -Fq 'echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"' .github/workflows/ci.yml
-grep -Fq 'apt-get install --yes shellcheck' .github/workflows/ci.yml
+grep -Fq 'apt-get install --yes shellcheck libclang-dev libpam0g-dev' .github/workflows/ci.yml
+[[ "$(grep -Fc 'sudo apt-get install --yes libclang-dev libpam0g-dev' .github/workflows/ci.yml)" == 3 ]]
 grep -Fq '[profile.ci.junit]' .config/nextest.toml
 grep -Fq 'path = "junit.xml"' .config/nextest.toml
 if grep -Fq 'path = "target/nextest/ci/junit.xml"' .config/nextest.toml; then
@@ -87,14 +87,12 @@ if grep -Fq 'path = "target/nextest/ci/junit.xml"' .config/nextest.toml; then
   exit 1
 fi
 grep -Fq 'outputFolder: "playwright-report"' web/playwright.config.ts
-
 # NFR-007: workspace lint 상속, module rustdoc와 rustdoc warning 거부를
 # 로컬 check와 CI 모두에서 제거할 수 없게 고정합니다.
 grep -Eq '^[[:space:]]*missing_docs[[:space:]]*=[[:space:]]*"deny"[[:space:]]*$' Cargo.toml
 grep -Fq 'bash scripts/docs-gate.sh' scripts/check.sh
 grep -Fq 'RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items' scripts/check.sh
 grep -Fq 'RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items' .github/workflows/ci.yml
-
 # NFR-008, TLS-006, OBS-011, SEC-004: 외부 protocol client 우선 원칙과
 # 최소 권한 provider·핵심 service 관측 경계를 문서에서 제거하지 못하게 합니다.
 grep -Fq '표준 프로토콜·암호·wire format을 다루는 기능은 유지보수되는 검증된 crate 또는 외부 client를 우선' DEVELOPMENT_CONSTITUTION.md
@@ -111,7 +109,6 @@ grep -Fq 'auth_rate_limit_rpm = 10' configs/vps-guard.example.toml
 grep -Fq 'rejects_method(&context.method)' crates/guard-edge/src/proxy.rs
 grep -Fq 'VPSGUARD_INTEGRATION_BODY_SECRET' scripts/integration-gate.sh
 grep -Fq '계정·session·device별 한도' docs/APP_SECURITY.md
-
 grep -Fq 'RequestIdGenerator' crates/guard-edge/src/proxy.rs
 grep -Fq 'traffic_request_id_idx' crates/guard-control/src/storage.rs
 grep -Fq '/api/v1/correlations/{correlation_id}' crates/guard-control/src/api.rs
@@ -128,7 +125,6 @@ grep -Fq 'StartLimitIntervalSec=60s' packaging/systemd/vps-guard-edge.service
 grep -Fq 'StartLimitBurst=30' packaging/systemd/vps-guard-edge.service
 grep -Fq 'RemoteIPHeader X-Forwarded-For' configs/apache/vpsguard-origin.conf
 grep -Fq 'RemoteIPInternalProxy 127.0.0.1' configs/apache/vpsguard-origin.conf
-
 grep -Fq 'LoadCredential=cloudflare-token:/etc/vps-guard/secrets/cloudflare-token' packaging/systemd/vps-guard-control-cloudflare-credential.conf
 grep -Fq 'LoadCredential=mysql-monitor-url:/etc/vps-guard/secrets/mysql-monitor-url' packaging/systemd/vps-guard-control-service-credentials.conf.example
 grep -Fq 'LoadCredential=redis-monitor-url:/etc/vps-guard/secrets/redis-monitor-url' packaging/systemd/vps-guard-control-service-credentials.conf.example
