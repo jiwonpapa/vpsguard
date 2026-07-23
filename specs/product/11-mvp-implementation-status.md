@@ -42,7 +42,7 @@ last_reviewed: 2026-07-23
 | `TLS-004` 자동 검증 | 명시적 IP·port에 exact SNI handshake 후 파일과 실제 leaf SHA-256 비교, mismatch fail-closed Certbot hook | 일치·불일치 local TLS fixture와 CLI·packaging 계약; 실제 renewal 직후 증거는 미수집 |
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | 별도 HTTPS 관리 Host→loopback Control 분리, CSR SPA, 인증된 SSE·조회, client 검색·필터·정렬·페이지, 운영 명령 확인, light/dark, stale/error | local TLS integration·Bun·Playwright·control tests |
 | `UI-016`, `UI-017` | trusted Apache TLS terminator의 직접 관리자와 standalone/delegated 방화벽 SPA | 실제 `:7443` PAM session·Control 비공개·Playwright typed form/read-only delegation |
-| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | ingress 양방향·probe 실패 exact rollback fixture와 일부 실제 VPS 왕복 증거; update/uninstall·다중 architecture 실증은 미완료 |
+| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | 실제 script와 Rust snapshot CLI를 결합한 update 성공·health 실패 exact rollback·owned-only uninstall 자동 fixture; 실제 systemd update/uninstall·다중 architecture 실증은 미완료 |
 | `OPS-009` | Rust `DeploymentRestoreDriver` 기반 first install·shadow 배포 전 checksum snapshot, legacy v1 호환, stdin root-only token 전달, 실패·수동 원상복귀와 protected directory identity·listener 경계 read-back | Rust fixture exact restore·corrupt snapshot·partial mutation 자동 rollback과 [`g7devops` 실패 자동 복구·수동 restore·재설치 운영 증거](evidence/g7devops-shadow-roundtrip-20260715.md); 사용자 site tree는 scan·복구하지 않음 |
 | `OPS-010` | 단일 OS operation lock, plan hash, typed 단계 ledger·원자 rollback checkpoint 재개, deployment·direct ingress·edge/bypass 실제 driver, 5초 public 순단·60초 apply/update·30초 restore·10초 rollback 예산, 실패 자동 rollback | Rust engine·driver fault·process reconstruction·staged exact-file rollback tests, site tree 거부와 빠른 restore fixture; 격리 Ubuntu VM 20회 100ms probe timeline은 미수집 |
 | 회귀 차단 코드 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 merge gate로 연결 | GitHub branch protection 적용 전에는 강제되지 않음 |
@@ -68,7 +68,7 @@ last_reviewed: 2026-07-23
 - `EDGE-014`, `DET-013`, `SEC-016`, `SEC-017`: 여러 실제 source high-cardinality, 실제 공식 crawler allow, HTTP/2·WebSocket framing과 authenticated 글쓰기·업로드 WAF 오탐 replay
 - `ACT-006`~`ACT-010`: User token과 record ID·type preflight는 fake API까지 구현됐으며, Cloudflare test zone 전환·복구와 실제 kernel/SSH·non-web port diff 증거가 남음. Account API Token onboarding은 zone-scoped DNS Write 재현 전까지 제외
 - `TLS-002`~`TLS-006`: 기존 manager·timer 감지, 승인 전 plan과 served certificate exact 비교는 구현됐으며, plan hash 기반 apply, Certbot staging HTTP-01·systemd timer renew, graceful reload와 실제 renewal·bypass 후 fingerprint 증거가 남음
-- `OPS-005`~`OPS-007`, `OPS-010`: update/uninstall 실증, x86_64/aarch64 artifact 실행 smoke, 격리 Ubuntu VM 20회 apply·restore와 100ms 순단 timeline. public cutover·bypass와 `OPS-009` shadow 복구는 기존 VPS 증거가 있으나 현재 서버는 원본 Nginx topology로 복구됨
+- `OPS-005`~`OPS-007`, `OPS-010`: update/uninstall 자동 fixture는 통과했으며 실제 systemd·Nginx bundle 실증, x86_64/aarch64 artifact 실행 smoke, 격리 Ubuntu VM 20회 apply·restore와 100ms 순단 timeline이 남음. public cutover·bypass와 `OPS-009` shadow 복구는 기존 VPS 증거가 있으나 현재 서버는 원본 Nginx topology로 복구됨
 - 2GB `g7devops` 성능·장애·복구 파일럿
 
 ## 실행 범위

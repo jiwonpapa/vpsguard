@@ -6,10 +6,13 @@ bundle="${2:-}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=operation-lock.sh
 source "${script_dir}/operation-lock.sh"
+# shellcheck source-path=SCRIPTDIR source=state-common.sh
+source "${script_dir}/state-common.sh"; require_fixture_root
 manifest_name="ownership-manifest.txt"
 health_url="${VPS_GUARD_CONTROL_HEALTH_URL:-http://127.0.0.1:7727/health/live}"
 edge_health_url="${VPS_GUARD_EDGE_HEALTH_URL:-http://127.0.0.1:18080/health/live}"
 edge_host="${VPS_GUARD_EDGE_HOST:-}"
+snapshot_root="${VPS_GUARD_SNAPSHOT_ROOT:-/var/backups/vps-guard/deployments}"
 snapshot=""
 release_id=""
 release_dir=""
@@ -39,7 +42,7 @@ fi
   echo "VPS_GUARD_UPDATE_CONFIRM=update-with-rollback is required" >&2
   exit 2
 }
-[[ "${EUID}" -eq 0 ]] || { echo "root is required for update" >&2; exit 2; }
+[[ -n "${test_root}" || "${EUID}" -eq 0 ]] || { echo "root is required for update" >&2; exit 2; }
 [[ -d "${bundle}" ]] || { echo "bundle directory is required" >&2; exit 2; }
 [[ -n "${edge_host}" ]] || { echo "VPS_GUARD_EDGE_HOST is required" >&2; exit 2; }
 [[ "${edge_host}" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "invalid edge Host" >&2; exit 2; }
@@ -74,10 +77,8 @@ operation_started="${SECONDS}"
 operation_progress preflight completed
 snapshot_output="$(bash "${bundle}/scripts/deployment-state.sh" --snapshot)"
 snapshot="${snapshot_output#snapshot=}"
-[[ "${snapshot}" =~ ^/var/backups/vps-guard/deployments/deploy-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || {
-  echo "deployment snapshot was not created" >&2
-  exit 1
-}
+[[ "$(dirname "${snapshot}")" == "${snapshot_root}" && "$(basename "${snapshot}")" =~ ^deploy-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] ||
+  { echo "deployment snapshot was not created" >&2; exit 1; }
 rollback() {
   local rc=$?
   local rollback_started="${SECONDS}"
@@ -100,9 +101,9 @@ rollback() {
   exit "${rc}"
 }
 trap rollback EXIT
-release_root="/usr/local/lib/vps-guard/releases"
+release_root="$(root_path /usr/local/lib/vps-guard/releases)"
 release_dir="${release_root}/${release_id}"
-if [[ -L "/usr/local/lib/vps-guard" || -L "${release_root}" || -L "${release_dir}" ]]; then
+if [[ -L "$(root_path /usr/local/lib/vps-guard)" || -L "${release_root}" || -L "${release_dir}" ]]; then
   echo "release path must not be a symlink" >&2
   exit 1
 fi
@@ -127,34 +128,33 @@ else
     }
   done
 fi
-"${release_dir}/bin/vps-guard" check-config --config /etc/vps-guard/config.toml
+"${release_dir}/bin/vps-guard" check-config --config "$(root_path /etc/vps-guard/config.toml)"
 operation_progress stage_release completed
-
-install -d -m 0755 /usr/local/libexec/vps-guard
-install -m 0755 "${bundle}/scripts/deployment-state.sh" /usr/local/libexec/vps-guard/deployment-state
-install -m 0644 "${bundle}/scripts/state-common.sh" /usr/local/libexec/vps-guard/state-common.sh
-install -m 0644 "${bundle}/systemd/vps-guard-control.service" /etc/systemd/system/vps-guard-control.service
-install -m 0644 "${bundle}/systemd/vps-guard-privileged.service" /etc/systemd/system/vps-guard-privileged.service
-install -m 0644 "${bundle}/systemd/vps-guard-privileged.socket" /etc/systemd/system/vps-guard-privileged.socket
-install -m 0644 "${bundle}/systemd/vps-guard-edge.service" /etc/systemd/system/vps-guard-edge.service
-if [[ -f /etc/vps-guard/secrets/cloudflare-token ]]; then
-  install -d -m 0755 /etc/systemd/system/vps-guard-control.service.d
-  install -m 0644 "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" /etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf
+install -d -m 0755 "$(root_path /usr/local/libexec/vps-guard)"
+install -m 0755 "${bundle}/scripts/deployment-state.sh" "$(root_path /usr/local/libexec/vps-guard/deployment-state)"
+install -m 0644 "${bundle}/scripts/state-common.sh" "$(root_path /usr/local/libexec/vps-guard/state-common.sh)"
+install -m 0644 "${bundle}/systemd/vps-guard-control.service" "$(root_path /etc/systemd/system/vps-guard-control.service)"
+install -m 0644 "${bundle}/systemd/vps-guard-privileged.service" "$(root_path /etc/systemd/system/vps-guard-privileged.service)"
+install -m 0644 "${bundle}/systemd/vps-guard-privileged.socket" "$(root_path /etc/systemd/system/vps-guard-privileged.socket)"
+install -m 0644 "${bundle}/systemd/vps-guard-edge.service" "$(root_path /etc/systemd/system/vps-guard-edge.service)"
+if [[ -f "$(root_path /etc/vps-guard/secrets/cloudflare-token)" ]]; then
+  install -d -m 0755 "$(root_path /etc/systemd/system/vps-guard-control.service.d)"
+  install -m 0644 "${bundle}/systemd/vps-guard-control.service.d/20-cloudflare-credential.conf" "$(root_path /etc/systemd/system/vps-guard-control.service.d/20-cloudflare-credential.conf)"
 fi
-install -m 0644 "${bundle}/tmpfiles/vps-guard.conf" /usr/lib/tmpfiles.d/vps-guard.conf
-install -m 0644 "${bundle}/pam/vps-guard" /etc/pam.d/vps-guard
-systemd-tmpfiles --create /usr/lib/tmpfiles.d/vps-guard.conf
-install -d -m 0750 /var/lib/vps-guard
-install -m 0644 "${bundle}/${manifest_name}" /var/lib/vps-guard/ownership-manifest.txt
+install -m 0644 "${bundle}/tmpfiles/vps-guard.conf" "$(root_path /usr/lib/tmpfiles.d/vps-guard.conf)"
+install -m 0644 "${bundle}/pam/vps-guard" "$(root_path /etc/pam.d/vps-guard)"
+systemd-tmpfiles --create "$(root_path /usr/lib/tmpfiles.d/vps-guard.conf)"
+install -d -m 0750 "$(root_path /var/lib/vps-guard)"
+install -m 0644 "${bundle}/${manifest_name}" "$(root_path /var/lib/vps-guard/ownership-manifest.txt)"
 systemctl daemon-reload
 
 systemctl stop vps-guard-edge.service vps-guard-control.service vps-guard-privileged.service vps-guard-privileged.socket
-install -d -m 0755 /usr/local/lib/vps-guard /usr/local/bin
-atomic_symlink "${release_dir}" /usr/local/lib/vps-guard/current
+install -d -m 0755 "$(root_path /usr/local/lib/vps-guard)" "$(root_path /usr/local/bin)"
+atomic_symlink "/usr/local/lib/vps-guard/releases/${release_id}" "$(root_path /usr/local/lib/vps-guard/current)"
 for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge; do
-  atomic_symlink "/usr/local/lib/vps-guard/current/bin/${binary}" "/usr/local/bin/${binary}"
+  atomic_symlink "/usr/local/lib/vps-guard/current/bin/${binary}" "$(root_path /usr/local/bin/${binary})"
 done
-/usr/local/bin/vps-guard check-config --config /etc/vps-guard/config.toml
+"${release_dir}/bin/vps-guard" check-config --config "$(root_path /etc/vps-guard/config.toml)"
 systemctl start vps-guard-privileged.socket vps-guard-privileged.service
 systemctl start vps-guard-control.service
 wait_for_http "${health_url}" >/dev/null

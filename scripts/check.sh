@@ -14,5 +14,5 @@ cargo deny check
 if command -v cargo-machete >/dev/null 2>&1; then cargo machete crates; fi
 bash scripts/requirements-gate.sh
 bash scripts/tests/repository-contracts.sh
-
+python3 -m tools.vpsguard_harness release-lifecycle
 (cd web && bun ci && bun run check)

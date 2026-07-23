@@ -19,6 +19,7 @@ from .errors import HarnessError
 from .governance import validate_requirements, validate_rustdoc
 from .ops import run_ops_harness
 from .policy import validate_language_policy
+from .release_lifecycle import run_release_lifecycle_harness
 from .vm_lab import run_public_probe_timeline, run_vm_lab
 
 
@@ -32,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     requirements.add_argument("--release", action="store_true")
     subcommands.add_parser("language-policy", help="Python/Rust/Shell ownership contract")
     subcommands.add_parser("ops", help="operations plan and fixture evidence")
+    subcommands.add_parser(
+        "release-lifecycle", help="isolated update rollback and owned-only uninstall"
+    )
     build_storage = subcommands.add_parser(
         "build-storage", help="bounded Cargo artifact storage and cleanup"
     )
@@ -78,6 +82,12 @@ def main(argv: list[str] | None = None) -> int:
                 if result.stderr:
                     print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
             print("ops harness: PASS")
+        elif arguments.command == "release-lifecycle":
+            summary = run_release_lifecycle_harness(root)
+            print(
+                f"release lifecycle harness: PASS scenarios={summary.scenarios} "
+                f"commands={len(summary.results)}"
+            )
         elif arguments.command == "build-storage":
             validate_build_profiles(root)
             if arguments.check_config:

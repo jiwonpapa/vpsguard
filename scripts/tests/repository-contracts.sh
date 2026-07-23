@@ -65,7 +65,7 @@ grep -Fq 'systemd/vps-guard-privileged.service' scripts/update-release.sh
 grep -Fq 'systemd/vps-guard-privileged.socket' scripts/update-release.sh
 stop_line="$(grep -nF 'systemctl stop vps-guard-edge.service vps-guard-control.service' scripts/update-release.sh | cut -d: -f1)"
 stage_line="$(grep -nF 'mv "${stage_dir}" "${release_dir}"' scripts/update-release.sh | cut -d: -f1)"
-switch_line="$(grep -nF 'atomic_symlink "${release_dir}" /usr/local/lib/vps-guard/current' scripts/update-release.sh | cut -d: -f1)"
+switch_line="$(grep -nF 'atomic_symlink "/usr/local/lib/vps-guard/releases/${release_id}" "$(root_path /usr/local/lib/vps-guard/current)"' scripts/update-release.sh | cut -d: -f1)"
 privileged_start_line="$(grep -nF 'systemctl start vps-guard-privileged.socket vps-guard-privileged.service' scripts/update-release.sh | cut -d: -f1)"
 control_start_line="$(grep -nF 'systemctl start vps-guard-control.service' scripts/update-release.sh | cut -d: -f1)"
 edge_start_line="$(grep -nF 'systemctl start vps-guard-edge.service' scripts/update-release.sh | cut -d: -f1)"

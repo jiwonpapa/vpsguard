@@ -105,7 +105,7 @@ last_reviewed: 2026-07-23
 | `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
 | `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-004` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/ingress-transaction-harness.sh` | [`g7devops` edge -> Nginx -> direct edge smoke](evidence/g7devops-direct-tls-20260715.md) |
-| `OPS-005`, `OPS-006` | `tests/e2e/update_uninstall.rs` | rollback·소유 파일 manifest |
+| `OPS-005`, `OPS-006` | `tools/vpsguard_harness/release_lifecycle.py`, `scripts/update-release.sh`, `scripts/uninstall.sh` | 격리 Ubuntu VM/VPS의 실제 bundle update·uninstall과 public probe timeline |
 | `OPS-007` | release workflow | arch별 hash·SBOM·smoke artifact |
 | `OPS-008` | `crates/guard-system/src/command.rs`, `scripts/tests/repository-contracts.sh` | masked command log |
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |

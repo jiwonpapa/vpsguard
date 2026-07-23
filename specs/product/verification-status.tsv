@@ -77,8 +77,8 @@ OPS-001|VPS_PASS|scripts/deploy-g7devops.sh|scripts/tests/deployment-restore-har
 OPS-002|CODE_ONLY|crates/guard-system/src/plan.rs|-|-
 OPS-003|VPS_PASS|crates/guard-system/src/ingress_state/apply.rs|crates/guard-cli/tests/ingress_cli.rs|specs/product/evidence/g7devops-direct-tls-20260715.md
 OPS-004|VPS_PASS|crates/guard-system/src/ingress_state/switch.rs|crates/guard-cli/tests/ingress_cli.rs|specs/product/evidence/g7devops-direct-tls-20260715.md
-OPS-005|CODE_ONLY|scripts/update-release.sh|-|-
-OPS-006|CODE_ONLY|scripts/uninstall.sh|-|-
+OPS-005|AUTO_PASS|scripts/update-release.sh|tools/vpsguard_harness/release_lifecycle.py|-
+OPS-006|AUTO_PASS|scripts/uninstall.sh|tools/vpsguard_harness/release_lifecycle.py|-
 OPS-007|CODE_ONLY|.github/workflows/release.yml|-|-
 OPS-008|AUTO_PASS|crates/guard-system/src/command.rs|crates/guard-system/src/command.rs|-
 OPS-009|VPS_PASS|crates/guard-system/src/deployment_state.rs|scripts/tests/deployment-restore-harness.sh|specs/product/evidence/g7devops-shadow-roundtrip-20260715.md

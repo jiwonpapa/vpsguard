@@ -62,6 +62,18 @@ vps-guard/
 
 OS 명령과 provider API를 `guard-core`에 넣지 않습니다. `guard-edge`는 웹 UI와 SQLite에 의존하지 않습니다.
 
+### 최근 완료 배치: update 자동 원복·owned-only uninstall 회귀
+
+- 요구사항: `OPS-005`, `OPS-006`, `OPS-009`, `NFR-009`
+- [x] 실제 release script와 Rust deployment snapshot/restore CLI를 같은 fixture에서 실행
+- [x] 후보 stage·unit 교체·control/edge health 성공과 versioned symlink read-back
+- [x] edge health 실패 뒤 binary·unit·service state exact rollback과 실패 release 제거
+- [x] uninstall 전후 Nginx public probe와 ownership manifest allowlist만 제거
+- [x] config·runtime state·SSH·Nginx·certificate·site sentinel 보존
+- [x] 시험 root는 별도 확인 문자열·절대 non-root 경로에서만 허용
+- [x] Shell line-count ratchet을 늘리지 않고 Python 표준 라이브러리 하네스로 전체 gate 편입
+- [ ] 격리 Ubuntu 24.04에서 실제 systemd·Nginx·bundle로 update 실패/성공·uninstall 증거 수집
+
 ### 현재 배치: TLS served certificate read-back
 
 - 요구사항: `TLS-001`, `TLS-002`, `TLS-004`

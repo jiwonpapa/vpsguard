@@ -206,6 +206,12 @@ Update는 VPSGuard가 현재 public 443을 소유하면 즉시 거부합니다. 
 적용하고 HTTPS read-back으로 Nginx가 public port를 소유함을 확인한 뒤 update를 실행해야
 하므로 binary copy와 service health 대기 시간이 public 순단에 포함되지 않습니다.
 
+전체 gate의 `release-lifecycle` 하네스는 격리 root에서 같은 update·uninstall script와
+Rust deployment snapshot/restore CLI를 실행합니다. 정상 후보 활성화, edge health 실패
+자동 원복, failed release 제거와 config·state·SSH·Nginx·인증서·site 보존을 대조합니다.
+`VPS_GUARD_TEST_ROOT`는 `VPS_GUARD_FIXTURE_CONFIRM=isolated-root`와 `/`가 아닌 절대
+경로가 함께 없으면 거부되며 운영 설치 절차로 사용하지 않습니다.
+
 ## TLS 갱신
 
 `packaging/certbot/vps-guard-deploy-hook`를 Certbot deploy hook으로 설치합니다. hook은 certificate/key public key 일치, 24시간 이상 유효기간, VPSGuard config를 검사한 뒤 edge를 재시작하고 health를 read-back합니다. 이어서 `VPS_GUARD_TLS_SERVER_NAME`을 SNI로, `VPS_GUARD_TLS_ADDRESS`의 명시적 IP·port로 TLS handshake를 수행해 갱신 파일과 실제 listener leaf의 SHA-256이 정확히 같을 때만 성공합니다. DNS·CDN 경로와 origin listener 검증을 혼합하지 않습니다.
