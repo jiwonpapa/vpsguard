@@ -109,7 +109,7 @@ last_reviewed: 2026-07-24
 | `OPS-007` | `.github/workflows/release.yml`, `crates/guard-control/tests/version_cli.rs`, `crates/guard-edge/tests/version_cli.rs`, `tools/tests/test_release_workflow.py` | [x86_64·aarch64 native bundle 실행, checksum·SBOM·attestation artifact](evidence/release-matrix-20260724.md) |
 | `OPS-008` | `crates/guard-system/src/command.rs`, `scripts/tests/repository-contracts.sh` | masked command log |
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
-| `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh`, `tools/tests/test_qga.py` | 기존 parent mode·payload mode·uid·gid 원복, guest timeout process 종료 회귀와 2GB Ubuntu VM 20회 apply·restore의 100ms probe timeline·단계별 duration report |
+| `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh`, `tools/tests/test_qga.py`, `tools/tests/test_release_endurance.py` | 기존 parent mode·payload mode·uid·gid 원복, guest timeout process 종료 회귀와 `tools/vpsguard_harness/release_endurance.py`의 2GB Ubuntu VM 20회 apply·restore·100ms public probe·단계별 duration report |
 | `OPS-011` | `crates/guard-system/src/ingress_state/apache/tests.rs`, `crates/guard-cli/tests/apache_ingress_cli.rs` | [`gnuboard5` Apache 전환·20회 왕복·rollback report](evidence/gnuboard5-apache-vm-20260722.md) |
 
 ### 3.6 UI, security and NFR

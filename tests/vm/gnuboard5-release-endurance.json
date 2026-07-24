@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "protection_manifest": "gnuboard5-protection-pilot.json",
+  "public_probe": {
+    "url": "https://gnuboard5.local/",
+    "host": "gnuboard5.local",
+    "ip": "192.168.0.143",
+    "ca_certificate": null,
+    "expected_status": 200
+  },
+  "execution": {
+    "cycles": 20,
+    "interval_ms": 100,
+    "max_outage_ms": 5000
+  }
+}

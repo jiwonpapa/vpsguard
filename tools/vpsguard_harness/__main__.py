@@ -20,6 +20,7 @@ from .governance import validate_requirements, validate_rustdoc
 from .ops import run_ops_harness
 from .policy import validate_language_policy
 from .protection_pilot import run_protection_pilot
+from .release_endurance import run_release_endurance
 from .release_lifecycle import run_release_lifecycle_harness
 from .vm_lab import run_public_probe_timeline, run_vm_lab
 
@@ -72,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
     protection_pilot.add_argument("--evidence", type=Path, required=True)
     protection_pilot.add_argument("--run", action="store_true")
     protection_pilot.add_argument("--confirm")
+    release_endurance = subcommands.add_parser(
+        "vm-release-endurance",
+        help="20-cycle 2GB update/restore with continuous public probe",
+    )
+    release_endurance.add_argument("--manifest", type=Path, required=True)
+    release_endurance.add_argument("--bundle", type=Path, required=True)
+    release_endurance.add_argument("--evidence", type=Path, required=True)
+    release_endurance.add_argument("--run", action="store_true")
+    release_endurance.add_argument("--confirm")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
 
@@ -158,6 +168,26 @@ def main(argv: list[str] | None = None) -> int:
                     "vm protection pilot: PASS "
                     f"source_commit={summary.source_commit} "
                     f"guest_mem_total_kib={summary.guest_mem_total_kib} "
+                    f"elapsed_ms={summary.elapsed_ms}"
+                )
+        elif arguments.command == "vm-release-endurance":
+            summary = run_release_endurance(
+                root,
+                arguments.manifest,
+                arguments.bundle,
+                arguments.evidence,
+                execute=arguments.run,
+                confirmation=arguments.confirm,
+            )
+            if summary is None:
+                print("vm release endurance: PLAN")
+            else:
+                print(
+                    "vm release endurance: PASS "
+                    f"source_commit={summary.source_commit} "
+                    f"cycles={summary.cycles_completed} "
+                    f"samples={summary.probe['samples']} "
+                    f"max_outage_ms={summary.probe['max_outage_ms']} "
                     f"elapsed_ms={summary.elapsed_ms}"
                 )
     except HarnessError as error:
