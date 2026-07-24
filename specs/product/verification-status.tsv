@@ -97,7 +97,7 @@ SEC-011|AUTO_PASS|docs/APP_SECURITY.md|scripts/integration-gate.sh|-
 SEC-012|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
 SEC-013|AUTO_PASS|crates/guard-control/src/pam_mfa.rs|crates/guard-control/src/auth/tests.rs|-
 SEC-014|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/auth/tests.rs|-
-NFR-001|PLANNED|-|-|-
+NFR-001|CODE_ONLY|tools/vpsguard_harness/load_regression.py|tools/tests/test_load_regression.py|-
 NFR-002|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|specs/product/evidence/gnuboard5-standalone-security-20260722.md
 NFR-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 NFR-004|AUTO_PASS|crates/guard-system/src/atomic_store.rs|crates/guard-system/src/atomic_store/tests.rs|-

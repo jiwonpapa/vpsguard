@@ -12,6 +12,8 @@ SLOW_RESPONSE_SECONDS = 0.3
 class Handler(BaseHTTPRequestHandler):
     """Return a bounded echo of proxy-owned headers."""
 
+    protocol_version = "HTTP/1.1"
+
     def do_GET(self):  # noqa: N802
         if self.path.startswith("/__vpsguard_test__/slow"):
             time.sleep(SLOW_RESPONSE_SECONDS)

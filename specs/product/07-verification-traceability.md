@@ -138,7 +138,8 @@ last_reviewed: 2026-07-24
 | `SEC-015` | `crates/guard-control/src/pam_auth.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/auth/tests.rs`, `tools/vm/pam-login-probe.sh` | Ubuntu PAM group·root/locked denial, 실제 사용자 QR 등록과 사용자 입력 TOTP session report. 2026-07-22 자동 생성 test seed 증거는 사용자 등록 증거에서 제외 |
 | `SEC-016` | `crates/guard-edge/src/security/tests.rs`, `scripts/integration-gate.sh` | [중복 Host·Content-Length·CL+TE raw VM 거부와 정상 HTTP/1.1 report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `SEC-017` | `tools/tests/test_vm_lab.py`, `tests/vm/gnuboard5-toolkit.json`, `configs/apache/waf-tuned-enforce.conf` | [ModSecurity·CRS detection/tuned enforce SQLi·XSS와 anonymous 정상 GET report](evidence/gnuboard5-standalone-security-20260722.md) |
-| `NFR-001`, `NFR-002` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/vm/gnuboard5-toolkit.json` | [실제 2GB 정상·burst·AI bot 응답과 service memory peak·OOM report](evidence/gnuboard5-standalone-security-20260722.md) |
+| `NFR-001` | `tools/vpsguard_harness/load_regression.py`, `tools/tests/test_load_regression.py`, `scripts/load-regression-gate.sh` | 동일 2GB 서버·release artifact·direct Nginx 대비 50 VU p95·처리량과 kernel·CPU·artifact/config hash report. direct-origin 개발 gate 통과만으로 대체하지 않음 |
+| `NFR-002` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/vm/gnuboard5-toolkit.json` | [실제 2GB 정상·burst·AI bot 응답과 service memory peak·OOM report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |
 | `NFR-005` | `crates/guard-control/src/api/tests.rs`, error snapshot tests | UI·CLI problem·cause·impact·next action·event ID report |
@@ -206,6 +207,8 @@ bun run test:e2e
 | 정책 reload 중 proxy 오류 | 0건 |
 
 측정 환경, kernel, CPU, artifact hash와 Nginx 설정을 함께 보존합니다. 예산 변경은 실제 데이터와 ADR 없이 허용하지 않습니다.
+
+로컬·CI의 direct-origin 비교는 parser·계산·fail-closed release gate 회귀용입니다. `NFR-001` 수용에는 동일 2GB Ubuntu 서버의 direct Nginx 비교가 별도로 필요합니다.
 
 ## 7. 탐지 효과 게이트
 

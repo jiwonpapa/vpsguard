@@ -13,7 +13,7 @@ last_reviewed: 2026-07-24
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF, 보호 정책 hot reload와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 증거도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 123개 중 `PLANNED` 2개, `CODE_ONLY` 29개, `AUTO_PASS` 73개, `VPS_PASS` 19개입니다. 즉 121개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 92개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 123개 중 `PLANNED` 1개, `CODE_ONLY` 30개, `AUTO_PASS` 73개, `VPS_PASS` 19개입니다. 즉 122개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 92개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -58,6 +58,7 @@ last_reviewed: 2026-07-24
 | `SEC-008`~`SEC-011` | CONNECT·TRACE·TRACK 거부, origin version header 제거, baseline header·HTTPS HSTS·CSP report-only/enforce, G7 auth 전용 bounded client 한도와 XSS/SQLi origin 책임 경계 | config·profile·edge unit, loopback HTTP/TLS·secret scan과 관리 API·UI tests |
 | `SEC-015`~`SEC-017` | Linux-PAM group+봉인 TOTP 최초 등록, raw request framing 거부, 선택형 ModSecurity·OWASP CRS mode | PAM은 자동 생성 test seed 증거를 폐기하고 실제 사용자 QR 등록 재검증 대기; duplicate Host/CL·CL+TE 400, SQLi·XSS 403와 anonymous GET 오탐 0; upload·HTTP/2·WebSocket VM replay는 미완료 |
 | `NFR-003`, `NFR-004`, `NFR-006` 일부 | edge/control 분리, 원자 state, versioned strict schema | integration·atomic store tests |
+| `NFR-001` 코드 | release guard-edge와 direct-origin의 동일 50 VU workload에서 p95 추가 지연·처리량 감소를 고정 예산으로 판정하고 초과 시 release 차단 | parser·예산 unit test와 2026-07-24 로컬 release 측정: p95 `+1.504ms` 통과, 처리량 `-19.03%` 미달. 동일 2GB Ubuntu direct Nginx 증거 전까지 `CODE_ONLY` |
 | `NFR-007` | workspace `missing_docs = "deny"`, 모든 crate lint 상속, module `//!`, lint 우회 금지, private item 포함 rustdoc warning 거부 | docs gate·repository contract·CI rustdoc build |
 | `NFR-008` 계약 | 표준 protocol·DB driver는 외부 crate/client를 우선하고 project 고유 bounded 불변조건만 직접 구현하는 선택 기준 | ADR 0002; crate별 적용과 2GB binary·RSS 비교는 미완료 |
 | `NFR-009` | Python 표준 라이브러리 기반 argv runner·구조화 오류·redaction, Rust privileged deployment·public ingress transaction, 얇은 Shell wrapper와 line-count 비증가 ratchet | Python unit·language policy·docs·requirements·ops harness, Rust ingress exact restore·staged switch·fault rollback과 Shell 호환 fixture |
@@ -78,6 +79,7 @@ last_reviewed: 2026-07-24
 - `TLS-002`: 격리 2GB VM의 root-owned stage, Pingora FD handoff, supervisor 보존, 같은 TLS socket in-flight 완료와 439/439 신규 handshake는 `VPS_PASS`
 - `TLS-003`~`TLS-006`: 기존 manager·timer 감지, 승인 전 plan과 served certificate exact 비교는 구현됐으며, plan hash 기반 apply, 실제 Certbot staging HTTP-01·systemd timer renew·deploy hook 전체 경로와 bypass 후 fingerprint 증거가 남음
 - `OPS-005`, `OPS-006`, `OPS-010`: 격리 Ubuntu 2GB VM에서 20회 update·restore와 Apache direct bypass·실제 owned-only uninstall·exact restore를 통과했습니다. `OPS-007` x86_64/aarch64 native artifact 실행·SBOM·attestation은 AUTO_PASS이며, `OPS-009` shadow 복구는 기존 VPS 증거가 있으나 `g7devops` 서버는 원본 Nginx topology로 복구된 상태입니다.
+- `NFR-001`: 비교 release gate는 구현됐으나 로컬 direct-origin 대비 처리량 감소가 `19.03%`로 `10%` 예산을 초과했습니다. 동일 2GB Ubuntu direct Nginx 재측정과 hot-path 원인 제거 전에는 alpha release를 차단합니다.
 - 2GB `g7devops` 성능·장애·복구 파일럿
 
 ## 실행 범위
