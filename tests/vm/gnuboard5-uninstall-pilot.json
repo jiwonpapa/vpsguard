@@ -2,6 +2,7 @@
   "schema_version": 1,
   "release_endurance_manifest": "gnuboard5-release-endurance.json",
   "ingress": "apache-public",
+  "guest_probe_ca_certificate": "/etc/ssl/gnuboard5/gnuboard5.local.pem",
   "execution": {
     "max_uninstall_ms": 30000,
     "max_restore_ms": 30000

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .errors import HarnessError
 from .release_endurance_model import ReleaseEnduranceManifest
@@ -21,6 +21,7 @@ class UninstallPilotManifest:
     endurance: ReleaseEnduranceManifest
     endurance_manifest: Path
     ingress: str
+    guest_probe_ca_certificate: PurePosixPath
     max_uninstall_ms: int
     max_restore_ms: int
 
@@ -40,6 +41,7 @@ class UninstallPilotManifest:
             "schema_version",
             "release_endurance_manifest",
             "ingress",
+            "guest_probe_ca_certificate",
             "execution",
         }:
             fail(
@@ -78,6 +80,7 @@ class UninstallPilotManifest:
             )
         max_uninstall_ms = execution["max_uninstall_ms"]
         max_restore_ms = execution["max_restore_ms"]
+        guest_probe_ca = _guest_certificate_path(raw["guest_probe_ca_certificate"])
         if (
             raw["ingress"] != "apache-public"
             or endurance.protection.domain != "gnuboard5"
@@ -100,6 +103,7 @@ class UninstallPilotManifest:
             endurance=endurance,
             endurance_manifest=endurance_path,
             ingress=raw["ingress"],
+            guest_probe_ca_certificate=guest_probe_ca,
             max_uninstall_ms=max_uninstall_ms,
             max_restore_ms=max_restore_ms,
         )
@@ -179,3 +183,25 @@ def _repository_path(root: Path, parent: Path, value: object) -> Path:
             str(candidate),
         )
     return candidate
+
+
+def _guest_certificate_path(value: object) -> PurePosixPath:
+    if not isinstance(value, str) or not value or len(value) > 255:
+        fail(
+            "UNINSTALL_GUEST_CA_INVALID",
+            "guest probe CA 경로가 올바르지 않습니다.",
+            repr(value),
+        )
+    path = PurePosixPath(value)
+    if (
+        not path.is_absolute()
+        or path.parts[:3] != ("/", "etc", "ssl")
+        or any(part in {".", ".."} for part in path.parts)
+        or path.suffix != ".pem"
+    ):
+        fail(
+            "UNINSTALL_GUEST_CA_INVALID",
+            "guest probe CA는 /etc/ssl 아래 PEM 절대 경로여야 합니다.",
+            value,
+        )
+    return path

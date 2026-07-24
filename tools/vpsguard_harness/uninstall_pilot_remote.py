@@ -359,6 +359,7 @@ def uninstall_environment(manifest: UninstallPilotManifest) -> tuple[str, ...]:
         "VPS_GUARD_UNINSTALL_CONFIRM=remove-owned-artifacts-only",
         f"VPS_GUARD_BYPASS_VERIFIED={manifest.ingress}",
         f"VPS_GUARD_UNINSTALL_PROBE_URL={manifest.endurance.probe_url}",
+        f"VPS_GUARD_UNINSTALL_PROBE_CA={manifest.guest_probe_ca_certificate}",
     )
 
 

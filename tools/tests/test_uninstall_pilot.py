@@ -111,6 +111,9 @@ class UninstallPilotTest(unittest.TestCase):
                     "schema_version": 1,
                     "release_endurance_manifest": self.endurance.name,
                     "ingress": ingress,
+                    "guest_probe_ca_certificate": (
+                        "/etc/ssl/gnuboard5/gnuboard5.local.pem"
+                    ),
                     "execution": {
                         "max_uninstall_ms": max_uninstall_ms,
                         "max_restore_ms": max_restore_ms,
@@ -206,6 +209,11 @@ class UninstallPilotTest(unittest.TestCase):
         self.assertIn("VPS_GUARD_BYPASS_VERIFIED=apache-public", environment)
         self.assertIn(
             "VPS_GUARD_UNINSTALL_PROBE_URL=https://gnuboard5.local/",
+            environment,
+        )
+        self.assertIn(
+            "VPS_GUARD_UNINSTALL_PROBE_CA="
+            "/etc/ssl/gnuboard5/gnuboard5.local.pem",
             environment,
         )
 
