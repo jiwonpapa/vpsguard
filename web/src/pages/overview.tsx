@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { useAuth } from "../auth";
 import { ConsoleSection, MetricGrid, MetricItem } from "../components/console-section";
+import { InfrastructureReadback } from "../components/infrastructure-readback";
 import { ErrorState, LoadingState } from "../components/query-state";
 import { SectionHeading } from "../components/section-heading";
 import { Badge } from "../components/ui/badge";
@@ -21,6 +22,7 @@ export function OverviewPage() {
   const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 5_000 });
   const summary = useQuery({ queryKey: ["summary"], queryFn: api.summary, refetchInterval: 5_000 });
   const resources = useQuery({ queryKey: ["resources"], queryFn: api.resources, refetchInterval: 5_000 });
+  const firewall = useQuery({ queryKey: ["firewall"], queryFn: api.firewall, refetchInterval: 10_000 });
 
   if (status.isPending || summary.isPending || resources.isPending) return <LoadingState />;
   if (status.error || summary.error || resources.error) {
@@ -53,6 +55,13 @@ export function OverviewPage() {
       />
 
       <div className="space-y-6">
+        <InfrastructureReadback
+          status={state}
+          firewall={firewall.data}
+          firewallPending={firewall.isPending}
+          firewallFailed={firewall.isError}
+        />
+
         <ConsoleSection label="현재 보호 상태" contentClassName="p-0 sm:p-0">
           <div className="grid lg:grid-cols-[1.35fr_0.65fr]">
             <div className="p-5 sm:p-7">

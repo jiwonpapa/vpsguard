@@ -65,7 +65,7 @@ UI-004|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
 UI-005|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
 UI-006|AUTO_PASS|web/src/pages/resources.tsx|web/tests/console.e2e.ts|-
 UI-007|CODE_ONLY|web/src/pages/incidents.tsx|-|-
-UI-008|PLANNED|-|-|-
+UI-008|AUTO_PASS|web/src/components/infrastructure-readback.tsx|web/tests/console.e2e.ts|-
 UI-009|CODE_ONLY|web/src/auth.tsx|-|-
 UI-010|PLANNED|-|-|-
 UI-011|AUTO_PASS|web/src/components/ui/button.tsx|web/tests/visual.e2e.ts|-

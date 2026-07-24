@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// UI-002, UI-004, UI-005, UI-006: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
+// UI-002, UI-004, UI-005, UI-006, UI-008: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
 
 const status = {
   schema_version: 1,
@@ -433,6 +433,10 @@ test("organizes the overview as a sectioned operations console", async ({ page }
     await expect(page.getByText("운영", { exact: true })).toBeVisible();
   }
   await expect(page.getByRole("region", { name: "현재 보호 상태" })).toBeVisible();
+  const infrastructure = page.getByRole("region", { name: "인프라 실제 상태" });
+  await expect(infrastructure).toContainText("미설정");
+  await expect(infrastructure).toContainText("standalone_ufw");
+  await expect(infrastructure).toContainText("certbot.timer");
   await expect(page.getByRole("region", { name: "실시간 트래픽" })).toBeVisible();
   await expect(page.getByRole("region", { name: "서버 압력" })).toBeVisible();
   await expect(page.getByRole("region", { name: "외부 알림" })).toBeVisible();
@@ -440,6 +444,19 @@ test("organizes the overview as a sectioned operations console", async ({ page }
   await expect(page.getByText("CPU 사용", { exact: true })).toBeVisible();
   await expect(page.getByText("37%", { exact: true })).toBeVisible();
   await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);
+});
+
+test("keeps overview usable when firewall read-back fails", async ({ page }) => {
+  await page.route("**/api/v1/firewall", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "FIREWALL_STATUS_TASK_FAILED" } }),
+    });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "현재 방어 상태" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Host firewall read-back" })).toContainText("read-back 실패");
 });
 
 test("explains that Cloudflare recovery requires explicit approval", async ({ page }) => {
