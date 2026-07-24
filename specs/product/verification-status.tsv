@@ -22,7 +22,7 @@ OBS-006|CODE_ONLY|crates/guard-agent/src/services.rs|-|-
 OBS-007|AUTO_PASS|crates/guard-control/src/telemetry.rs|crates/guard-control/src/telemetry/tests.rs|-
 OBS-008|AUTO_PASS|crates/guard-edge/src/telemetry.rs|crates/guard-edge/src/telemetry/tests.rs|-
 OBS-009|CODE_ONLY|crates/guard-edge/src/proxy.rs|-|-
-OBS-010|PLANNED|-|-|-
+OBS-010|CODE_ONLY|crates/guard-control/src/storage.rs|crates/guard-control/src/api/tests.rs|-
 OBS-011|AUTO_PASS|crates/guard-agent/src/cgroup.rs|crates/guard-agent/tests/systemd_cgroup_collector.rs|-
 OBS-012|AUTO_PASS|crates/guard-core/src/correlation.rs|scripts/integration-gate.sh|-
 OBS-013|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
@@ -63,7 +63,7 @@ UI-002|AUTO_PASS|web/src/pages/overview.tsx|web/tests/console.e2e.ts|-
 UI-003|CODE_ONLY|web/src/pages/traffic.tsx|-|-
 UI-004|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
 UI-005|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
-UI-006|PLANNED|-|-|-
+UI-006|AUTO_PASS|web/src/pages/resources.tsx|web/tests/console.e2e.ts|-
 UI-007|CODE_ONLY|web/src/pages/incidents.tsx|-|-
 UI-008|PLANNED|-|-|-
 UI-009|CODE_ONLY|web/src/auth.tsx|-|-

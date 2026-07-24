@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// UI-002, UI-004, UI-005: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
+// UI-002, UI-004, UI-005, UI-006: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
 
 const status = {
   schema_version: 1,
@@ -267,6 +267,28 @@ async function mockApi(page: Page) {
           retention_backlog: false,
         },
       },
+      "/api/v1/resources/series": {
+        os: [
+          { bucket_unix_ms: 1783999940000, cpu_usage_percent: 30, load_per_core_percent: 35, memory_used_percent: 45, swap_used_percent: null },
+          { bucket_unix_ms: 1784000000000, cpu_usage_percent: 55, load_per_core_percent: 60, memory_used_percent: 52, swap_used_percent: null },
+        ],
+        services: [{
+          name: "php_fpm",
+          unit: "php8.3-fpm.service",
+          points: [
+            { bucket_unix_ms: 1783999940000, state: "live", cpu_usage_milli_percent: 12000, memory_current_bytes: 120000000, semantic_pressure_percent: 25 },
+            { bucket_unix_ms: 1784000000000, state: "live", cpu_usage_milli_percent: 28000, memory_current_bytes: 140000000, semantic_pressure_percent: 50 },
+          ],
+        }],
+        routes: [{
+          normalized_route: "/api/login",
+          route_class: "strict",
+          points: [
+            { bucket_unix_ms: 1783999940000, requests: 20, errors: 0, max_route_cost: 5 },
+            { bucket_unix_ms: 1784000000000, requests: 80, errors: 2, max_route_cost: 5 },
+          ],
+        }],
+      },
       "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, request_body_bytes: 2048, response_body_bytes: 16384, last_seen_unix_ms: 1784000000000 }] },
       "/api/v1/clients/203.0.113.8": {
         client_ip: "203.0.113.8",
@@ -436,6 +458,8 @@ test("explains that Cloudflare recovery requires explicit approval", async ({ pa
 test("renders bounded storage health and retention state", async ({ page }) => {
   await page.goto("/resources");
   await expect(page.getByRole("heading", { name: "서버 자원과 서비스" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "동일 시간축 상관분석" })).toContainText("/api/login");
+  await expect(page.getByRole("img", { name: "트래픽·서버 자원 동일 시간축" })).toBeVisible();
   await expect(page.getByRole("region", { name: "저장 계층 상태" })).toContainText("healthy");
   await expect(page.getByText("1.1 MiB")).toBeVisible();
   await expect(page.getByText("10.0 GiB")).toBeVisible();

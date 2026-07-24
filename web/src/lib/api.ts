@@ -14,6 +14,7 @@ import type {
   ProtectionPlan,
   ProtectionSettings,
   ProtectionSettingsStatus,
+  ResourceCorrelationSeries,
   ResourcesResponse,
   RouteRow,
   SeriesPoint,
@@ -339,6 +340,8 @@ export const api = {
   correlation: (correlationId: string) =>
     getJson<CorrelationResponse>(correlationPath(correlationId)),
   resources: () => getJson<ResourcesResponse>("/api/v1/resources"),
+  resourceSeries: () =>
+    getJson<ResourceCorrelationSeries>("/api/v1/resources/series"),
   firewall: () => getJson<FirewallStatus>("/api/v1/firewall"),
   firewallPlan: requestFirewallPlan,
   firewallApply: applyFirewallPlan,

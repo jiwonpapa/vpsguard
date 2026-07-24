@@ -9,6 +9,7 @@ use std::time::Duration;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use guard_agent::cgroup::CgroupSnapshot;
+use guard_agent::os::OsSnapshot;
 use guard_agent::services::ServiceSemanticSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::{
@@ -997,7 +998,7 @@ async fn resources_exposes_bounded_storage_health_to_authenticated_session()
         }),
     });
     let issued = issue_session(&state)?;
-    let response = router(state)
+    let response = router(Arc::clone(&state))
         .oneshot(
             Request::get("/api/v1/resources")
                 .header("host", LOOPBACK_HOST)
@@ -1017,6 +1018,48 @@ async fn resources_exposes_bounded_storage_health_to_authenticated_session()
     );
     assert_eq!(value["services"][0]["semantic"]["kind"], "php_fpm");
     assert_eq!(value["services"][0]["semantic"]["listen_queue"], 1);
+
+    state.storage.record_traffic(&TelemetryEnvelope {
+        schema_version: 1,
+        request_id: "resource-series-request".to_owned(),
+        method: "GET".to_owned(),
+        route_class: "strict".to_owned(),
+        normalized_route: "/api/login".to_owned(),
+        route_cost: 5,
+        status: 429,
+        decision: "throttle".to_owned(),
+        occurred_at_unix_ms: 60_001,
+        ..TelemetryEnvelope::default()
+    })?;
+    state.storage.record_os_resource(
+        60_002,
+        &OsSnapshot {
+            cpu_usage_percent: Some(37),
+            logical_cpu_count: 2,
+            load_1m: 0.7,
+            memory_total_bytes: 2_048,
+            memory_available_bytes: 1_024,
+            swap_total_bytes: 0,
+            swap_free_bytes: 0,
+            uptime_seconds: 7_200,
+        },
+    )?;
+    let services = state.service_health.read().await.clone();
+    state.storage.record_service_resources(60_003, &services)?;
+    let response = router(state)
+        .oneshot(
+            Request::get("/api/v1/resources/series?since_unix_ms=60000")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 16_384).await?;
+    let value = serde_json::from_slice::<serde_json::Value>(&body)?;
+    assert_eq!(value["os"][0]["bucket_unix_ms"], 60_000);
+    assert_eq!(value["services"][0]["name"], "php_fpm");
+    assert_eq!(value["routes"][0]["normalized_route"], "/api/login");
     Ok(())
 }
 

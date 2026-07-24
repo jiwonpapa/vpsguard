@@ -177,6 +177,11 @@ struct SeriesQuery {
     resolution: SeriesResolution,
 }
 
+#[derive(Debug, Deserialize)]
+struct ResourceSeriesQuery {
+    since_unix_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 enum SeriesResolution {
     #[serde(rename = "1s")]
@@ -293,6 +298,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/correlations/{correlation_id}", get(correlation))
         .route("/api/v1/events", get(event_stream))
         .route("/api/v1/resources", get(resources))
+        .route("/api/v1/resources/series", get(resource_series))
         .route("/api/v1/firewall", get(firewall_status))
         .route("/api/v1/firewall/plan", post(firewall_plan))
         .route("/api/v1/firewall/apply", post(firewall_apply))
@@ -582,6 +588,32 @@ async fn resources(State(app): State<Arc<AppState>>) -> Json<ResourcesResponse> 
         services,
         storage: app.storage.health(),
     })
+}
+
+async fn resource_series(
+    State(app): State<Arc<AppState>>,
+    Query(query): Query<ResourceSeriesQuery>,
+) -> Response {
+    let since = query.since_unix_ms.unwrap_or_else(|| {
+        unix_millis().saturating_sub(24_u64.saturating_mul(60).saturating_mul(60_000))
+    });
+    match app.storage.resource_correlation_series(since) {
+        Ok(series) => Json(series).into_response(),
+        Err(error) => {
+            api_warn!(
+                error_code = "STORAGE_QUERY_FAILED",
+                error = %error,
+                "resource correlation query failed"
+            );
+            api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STORAGE_QUERY_FAILED",
+                "자원 상관 시계열을 읽지 못했습니다.",
+                "방어 동작은 계속되지만 동일 시간축 화면이 지연됩니다.",
+                "SQLite 상태와 disk 여유 공간을 확인하십시오.",
+            )
+        }
+    }
 }
 
 async fn firewall_status(State(app): State<Arc<AppState>>) -> Response {

@@ -56,7 +56,7 @@ last_reviewed: 2026-07-24
 | `OBS-005` | `crates/guard-agent/tests/mysql_collector.rs` | 최소 권한 DB 계정 smoke |
 | `OBS-006` | `crates/guard-agent/tests/redis_collector.rs` | Redis on/off/error smoke |
 | `OBS-008` | `crates/guard-edge/src/telemetry/tests.rs`, `crates/guard-control/src/telemetry/tests.rs` | drop counter와 HTTP success |
-| `OBS-010` | `crates/guard-core/tests/resource_correlation.rs` | incident evidence snapshot |
+| `OBS-010` | `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs` | incident evidence snapshot |
 | `OBS-011` | `crates/guard-agent/tests/systemd_cgroup_collector.rs` | 2GB VPS allowlisted unit과 cgroup 실제값 대조 |
 | `OBS-012` | `crates/guard-core/src/correlation.rs`, `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs`, `scripts/integration-gate.sh` | public 응답·Nginx upstream·Control UI의 동일 request ID 조회 report |
 | `OBS-013` | `crates/guard-control/src/api/tests.rs`, `scripts/tests/repository-contracts.sh`, `scripts/integration-gate.sh` | edge/control journal JSON field와 식별자 상관 조회 report |
@@ -118,8 +118,9 @@ last_reviewed: 2026-07-24
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
 | `UI-001`, `SEC-007` | config·edge runtime·control API tests와 `scripts/integration-gate.sh` | 별도 HTTPS 관리 Host routing·Control public port scan |
-| `UI-002`, `UI-003`, `UI-004`, `UI-006`, `UI-007`, `UI-008`, `UI-009` | `web/tests/console.e2e.ts`, `web/tests/visual.e2e.ts` | 상태별 desktop·mobile Playwright와 screenshot |
+| `UI-002`, `UI-003`, `UI-004`, `UI-007`, `UI-008`, `UI-009` | `web/tests/console.e2e.ts`, `web/tests/visual.e2e.ts` | 상태별 desktop·mobile Playwright와 screenshot |
 | `UI-005` | `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 인증된 exact-IP 상세 API와 desktop·mobile 목록→상세에서 요청·bytes·route·5xx·경로 비용 점수·실제 조치 일치 |
+| `UI-006` | `crates/guard-control/src/storage.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 최대 24시간·1,440점의 동일 1분 bucket에서 상위 route 요청과 OS·allowlist service pressure의 desktop·mobile 비교 |
 | `UI-010`, `UI-011` | `web/tests/console.e2e.ts`, `web/tests/visual.e2e.ts` | 메뉴 그룹·운영 section 계약, 비로그인 gate와 인증 후 overview의 theme·viewport screenshot diff |
 | `UI-012` | `web/tests/permissions.spec.ts` | role별 IP·export·action matrix |
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |

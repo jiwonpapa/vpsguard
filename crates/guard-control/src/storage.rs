@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
+use guard_agent::os::OsSnapshot;
+use guard_agent::services::ServiceSemanticSnapshot;
+use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::GuardEvent;
 use guard_core::config::RetentionConfig;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -21,6 +24,9 @@ const TEN_SECONDS_MS: u64 = 10_000;
 const MINUTE_MS: u64 = 60_000;
 const RETENTION_DELETE_LIMIT: u64 = 10_000;
 const UNKNOWN_DISK_BYTES: u64 = u64::MAX;
+const MAX_RESOURCE_SERIES_POINTS: usize = 1_440;
+const MAX_RESOURCE_SERIES_SERVICES: usize = 16;
+const MAX_RESOURCE_SERIES_ROUTES: usize = 5;
 
 /// SQLite 초기화·query·저장 실패입니다.
 #[derive(Debug, Error)]
@@ -78,6 +84,59 @@ pub(crate) struct ClientRouteRow {
     pub(crate) max_route_cost: u8,
     pub(crate) request_body_bytes: u64,
     pub(crate) response_body_bytes: u64,
+}
+
+/// UI-006의 route·OS·핵심 service 동일 시간축 응답입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ResourceCorrelationSeries {
+    pub(crate) os: Vec<OsResourceSeriesPoint>,
+    pub(crate) services: Vec<ServiceResourceSeries>,
+    pub(crate) routes: Vec<RouteResourceSeries>,
+}
+
+/// 1분 bucket의 host pressure 원시 비율입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct OsResourceSeriesPoint {
+    pub(crate) bucket_unix_ms: u64,
+    pub(crate) cpu_usage_percent: Option<u8>,
+    pub(crate) load_per_core_percent: u16,
+    pub(crate) memory_used_percent: u8,
+    pub(crate) swap_used_percent: Option<u8>,
+}
+
+/// allowlist service 하나의 bounded 1분 시계열입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ServiceResourceSeries {
+    pub(crate) name: String,
+    pub(crate) unit: Option<String>,
+    pub(crate) points: Vec<ServiceResourceSeriesPoint>,
+}
+
+/// service cgroup·semantic pressure의 동일 시간축 표본입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ServiceResourceSeriesPoint {
+    pub(crate) bucket_unix_ms: u64,
+    pub(crate) state: String,
+    pub(crate) cpu_usage_milli_percent: Option<u64>,
+    pub(crate) memory_current_bytes: Option<u64>,
+    pub(crate) semantic_pressure_percent: Option<u8>,
+}
+
+/// 상위 정규화 route 하나의 bounded 1분 시계열입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RouteResourceSeries {
+    pub(crate) normalized_route: String,
+    pub(crate) route_class: String,
+    pub(crate) points: Vec<RouteResourceSeriesPoint>,
+}
+
+/// route 요청·5xx·profile 비용의 1분 표본입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RouteResourceSeriesPoint {
+    pub(crate) bucket_unix_ms: u64,
+    pub(crate) requests: u64,
+    pub(crate) errors: u64,
+    pub(crate) max_route_cost: u8,
 }
 
 /// route별 bounded aggregate row입니다.
@@ -593,6 +652,7 @@ impl SqliteStore {
         apply_rollup_migration(&mut connection)?;
         apply_correlation_migration(&mut connection)?;
         apply_bot_telemetry_migration(&mut connection)?;
+        apply_resource_series_migration(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             database_path,
@@ -843,6 +903,239 @@ impl SqliteStore {
             last_seen_unix_ms,
             routes,
         }))
+    }
+
+    /// 최신 OS 표본을 bounded 1분 bucket에 upsert합니다.
+    pub(crate) fn record_os_resource(
+        &self,
+        occurred_at_unix_ms: u64,
+        snapshot: &OsSnapshot,
+    ) -> Result<(), StorageError> {
+        let load_per_core_percent = if snapshot.load_1m.is_finite() && snapshot.load_1m >= 0.0 {
+            (snapshot.load_1m * 100.0 / f64::from(snapshot.logical_cpu_count.max(1)))
+                .round()
+                .clamp(0.0, f64::from(u16::MAX)) as u16
+        } else {
+            0
+        };
+        self.lock().execute(
+            "INSERT INTO resource_os_rollups_1m(
+                bucket_ms, cpu_usage_percent, load_per_core_percent,
+                memory_used_percent, swap_used_percent
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(bucket_ms) DO UPDATE SET
+                cpu_usage_percent = excluded.cpu_usage_percent,
+                load_per_core_percent = excluded.load_per_core_percent,
+                memory_used_percent = excluded.memory_used_percent,
+                swap_used_percent = excluded.swap_used_percent",
+            params![
+                to_i64(bucket(occurred_at_unix_ms, MINUTE_MS)),
+                snapshot.cpu_usage_percent,
+                load_per_core_percent,
+                used_percent_u8(snapshot.memory_total_bytes, snapshot.memory_available_bytes),
+                (snapshot.swap_total_bytes > 0)
+                    .then(|| used_percent_u8(snapshot.swap_total_bytes, snapshot.swap_free_bytes)),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 최신 allowlist service 표본을 bounded 1분 bucket에 upsert합니다.
+    pub(crate) fn record_service_resources(
+        &self,
+        occurred_at_unix_ms: u64,
+        services: &[CollectorHealth],
+    ) -> Result<(), StorageError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let mut statement = transaction.prepare_cached(
+            "INSERT INTO resource_service_rollups_1m(
+                bucket_ms, name, unit, state, cpu_usage_milli_percent,
+                memory_current_bytes, semantic_pressure_percent
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(bucket_ms, name) DO UPDATE SET
+                unit = excluded.unit,
+                state = excluded.state,
+                cpu_usage_milli_percent = excluded.cpu_usage_milli_percent,
+                memory_current_bytes = excluded.memory_current_bytes,
+                semantic_pressure_percent = excluded.semantic_pressure_percent",
+        )?;
+        let bucket_ms = to_i64(bucket(occurred_at_unix_ms, MINUTE_MS));
+        for service in services.iter().take(MAX_RESOURCE_SERIES_SERVICES) {
+            statement.execute(params![
+                bucket_ms,
+                service.name,
+                service.unit,
+                collector_state_name(service.state),
+                service
+                    .resources
+                    .as_ref()
+                    .and_then(|resource| resource.cpu_usage_milli_percent),
+                service
+                    .resources
+                    .as_ref()
+                    .map(|resource| resource.memory_current_bytes),
+                service
+                    .semantic
+                    .as_ref()
+                    .and_then(semantic_pressure_percent),
+            ])?;
+        }
+        drop(statement);
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// 1분 route·OS·service 표본을 같은 epoch bucket으로 bounded 조회합니다.
+    pub(crate) fn resource_correlation_series(
+        &self,
+        since_unix_ms: u64,
+    ) -> Result<ResourceCorrelationSeries, StorageError> {
+        let connection = self.lock();
+        let os = {
+            let mut statement = connection.prepare(
+                "SELECT bucket_ms, cpu_usage_percent, load_per_core_percent,
+                        memory_used_percent, swap_used_percent
+                 FROM (
+                    SELECT bucket_ms, cpu_usage_percent, load_per_core_percent,
+                           memory_used_percent, swap_used_percent
+                    FROM resource_os_rollups_1m WHERE bucket_ms >= ?1
+                    ORDER BY bucket_ms DESC LIMIT ?2
+                 ) ORDER BY bucket_ms ASC",
+            )?;
+            statement
+                .query_map(
+                    params![
+                        to_i64(since_unix_ms),
+                        to_i64(MAX_RESOURCE_SERIES_POINTS as u64)
+                    ],
+                    |row| {
+                        Ok(OsResourceSeriesPoint {
+                            bucket_unix_ms: from_i64(row.get(0)?),
+                            cpu_usage_percent: row.get(1)?,
+                            load_per_core_percent: row.get(2)?,
+                            memory_used_percent: row.get(3)?,
+                            swap_used_percent: row.get(4)?,
+                        })
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let service_names = {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT name FROM resource_service_rollups_1m
+                 WHERE bucket_ms >= ?1 ORDER BY name ASC LIMIT ?2",
+            )?;
+            statement
+                .query_map(
+                    params![
+                        to_i64(since_unix_ms),
+                        to_i64(MAX_RESOURCE_SERIES_SERVICES as u64)
+                    ],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut services = Vec::with_capacity(service_names.len());
+        for name in service_names {
+            let unit = connection
+                .query_row(
+                    "SELECT unit FROM resource_service_rollups_1m
+                     WHERE name = ?1 AND bucket_ms >= ?2
+                     ORDER BY bucket_ms DESC LIMIT 1",
+                    params![name, to_i64(since_unix_ms)],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            let mut statement = connection.prepare(
+                "SELECT bucket_ms, state, cpu_usage_milli_percent,
+                        memory_current_bytes, semantic_pressure_percent
+                 FROM (
+                    SELECT bucket_ms, state, cpu_usage_milli_percent,
+                           memory_current_bytes, semantic_pressure_percent
+                    FROM resource_service_rollups_1m
+                    WHERE name = ?1 AND bucket_ms >= ?2
+                    ORDER BY bucket_ms DESC LIMIT ?3
+                 ) ORDER BY bucket_ms ASC",
+            )?;
+            let points = statement
+                .query_map(
+                    params![
+                        name,
+                        to_i64(since_unix_ms),
+                        to_i64(MAX_RESOURCE_SERIES_POINTS as u64)
+                    ],
+                    |row| {
+                        Ok(ServiceResourceSeriesPoint {
+                            bucket_unix_ms: from_i64(row.get(0)?),
+                            state: row.get(1)?,
+                            cpu_usage_milli_percent: row.get(2)?,
+                            memory_current_bytes: row.get(3)?,
+                            semantic_pressure_percent: row.get(4)?,
+                        })
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            services.push(ServiceResourceSeries { name, unit, points });
+        }
+        let route_keys = {
+            let mut statement = connection.prepare(
+                "SELECT normalized_route, route_class
+                 FROM traffic_rollups_1m WHERE bucket_ms >= ?1
+                 GROUP BY normalized_route, route_class
+                 ORDER BY SUM(requests) DESC, normalized_route ASC LIMIT ?2",
+            )?;
+            statement
+                .query_map(
+                    params![
+                        to_i64(since_unix_ms),
+                        to_i64(MAX_RESOURCE_SERIES_ROUTES as u64)
+                    ],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut routes = Vec::with_capacity(route_keys.len());
+        for (normalized_route, route_class) in route_keys {
+            let mut statement = connection.prepare(
+                "SELECT bucket_ms, requests, errors, max_route_cost
+                 FROM (
+                    SELECT bucket_ms, requests, errors, max_route_cost
+                    FROM traffic_rollups_1m
+                    WHERE normalized_route = ?1 AND route_class = ?2 AND bucket_ms >= ?3
+                    ORDER BY bucket_ms DESC LIMIT ?4
+                 ) ORDER BY bucket_ms ASC",
+            )?;
+            let points = statement
+                .query_map(
+                    params![
+                        normalized_route,
+                        route_class,
+                        to_i64(since_unix_ms),
+                        to_i64(MAX_RESOURCE_SERIES_POINTS as u64)
+                    ],
+                    |row| {
+                        Ok(RouteResourceSeriesPoint {
+                            bucket_unix_ms: from_i64(row.get(0)?),
+                            requests: from_i64(row.get(1)?),
+                            errors: from_i64(row.get(2)?),
+                            max_route_cost: from_i64(row.get(3)?).try_into().unwrap_or(u8::MAX),
+                        })
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            routes.push(RouteResourceSeries {
+                normalized_route,
+                route_class,
+                points,
+            });
+        }
+        Ok(ResourceCorrelationSeries {
+            os,
+            services,
+            routes,
+        })
     }
 
     /// Edge telemetry에서 마지막으로 관측한 policy version입니다.
@@ -1343,6 +1636,18 @@ impl SqliteStore {
             "bucket_ms",
             cutoffs.aggregate_since_ms,
         )?);
+        deleted = deleted.saturating_add(execute_bounded_delete(
+            &transaction,
+            "resource_os_rollups_1m",
+            "bucket_ms",
+            cutoffs.aggregate_since_ms,
+        )?);
+        deleted = deleted.saturating_add(execute_bounded_delete(
+            &transaction,
+            "resource_service_rollups_1m",
+            "bucket_ms",
+            cutoffs.aggregate_since_ms,
+        )?);
         deleted = deleted.saturating_add(transaction.execute(
             "DELETE FROM guard_events WHERE rowid IN (
                 SELECT rowid FROM guard_events
@@ -1599,6 +1904,46 @@ fn apply_bot_telemetry_migration(connection: &mut Connection) -> Result<(), rusq
     transaction.commit()
 }
 
+fn apply_resource_series_migration(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    let applied = connection
+        .query_row(
+            "SELECT version FROM schema_migrations WHERE version = 5",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some();
+    if applied {
+        return Ok(());
+    }
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE resource_os_rollups_1m (
+            bucket_ms INTEGER PRIMARY KEY,
+            cpu_usage_percent INTEGER,
+            load_per_core_percent INTEGER NOT NULL,
+            memory_used_percent INTEGER NOT NULL,
+            swap_used_percent INTEGER
+        );
+        CREATE TABLE resource_service_rollups_1m (
+            bucket_ms INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            unit TEXT,
+            state TEXT NOT NULL,
+            cpu_usage_milli_percent INTEGER,
+            memory_current_bytes INTEGER,
+            semantic_pressure_percent INTEGER,
+            PRIMARY KEY(bucket_ms, name)
+        );
+        CREATE INDEX resource_service_rollups_time_idx
+            ON resource_service_rollups_1m(bucket_ms);
+        CREATE INDEX resource_service_rollups_name_idx
+            ON resource_service_rollups_1m(name, bucket_ms);
+        INSERT INTO schema_migrations(version) VALUES (5);",
+    )?;
+    transaction.commit()
+}
+
 fn backfill_route_rollup(
     transaction: &Transaction<'_>,
     table: &str,
@@ -1784,6 +2129,8 @@ fn has_retention_backlog(
             OR EXISTS(SELECT 1 FROM traffic_rollups_10s WHERE bucket_ms < ?1 LIMIT 1)
             OR EXISTS(SELECT 1 FROM traffic_rollups_1m WHERE bucket_ms < ?3 LIMIT 1)
             OR EXISTS(SELECT 1 FROM traffic_bot_rollups_1m WHERE bucket_ms < ?3 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM resource_os_rollups_1m WHERE bucket_ms < ?3 LIMIT 1)
+            OR EXISTS(SELECT 1 FROM resource_service_rollups_1m WHERE bucket_ms < ?3 LIMIT 1)
             OR EXISTS(SELECT 1 FROM guard_events WHERE unixepoch(occurred_at) < ?4 LIMIT 1)
             OR EXISTS(SELECT 1 FROM audit_actions WHERE unixepoch(occurred_at) < ?5 LIMIT 1)
         THEN 1 ELSE 0 END",
@@ -1818,6 +2165,92 @@ fn wal_path(path: &Path) -> PathBuf {
 
 fn bucket(value: u64, width: u64) -> u64 {
     value.saturating_sub(value % width)
+}
+
+fn used_percent_u8(total: u64, available: u64) -> u8 {
+    if total == 0 {
+        return 0;
+    }
+    total
+        .saturating_sub(available)
+        .saturating_mul(100)
+        .checked_div(total)
+        .unwrap_or_default()
+        .min(100)
+        .try_into()
+        .unwrap_or(100)
+}
+
+fn ratio_percent(numerator: u64, denominator: u64) -> u8 {
+    if denominator == 0 {
+        return 0;
+    }
+    numerator
+        .saturating_mul(100)
+        .checked_div(denominator)
+        .unwrap_or_default()
+        .min(100)
+        .try_into()
+        .unwrap_or(100)
+}
+
+fn semantic_pressure_percent(snapshot: &ServiceSemanticSnapshot) -> Option<u8> {
+    match snapshot {
+        ServiceSemanticSnapshot::TcpHealth => None,
+        ServiceSemanticSnapshot::Nginx {
+            active_connections,
+            reading,
+            writing,
+            ..
+        } => Some(ratio_percent(
+            reading.saturating_add(*writing),
+            *active_connections,
+        )),
+        ServiceSemanticSnapshot::Apache {
+            busy_workers,
+            idle_workers,
+            ..
+        } => Some(ratio_percent(
+            *busy_workers,
+            busy_workers.saturating_add(*idle_workers),
+        )),
+        ServiceSemanticSnapshot::PhpFpm {
+            listen_queue,
+            listen_queue_length,
+            active_processes,
+            total_processes,
+            ..
+        } => Some(
+            ratio_percent(*listen_queue, *listen_queue_length)
+                .max(ratio_percent(*active_processes, *total_processes)),
+        ),
+        ServiceSemanticSnapshot::Mysql {
+            max_connections,
+            threads_connected,
+            threads_running,
+            innodb_row_lock_current_waits,
+            ..
+        } => Some(
+            ratio_percent(*threads_connected, *max_connections)
+                .max(ratio_percent(*threads_running, *threads_connected))
+                .max(u8::from(*innodb_row_lock_current_waits > 0).saturating_mul(100)),
+        ),
+        ServiceSemanticSnapshot::Redis {
+            connected_clients,
+            blocked_clients,
+            ..
+        } => Some(ratio_percent(*blocked_clients, *connected_clients)),
+    }
+}
+
+const fn collector_state_name(state: CollectorState) -> &'static str {
+    match state {
+        CollectorState::Live => "live",
+        CollectorState::Delayed => "delayed",
+        CollectorState::Stale => "stale",
+        CollectorState::Unavailable => "unavailable",
+        CollectorState::Error => "error",
+    }
 }
 
 fn hours_to_millis(hours: u64) -> u64 {
@@ -1878,6 +2311,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::net::{IpAddr, Ipv4Addr};
 
+    use guard_agent::os::OsSnapshot;
+    use guard_agent::services::ServiceSemanticSnapshot;
+    use guard_agent::{CollectorHealth, CollectorState};
     use guard_core::{GuardEvent, Severity};
 
     use super::{RetentionCutoffs, SqliteStore};
@@ -1922,6 +2358,95 @@ mod tests {
             result: BTreeMap::new(),
             recovery: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn resource_correlation_aligns_route_os_and_service_minute_buckets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = SqliteStore::in_memory()?;
+        store.record_traffic_batch(&[
+            telemetry(60_001, None, "allow"),
+            telemetry(60_002, None, "deny"),
+            telemetry(120_001, None, "allow"),
+        ])?;
+        store.record_os_resource(
+            60_123,
+            &OsSnapshot {
+                cpu_usage_percent: Some(40),
+                logical_cpu_count: 2,
+                load_1m: 1.0,
+                memory_total_bytes: 1_000,
+                memory_available_bytes: 400,
+                swap_total_bytes: 100,
+                swap_free_bytes: 80,
+                uptime_seconds: 10,
+            },
+        )?;
+        store.record_os_resource(
+            60_999,
+            &OsSnapshot {
+                cpu_usage_percent: Some(50),
+                logical_cpu_count: 2,
+                load_1m: 1.0,
+                memory_total_bytes: 1_000,
+                memory_available_bytes: 300,
+                swap_total_bytes: 100,
+                swap_free_bytes: 70,
+                uptime_seconds: 11,
+            },
+        )?;
+        store.record_service_resources(
+            60_456,
+            &[CollectorHealth {
+                name: "php_fpm".to_owned(),
+                state: CollectorState::Live,
+                last_success_at: None,
+                error_code: None,
+                unit: Some("php8.3-fpm.service".to_owned()),
+                collected_at_unix_ms: Some(60_456),
+                resource_state: Some(CollectorState::Live),
+                semantic_state: Some(CollectorState::Live),
+                resource_error_code: None,
+                semantic_error_code: None,
+                resources: None,
+                semantic: Some(ServiceSemanticSnapshot::PhpFpm {
+                    accepted_connections: 10,
+                    listen_queue: 1,
+                    max_listen_queue: 2,
+                    listen_queue_length: 10,
+                    idle_processes: 2,
+                    active_processes: 2,
+                    total_processes: 4,
+                    max_active_processes: 2,
+                    max_children_reached: 0,
+                    slow_requests: 0,
+                }),
+            }],
+        )?;
+
+        let series = store.resource_correlation_series(60_000)?;
+        assert_eq!(series.os.len(), 1);
+        assert_eq!(series.os[0].bucket_unix_ms, 60_000);
+        assert_eq!(series.os[0].cpu_usage_percent, Some(50));
+        assert_eq!(series.os[0].load_per_core_percent, 50);
+        assert_eq!(series.os[0].memory_used_percent, 70);
+        assert_eq!(series.os[0].swap_used_percent, Some(30));
+        assert_eq!(series.services.len(), 1);
+        assert_eq!(series.services[0].name, "php_fpm");
+        assert_eq!(
+            series.services[0].points[0].semantic_pressure_percent,
+            Some(50)
+        );
+        assert_eq!(series.routes.len(), 1);
+        assert_eq!(series.routes[0].normalized_route, "/bbs/:id");
+        assert_eq!(series.routes[0].points.len(), 2);
+        assert_eq!(series.routes[0].points[0].requests, 2);
+
+        let filtered = store.resource_correlation_series(120_000)?;
+        assert!(filtered.os.is_empty());
+        assert!(filtered.services.is_empty());
+        assert_eq!(filtered.routes[0].points.len(), 1);
+        Ok(())
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ConsoleSection, MetricGrid, MetricItem } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
+import { ResourceCorrelationChart } from "../components/resource-correlation-chart";
 import { SectionHeading } from "../components/section-heading";
 import { Badge } from "../components/ui/badge";
 import { api } from "../lib/api";
@@ -10,6 +11,7 @@ import { formatBytes, formatTime } from "../lib/utils";
 
 export function ResourcesPage() {
   const query = useQuery({ queryKey: ["resources"], queryFn: api.resources, refetchInterval: 5_000 });
+  const series = useQuery({ queryKey: ["resource-series"], queryFn: api.resourceSeries, refetchInterval: 60_000 });
   if (query.isPending) return <LoadingState />;
   if (query.error) return <ErrorState message="Collector 상태를 읽지 못했습니다." />;
   const { os, services, storage } = query.data;
@@ -17,6 +19,12 @@ export function ResourcesPage() {
     <>
       <SectionHeading eyebrow="Read-only collectors" title="서버 자원과 서비스" description="모든 probe는 독립 timeout을 가지며 Edge 요청 경로와 분리됩니다." />
       <div className="space-y-6">
+        <ConsoleSection label="동일 시간축 상관분석" title="트래픽과 서버 압력" description="상위 정규화 경로 요청과 OS·allowlist 서비스 압력을 1분 bucket으로 비교합니다." contentClassName="p-0 sm:p-0">
+          {series.isPending && <LoadingState />}
+          {series.error && <ErrorState message="자원 상관 시계열을 읽지 못했습니다." />}
+          {series.data && <ResourceCorrelationChart series={series.data} />}
+        </ConsoleSection>
+
         <ConsoleSection label="운영체제 자원" title="운영체제 자원" description="호스트 CPU·load와 가용 메모리·swap·uptime입니다." contentClassName="p-0 sm:p-0">
           <MetricGrid>
             <MetricItem label="CPU 사용" value={os?.cpu_usage_percent == null ? "—" : `${os.cpu_usage_percent}%`} />

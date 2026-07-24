@@ -406,6 +406,7 @@ min_disk_free_bytes = 268435456
 | `GET` | `/clients/{id}` | 경로·점수·조치 상세 |
 | `GET` | `/routes` | route class별 비용과 상태 |
 | `GET` | `/resources` | OS·PHP·DB·Redis 상태 |
+| `GET` | `/resources/series` | 상위 정규화 route·OS·allowlist service의 bounded 1분 동일 시간축 |
 | `GET` | `/incidents` | 사건 목록 |
 | `GET` | `/incidents/{id}` | 타임라인·증거·복구 |
 | `GET` | `/correlations/{id}` | request ID·operation ID·event ID의 단기 상세·사건·감사 상관 조회 |

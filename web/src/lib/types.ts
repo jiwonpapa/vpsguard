@@ -178,6 +178,47 @@ export interface ResourcesResponse {
   storage: StorageHealth;
 }
 
+export interface ResourceCorrelationSeries {
+  os: OsResourceSeriesPoint[];
+  services: ServiceResourceSeries[];
+  routes: RouteResourceSeries[];
+}
+
+export interface OsResourceSeriesPoint {
+  bucket_unix_ms: number;
+  cpu_usage_percent: number | null;
+  load_per_core_percent: number;
+  memory_used_percent: number;
+  swap_used_percent: number | null;
+}
+
+export interface ServiceResourceSeries {
+  name: string;
+  unit: string | null;
+  points: ServiceResourceSeriesPoint[];
+}
+
+export interface ServiceResourceSeriesPoint {
+  bucket_unix_ms: number;
+  state: string;
+  cpu_usage_milli_percent: number | null;
+  memory_current_bytes: number | null;
+  semantic_pressure_percent: number | null;
+}
+
+export interface RouteResourceSeries {
+  normalized_route: string;
+  route_class: string;
+  points: RouteResourceSeriesPoint[];
+}
+
+export interface RouteResourceSeriesPoint {
+  bucket_unix_ms: number;
+  requests: number;
+  errors: number;
+  max_route_cost: number;
+}
+
 export interface ClientRow {
   client_ip: string;
   requests: number;

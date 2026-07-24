@@ -275,7 +275,26 @@ fn spawn_os_collector(app: Arc<AppState>) {
             match result {
                 Ok(Ok((snapshot, current_cpu))) => {
                     previous_cpu = Some(current_cpu);
-                    *app.os_snapshot.write().await = Some(snapshot);
+                    *app.os_snapshot.write().await = Some(snapshot.clone());
+                    let storage = Arc::clone(&app.storage);
+                    let occurred_at_unix_ms = unix_millis();
+                    let persisted = tokio::task::spawn_blocking(move || {
+                        storage.record_os_resource(occurred_at_unix_ms, &snapshot)
+                    })
+                    .await;
+                    match persisted {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => control_warn!(
+                            "CONTROL_RESOURCE_HISTORY_WRITE_FAILED",
+                            error = %error,
+                            "OS resource history write failed"
+                        ),
+                        Err(error) => control_warn!(
+                            "CONTROL_RESOURCE_HISTORY_TASK_FAILED",
+                            error = %error,
+                            "OS resource history task failed"
+                        ),
+                    }
                 }
                 Ok(Err(error)) => {
                     previous_cpu = None;
@@ -365,6 +384,26 @@ fn spawn_service_collectors(
                 Duration::from_secs(30),
             );
             *app.service_health.write().await = current.clone();
+            let storage = Arc::clone(&app.storage);
+            let persisted = current.clone();
+            let occurred_at_unix_ms = unix_millis();
+            let persisted = tokio::task::spawn_blocking(move || {
+                storage.record_service_resources(occurred_at_unix_ms, &persisted)
+            })
+            .await;
+            match persisted {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => control_warn!(
+                    "CONTROL_RESOURCE_HISTORY_WRITE_FAILED",
+                    error = %error,
+                    "service resource history write failed"
+                ),
+                Err(error) => control_warn!(
+                    "CONTROL_RESOURCE_HISTORY_TASK_FAILED",
+                    error = %error,
+                    "service resource history task failed"
+                ),
+            }
             previous = current;
         }
     });
