@@ -15,8 +15,10 @@ from tools.vpsguard_harness.uninstall_pilot_model import (
 )
 from tools.vpsguard_harness.uninstall_pilot_remote import (
     generated_paths,
+    require_post_uninstall,
     uninstall_environment,
 )
+from tools.vpsguard_harness.qga import GuestCommandResult
 
 
 class UninstallPilotTest(unittest.TestCase):
@@ -232,6 +234,36 @@ class UninstallPilotTest(unittest.TestCase):
                 "/var/backups/vps-guard/transactions/deployment-restore-3",
             ),
         )
+
+    def test_post_uninstall_accepts_removed_edge_unit(self) -> None:
+        class RemovedEdgeGuest:
+            def execute(
+                self,
+                argv: tuple[str, ...],
+                *,
+                accepted_exit_codes: tuple[int, ...] = (0,),
+            ) -> GuestCommandResult:
+                if argv[1:3] == ("is-active", "apache2.service"):
+                    return GuestCommandResult(0, "active\n", "")
+                if argv[1:3] == ("is-active", "vps-guard-edge.service"):
+                    self.assert_exit(3, accepted_exit_codes)
+                    return GuestCommandResult(3, "inactive\n", "")
+                if argv[1:3] == ("is-enabled", "vps-guard-edge.service"):
+                    self.assert_exit(4, accepted_exit_codes)
+                    return GuestCommandResult(4, "not-found\n", "")
+                return GuestCommandResult(0, "", "")
+
+            @staticmethod
+            def assert_exit(
+                value: int,
+                accepted_exit_codes: tuple[int, ...],
+            ) -> None:
+                if value not in accepted_exit_codes:
+                    raise AssertionError(
+                        f"exit {value} missing from {accepted_exit_codes}"
+                    )
+
+        self.assertTrue(require_post_uninstall(RemovedEdgeGuest())["owned_paths_absent"])
 
 
 if __name__ == "__main__":

@@ -409,7 +409,7 @@ def require_post_uninstall(guest: GuestAgent) -> dict[str, object]:
     enabled = guest_text(
         guest.execute(
             ("/bin/systemctl", "is-enabled", "vps-guard-edge.service"),
-            accepted_exit_codes=(0, 1),
+            accepted_exit_codes=(0, 1, 3, 4),
         ),
         "Edge enablement post uninstall",
     )
