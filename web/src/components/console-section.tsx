@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
+import { CircleHelp } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export function ConsoleSection({
   label,
@@ -53,16 +55,30 @@ export function MetricItem({
   label,
   value,
   note,
+  help,
   emphasis = false,
 }: {
   label: string;
   value: string;
   note?: string;
+  help?: string;
   emphasis?: boolean;
 }) {
   return (
     <div className="min-w-0 px-5 py-4 first:pl-0 last:pr-0 sm:first:pl-5 sm:last:pr-5">
-      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dt className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        {label}
+        {help ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`${label} 도움말`}>
+                <CircleHelp className="size-3.5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={6} className="max-w-72 leading-5">{help}</TooltipContent>
+          </Tooltip>
+        ) : null}
+      </dt>
       <dd className={cn("mt-2 truncate font-mono text-xl font-medium tracking-tight", emphasis && "text-primary")}>{value}</dd>
       {note ? <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/70">{note}</p> : null}
     </div>

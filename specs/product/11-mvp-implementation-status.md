@@ -13,7 +13,7 @@ last_reviewed: 2026-07-24
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF, 보호 정책 hot reload와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 증거도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 123개 중 `PLANNED` 5개, `CODE_ONLY` 28개, `AUTO_PASS` 71개, `VPS_PASS` 19개입니다. 즉 118개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 90개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 123개 중 `PLANNED` 4개, `CODE_ONLY` 28개, `AUTO_PASS` 72개, `VPS_PASS` 19개입니다. 즉 119개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 91개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -45,6 +45,7 @@ last_reviewed: 2026-07-24
 | `UI-005` | 인증된 exact-IP 상세에서 요청·bytes·5xx·최대 경로 비용 점수·마지막 실제 조치와 최대 32개 정규화 route 분해 | storage·API unit와 desktop/mobile Playwright 목록→상세 값 일치 |
 | `UI-006` | 1분 epoch bucket으로 상위 route 요청과 OS CPU·memory·allowlist service CPU·semantic pressure를 최대 24시간 비교 | storage·인증 API unit와 desktop/mobile Playwright; 사건 상세 자동 시간창과 실제 VPS 상관 증거는 미완료 |
 | `UI-008` | Overview에서 Cloudflare stage·UFW snapshot fingerprint·TLS manager/renewal을 한 read-back 경계로 표시하고 방화벽 조회 실패를 다른 상태와 격리 | desktop/mobile 정상·부분 실패 Playwright; 실제 Cloudflare test zone 전환은 미완료 |
+| `UI-010` | 주요 지표 tooltip과 8개 운영 용어의 의미·산정·수집 출처를 관리자 navigation에서 제공 | keyboard tooltip과 desktop/mobile 용어집 Playwright |
 | `UI-016`~`UI-018` | trusted Apache TLS terminator의 직접 관리자, standalone/delegated 방화벽과 재시작 없는 단계별 보호정책 SPA | 실제 `:7443` PAM session·Control 비공개, typed UFW form/read-only delegation, 보호 설정 fingerprint·diff·stale/idempotency·hash sidecar·구버전 Edge schema 호환·원자 write·desktop/mobile Playwright와 [verified x86_64 bundle의 실제 2GB Edge version·설정 원복 read-back](evidence/gnuboard5-ui018-policy-20260724.md) |
 | `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | update 성공·health 실패 exact rollback·owned-only uninstall 자동 fixture, x86_64/aarch64 native artifact 실행·SBOM·attestation, [x86_64 격리 2GB VM 20회 update·restore](evidence/gnuboard5-release-endurance-20260724.md)와 [Apache direct bypass·실제 uninstall·exact restore·211/211 public 200](evidence/gnuboard5-uninstall-20260724.md) |
 | `OPS-009` | Rust `DeploymentRestoreDriver` 기반 first install·shadow 배포 전 checksum snapshot, legacy v1 호환, stdin root-only token 전달, 실패·수동 원상복귀와 protected directory identity·listener 경계 read-back | Rust fixture exact restore·corrupt snapshot·partial mutation 자동 rollback과 [`g7devops` 실패 자동 복구·수동 restore·재설치 운영 증거](evidence/g7devops-shadow-roundtrip-20260715.md); 사용자 site tree는 scan·복구하지 않음 |
@@ -68,7 +69,7 @@ last_reviewed: 2026-07-24
 - `DET-014`: 2GB 로컬 압력·회복은 통과했으나 격리 Cloudflare test zone의 실제 `EMERGENCY_PROXY`·provider read-back·승인 복구가 남음
 - `OBS-003`~`OBS-006`, `OBS-010`, `OBS-011`: semantic·cgroup과 bounded route-resource 동일축 코드는 구현됐으나 사건 상세 자동 시간창, 실제 MySQL/Redis 최소 권한 smoke, cgroup/systemd 값 대조, busy·disk-full 장애와 2GB VPS 상관 정확도 검증이 남음
 - `UI-001`: 실제 public 443 관리 Host의 인증서·접속·복구와 앱 origin 비혼선 VPS 증거
-- `UI-010`, `UI-012`: 용어집, read/export 세부 역할 분리
+- `UI-012`: read/export 세부 역할 분리
 - `DET-012`, `SEC-009`, `SEC-010`: loopback 자동 증거는 통과했으나 실제 G7 정상 browser CSP violation, Reverb·외부 asset 호환과 shared IP 인증 오탐을 관찰하기 전에는 CSP enforce·강한 auth 한도를 기본 적용하지 않음. 계정·session 단위 방어는 계속 origin 책임
 - `EDGE-014`, `DET-013`, `SEC-016`, `SEC-017`: 여러 실제 source high-cardinality, 실제 공식 crawler allow, HTTP/2·WebSocket framing과 authenticated 글쓰기·업로드 WAF 오탐 replay
 - `ACT-006`~`ACT-010`: User token과 record ID·type preflight는 fake API까지 구현됐으며, Cloudflare test zone 전환·복구와 실제 kernel/SSH·non-web port diff 증거가 남음. Account API Token onboarding은 zone-scoped DNS Write 재현 전까지 제외

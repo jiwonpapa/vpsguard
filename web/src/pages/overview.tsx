@@ -133,8 +133,8 @@ export function OverviewPage() {
           contentClassName="p-0 sm:p-0"
         >
           <MetricGrid>
-            <MetricItem label="최근 10초 RPS" value={(traffic.requests_per_second_milli / 1_000).toFixed(1)} note={`${traffic.window_seconds}초 시간창`} />
-            <MetricItem label="p95 지연" value={formatLatency(traffic.latency_p95_micros)} note="현재 시간창 최대 2,048 요청" />
+            <MetricItem label="최근 10초 RPS" value={(traffic.requests_per_second_milli / 1_000).toFixed(1)} note={`${traffic.window_seconds}초 시간창`} help="관측 시간창의 요청 수를 초 단위 평균으로 환산한 값입니다." />
+            <MetricItem label="p95 지연" value={formatLatency(traffic.latency_p95_micros)} note="현재 시간창 최대 2,048 요청" help="현재 시간창에서 요청 약 95%가 이 시간 안에 완료됐습니다." />
             <MetricItem label="고유 클라이언트" value={traffic.unique_clients.toLocaleString()} note={`overflow ${traffic.dropped_clients}`} />
             <MetricItem label="방어 판정" value={blocked.toLocaleString()} note={`${percent(blocked, traffic.requests)}% of traffic`} emphasis />
           </MetricGrid>

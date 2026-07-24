@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// UI-002, UI-004, UI-005, UI-006, UI-008: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
+// UI-002, UI-004, UI-005, UI-006, UI-008, UI-010: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
 
 const status = {
   schema_version: 1,
@@ -443,7 +443,22 @@ test("organizes the overview as a sectioned operations console", async ({ page }
   await expect(page.getByText("delivered 12", { exact: true })).toBeVisible();
   await expect(page.getByText("CPU 사용", { exact: true })).toBeVisible();
   await expect(page.getByText("37%", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "p95 지연 도움말" }).hover();
+  await expect(page.getByRole("tooltip")).toContainText("요청 약 95%");
   await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);
+});
+
+test("opens the metric glossary without a terminal", async ({ page }) => {
+  await page.goto("/");
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await page.getByRole("button", { name: "주요 메뉴 열기" }).click();
+    await page.getByRole("dialog").getByRole("link", { name: "용어집" }).click();
+  } else {
+    await page.getByRole("link", { name: "용어집" }).click();
+  }
+  await expect(page.getByRole("heading", { name: "운영 지표 용어집" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "서비스 압력 정의" })).toContainText("max(cgroup CPU%");
+  await expect(page.getByRole("article", { name: "Provider stage 정의" })).toContainText("Cloudflare transaction ledger");
 });
 
 test("keeps overview usable when firewall read-back fails", async ({ page }) => {

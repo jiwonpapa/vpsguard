@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   BookOpenCheck,
+  BookText,
   CircleDot,
   Cpu,
   KeyRound,
@@ -45,6 +46,7 @@ const navigation = [
       ["/resources", "자원", Cpu],
       ["/protection", "보호 정책", SlidersHorizontal],
       ["/firewall", "방화벽", ShieldEllipsis],
+      ["/glossary", "용어집", BookText],
     ],
   },
 ] as const;
