@@ -21,8 +21,9 @@ use guard_system::{
     IngressRestoreDriver, IngressStateConfig, IngressStateStore, IngressSwitchConfig,
     IngressSwitchDirection, IngressSwitchDriver, IngressTopology, MutationPlan, OperationKind,
     OperationPlan, OperationState, PlannedChange, ServedCertificateReport, ServedCertificateState,
-    SnapshotResource, apache_ingress_plan, deployment_restore_plan, execute_operation,
-    ingress_apply_plan, ingress_restore_plan, ingress_switch_plan, inspect_served_certificate,
+    SnapshotResource, UninstallReleaseStore, apache_ingress_plan, deployment_restore_plan,
+    execute_operation, ingress_apply_plan, ingress_restore_plan, ingress_switch_plan,
+    inspect_served_certificate,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -179,6 +180,12 @@ enum OpsCommand {
         #[command(subcommand)]
         command: ApacheIngressCommand,
     },
+    /// uninstall 전 versioned release의 bounded snapshot을 관리합니다.
+    UninstallRelease {
+        /// uninstall release snapshot 하위 명령입니다.
+        #[command(subcommand)]
+        command: UninstallReleaseCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -274,6 +281,27 @@ enum ApacheIngressCommand {
         /// 재개에 사용할 선택 transaction 식별자입니다.
         #[arg(long)]
         operation_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum UninstallReleaseCommand {
+    /// 고정된 versioned release tree를 private snapshot으로 저장합니다.
+    Snapshot,
+    /// checksum과 bounded release manifest를 검증합니다.
+    Verify {
+        /// 검증할 `uninstall-*` direct child입니다.
+        snapshot: PathBuf,
+    },
+    /// uninstall로 release root가 사라진 경우 snapshot을 복원합니다.
+    Restore {
+        /// 복원할 `uninstall-*` direct child입니다.
+        snapshot: PathBuf,
+    },
+    /// exact snapshot을 검증한 뒤 제거합니다.
+    Remove {
+        /// 제거할 `uninstall-*` direct child입니다.
+        snapshot: PathBuf,
     },
 }
 
@@ -448,6 +476,8 @@ enum CliError {
     MissingIngressSwitchConfirmation(&'static str),
     #[error("VPS_GUARD_APACHE_INGRESS_CONFIRM이 요청 방향과 일치해야 합니다: expected={0}")]
     MissingApacheIngressConfirmation(&'static str),
+    #[error("VPS_GUARD_UNINSTALL_RELEASE_CONFIRM이 요청 작업과 일치해야 합니다: expected={0}")]
+    MissingUninstallReleaseConfirmation(&'static str),
     #[error("VPS_GUARD_DIRECT_CONFIRM=g7devops:direct-tls 확인값이 필요합니다")]
     MissingDirectApplyConfirmation,
     #[error("deployment snapshot 이름이 UTF-8 deploy-* 식별자가 아닙니다: {0}")]
@@ -610,6 +640,55 @@ fn execute_ops(command: OpsCommand) -> Result<String, CliError> {
         OpsCommand::IngressState { command } => execute_ingress_state(command),
         OpsCommand::IngressSwitch { command } => execute_ingress_switch(command),
         OpsCommand::ApacheIngress { command } => execute_apache_ingress(command),
+        OpsCommand::UninstallRelease { command } => execute_uninstall_release(command),
+    }
+}
+
+fn execute_uninstall_release(command: UninstallReleaseCommand) -> Result<String, CliError> {
+    let store = uninstall_release_store();
+    match command {
+        UninstallReleaseCommand::Snapshot => {
+            require_uninstall_release_confirmation("snapshot-release-tree")?;
+            let snapshot = store.create_snapshot()?;
+            Ok(format!(
+                "uninstall_snapshot={}\nrelease_count={}\nbinary_count={}",
+                snapshot.path.display(),
+                snapshot.release_count,
+                snapshot.binary_count
+            ))
+        }
+        UninstallReleaseCommand::Verify { snapshot } => {
+            let report = store.verify_snapshot(&snapshot)?;
+            Ok(format!(
+                "uninstall_snapshot_verified={}\nrelease_count={}\nbinary_count={}",
+                report.path.display(),
+                report.release_count,
+                report.binary_count
+            ))
+        }
+        UninstallReleaseCommand::Restore { snapshot } => {
+            require_uninstall_release_confirmation("restore-release-tree")?;
+            let report = store.restore_snapshot(&snapshot)?;
+            Ok(format!(
+                "uninstall_release_restore=pass\nuninstall_snapshot={}\nrelease_count={}\nbinary_count={}",
+                report.path.display(),
+                report.release_count,
+                report.binary_count
+            ))
+        }
+        UninstallReleaseCommand::Remove { snapshot } => {
+            require_uninstall_release_confirmation("remove-release-snapshot")?;
+            store.remove_snapshot(&snapshot)?;
+            Ok(format!("uninstall_snapshot_removed={}", snapshot.display()))
+        }
+    }
+}
+
+fn require_uninstall_release_confirmation(expected: &'static str) -> Result<(), CliError> {
+    if env::var("VPS_GUARD_UNINSTALL_RELEASE_CONFIRM").as_deref() == Ok(expected) {
+        Ok(())
+    } else {
+        Err(CliError::MissingUninstallReleaseConfirmation(expected))
     }
 }
 
@@ -905,6 +984,18 @@ fn deployment_state_config() -> DeploymentStateConfig {
     match env::var_os("VPS_GUARD_TEST_ROOT") {
         Some(root) => DeploymentStateConfig::fixture(PathBuf::from(root), snapshot_root),
         None => DeploymentStateConfig::production(snapshot_root),
+    }
+}
+
+fn uninstall_release_store() -> UninstallReleaseStore {
+    match env::var_os("VPS_GUARD_TEST_ROOT") {
+        Some(root) => UninstallReleaseStore::fixture(
+            PathBuf::from(root),
+            env::var_os("VPS_GUARD_UNINSTALL_SNAPSHOT_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-uninstall-fixture")),
+        ),
+        None => UninstallReleaseStore::production(),
     }
 }
 

@@ -17,7 +17,8 @@ pub use atomic_store::{AtomicJsonStore, StoreError};
 pub use command::{CommandAudit, CommandError, CommandOutput, OwnedProgram, SystemCommandRunner};
 pub use deployment_state::{
     DEPLOYMENT_SNAPSHOT_SCHEMA_VERSION, DeploymentRestoreDriver, DeploymentStateConfig,
-    DeploymentStateError, DeploymentStateStore, deployment_restore_plan,
+    DeploymentStateError, DeploymentStateStore, UninstallReleaseSnapshot, UninstallReleaseStore,
+    deployment_restore_plan,
 };
 pub use ingress_state::{
     ApacheIngressConfig, ApacheIngressDirection, ApacheIngressDriver,

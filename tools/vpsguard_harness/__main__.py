@@ -24,6 +24,7 @@ from .protection_pilot import run_protection_pilot
 from .release_endurance import run_release_endurance
 from .release_lifecycle import run_release_lifecycle_harness
 from .tls_reload import run_tls_reload
+from .uninstall_pilot import run_uninstall_pilot
 from .vm_lab import run_public_probe_timeline, run_vm_lab
 
 
@@ -102,6 +103,15 @@ def main(argv: list[str] | None = None) -> int:
     tls_reload.add_argument("--evidence", type=Path, required=True)
     tls_reload.add_argument("--run", action="store_true")
     tls_reload.add_argument("--confirm")
+    uninstall_pilot = subcommands.add_parser(
+        "vm-uninstall",
+        help="2GB Apache bypass, owned-only uninstall and exact restore proof",
+    )
+    uninstall_pilot.add_argument("--manifest", type=Path, required=True)
+    uninstall_pilot.add_argument("--bundle", type=Path, required=True)
+    uninstall_pilot.add_argument("--evidence", type=Path, required=True)
+    uninstall_pilot.add_argument("--run", action="store_true")
+    uninstall_pilot.add_argument("--confirm")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
 
@@ -249,6 +259,27 @@ def main(argv: list[str] | None = None) -> int:
                     f"tls_samples={summary.tls_probe['samples']} "
                     f"public_samples={summary.public_probe['samples']} "
                     f"worker_drain_ms={summary.worker_drain_ms} "
+                    f"elapsed_ms={summary.elapsed_ms}"
+                )
+        elif arguments.command == "vm-uninstall":
+            summary = run_uninstall_pilot(
+                root,
+                arguments.manifest,
+                arguments.bundle,
+                arguments.evidence,
+                execute=arguments.run,
+                confirmation=arguments.confirm,
+            )
+            if summary is None:
+                print("vm uninstall: PLAN")
+            else:
+                print(
+                    "vm uninstall: PASS "
+                    f"source_commit={summary.source_commit} "
+                    f"samples={summary.public_probe['samples']} "
+                    f"max_outage_ms={summary.public_probe['max_outage_ms']} "
+                    f"uninstall_ms={summary.uninstall_ms} "
+                    f"restore_ms={summary.restore_ms} "
                     f"elapsed_ms={summary.elapsed_ms}"
                 )
     except HarnessError as error:

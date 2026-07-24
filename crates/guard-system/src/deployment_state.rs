@@ -8,6 +8,9 @@ mod snapshot;
 mod snapshot_files;
 mod snapshot_format;
 mod snapshot_readback;
+mod uninstall;
+
+pub use uninstall::{UninstallReleaseSnapshot, UninstallReleaseStore};
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -139,6 +142,9 @@ pub enum DeploymentStateError {
     /// 원자 rollback checkpoint 저장이 실패했습니다.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// bounded snapshot manifest JSON 처리 오류입니다.
+    #[error("deployment snapshot JSON 실패: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// legacy v1 snapshot을 typed model로 읽고 쓰는 저장소입니다.

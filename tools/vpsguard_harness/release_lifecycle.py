@@ -77,8 +77,29 @@ def run_release_lifecycle_harness(repository: Path) -> ReleaseLifecycleSummary:
             )
         )
         _assert_update_success(success_root)
-        results.append(_run_uninstall(runner, repository, wrappers, success_root))
+        results.append(
+            _run_uninstall(
+                runner,
+                repository,
+                wrappers,
+                success_root,
+                ingress="nginx-public",
+            )
+        )
         _assert_uninstall(success_root)
+
+        apache_root = workspace / "apache-root"
+        _write_installed_fixture(repository, apache_root)
+        results.append(
+            _run_uninstall(
+                runner,
+                repository,
+                wrappers,
+                apache_root,
+                ingress="apache-public",
+            )
+        )
+        _assert_uninstall(apache_root)
 
         rollback_root = workspace / "rollback-root"
         _write_installed_fixture(repository, rollback_root)
@@ -95,7 +116,7 @@ def run_release_lifecycle_harness(repository: Path) -> ReleaseLifecycleSummary:
         )
         _assert_rollback(rollback_root)
 
-    return ReleaseLifecycleSummary(results=tuple(results), scenarios=3)
+    return ReleaseLifecycleSummary(results=tuple(results), scenarios=4)
 
 
 def _run_update(
@@ -144,15 +165,17 @@ def _run_uninstall(
     repository: Path,
     wrappers: Path,
     root: Path,
+    *,
+    ingress: str,
 ) -> CommandResult:
     environment = _fixture_environment(wrappers, root) + (
         "VPS_GUARD_UNINSTALL_CONFIRM=remove-owned-artifacts-only",
-        "VPS_GUARD_BYPASS_VERIFIED=nginx-public",
+        f"VPS_GUARD_BYPASS_VERIFIED={ingress}",
         "VPS_GUARD_UNINSTALL_PROBE_URL=http://fixture/public",
     )
     return runner.run(
         CommandSpec(
-            label="owned-only uninstall",
+            label=f"owned-only uninstall through {ingress}",
             argv=(
                 "env",
                 *environment,
@@ -200,9 +223,14 @@ def _write_installed_fixture(repository: Path, root: Path) -> None:
         _write(root / _relative("etc", "systemd", "system", unit), f"old-{unit}\n")
         _service_state(root, unit, "enabled", "active")
     _service_state(root, "nginx.service", "enabled", "active")
+    _service_state(root, "apache2.service", "enabled", "active")
     for path, content in (
         ((_relative("etc", "ssh", "sshd_config")), "ssh-sentinel\n"),
         ((_relative("etc", "nginx", "sites-enabled", "site.conf")), "nginx-sentinel\n"),
+        (
+            (_relative("etc", "apache2", "sites-enabled", "site.conf")),
+            "apache-sentinel\n",
+        ),
         (
             (_relative("etc", "letsencrypt", "live", "fixture", "fullchain.pem")),
             "certificate-sentinel\n",
@@ -265,6 +293,7 @@ import os, sys
 arguments = [value for value in sys.argv[1:] if value != "-Tf"]
 os.replace(arguments[-2], arguments[-1])
 """,
+        "apache2ctl": f"#!{python}\nraise SystemExit(0)\n",
         "nginx": f"#!{python}\nraise SystemExit(0)\n",
         "ss": f"#!{python}\nraise SystemExit(0)\n",
         "systemd-tmpfiles": f"#!{python}\nraise SystemExit(0)\n",
@@ -366,6 +395,7 @@ def _protected_failures(root: Path) -> list[str]:
     expected = (
         (("etc", "ssh", "sshd_config"), "ssh-sentinel\n"),
         (("etc", "nginx", "sites-enabled", "site.conf"), "nginx-sentinel\n"),
+        (("etc", "apache2", "sites-enabled", "site.conf"), "apache-sentinel\n"),
         (
             ("etc", "letsencrypt", "live", "fixture", "fullchain.pem"),
             "certificate-sentinel\n",
