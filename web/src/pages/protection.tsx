@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
+import { useAuth } from "../auth";
 import { ConsoleSection } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
 import { SectionHeading } from "../components/section-heading";
@@ -49,6 +50,7 @@ const fields: Array<{
 ];
 
 export function ProtectionPage() {
+  const { capabilities } = useAuth();
   const queryClient = useQueryClient();
   const status = useQuery({
     queryKey: ["protection-settings"],
@@ -160,6 +162,16 @@ export function ProtectionPage() {
           </Alert>
         ) : null}
 
+        {!capabilities.operate ? (
+          <Alert className="border-amber-800/70 bg-amber-950/20 text-amber-300">
+            <ShieldAlert className="size-5 text-amber-400" aria-hidden="true" />
+            <AlertTitle>현재 계정은 보호 정책을 변경할 수 없습니다.</AlertTitle>
+            <AlertDescription>
+              적용 상태와 현재 한도는 볼 수 있지만 변경 계획과 적용은 운영 역할에만 허용됩니다.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid items-start gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <ConsoleSection
             label="단계별 경로 제한 설정"
@@ -179,6 +191,7 @@ export function ProtectionPage() {
                       max="6000"
                       step="1"
                       required
+                      disabled={!capabilities.operate}
                       value={draft[field.key]}
                       onChange={(event) => update(field.key, event.target.value)}
                     />
@@ -191,7 +204,7 @@ export function ProtectionPage() {
                   </div>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-2">
+              {capabilities.operate ? <div className="flex flex-wrap gap-2">
                 <Button type="submit" disabled={planner.isPending || applier.isPending}>
                   {planner.isPending ? "검증 중" : "변경 계획 만들기"}
                 </Button>
@@ -206,7 +219,7 @@ export function ProtectionPage() {
                 >
                   현재값 복원
                 </Button>
-              </div>
+              </div> : null}
             </form>
             {message ? (
               <p className="mt-4 whitespace-pre-line text-xs leading-5 text-primary" aria-live="polite">
@@ -220,7 +233,7 @@ export function ProtectionPage() {
             title="검증된 diff"
             description="plan 생성 뒤 다른 변경이 먼저 적용되면 stale plan으로 거부합니다."
           >
-            {plan ? (
+            {plan && capabilities.operate ? (
               <>
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="size-4 text-emerald-400" aria-hidden="true" />
@@ -259,7 +272,9 @@ export function ProtectionPage() {
               </>
             ) : (
               <p className="py-10 text-center text-xs text-muted-foreground">
-                왼쪽에서 후보를 입력하고 변경 계획을 만드십시오.
+                {capabilities.operate
+                  ? "왼쪽에서 후보를 입력하고 변경 계획을 만드십시오."
+                  : "현재 역할에는 보호 정책 변경 권한이 없습니다."}
               </p>
             )}
           </ConsoleSection>

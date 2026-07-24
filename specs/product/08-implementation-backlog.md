@@ -18,6 +18,16 @@ last_reviewed: 2026-07-24
 - 실제 public 80/443 전환은 shadow와 별도 TLS listener 검증 후 수행합니다.
 - 각 단계의 exit gate가 실패하면 다음 단계로 진행하지 않습니다.
 
+### 최근 완료 배치: 관리자 역할별 최소 권한
+
+- 요구사항: `UI-012`
+- [x] PAM/TOTP 인증 actor를 `viewer`·`analyst`·`operator`·`administrator` typed 역할에 연결
+- [x] 미지정 기존 actor의 관리자 호환성과 root·break-glass binding 금지 검증
+- [x] viewer의 IPv4 `/24`·IPv6 `/64` 집계와 exact-IP 상세 차단
+- [x] analyst 민감 CSV export, operator 로컬 조치, administrator provider·session 관리 분리
+- [x] Control API의 CSRF 이후 역할 재검증과 UI fail-closed 권한 표시
+- [x] Rust 역할 매트릭스와 desktop/mobile Playwright 8개
+
 ## 2. 제안 저장소 구조
 
 ```text

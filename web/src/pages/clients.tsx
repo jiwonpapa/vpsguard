@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 
+import { useAuth } from "../auth";
 import { DataTable } from "../components/data-table";
 import { ConsoleSection, MetricGrid, MetricItem } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
@@ -25,12 +27,15 @@ type ClientFilter = "all" | "throttled" | "denied";
 type ClientSort = "requests" | "bytes" | "recent";
 
 export function ClientsPage() {
+  const { capabilities } = useAuth();
   const query = useQuery({ queryKey: ["clients"], queryFn: api.clients, refetchInterval: 10_000 });
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ClientFilter>("all");
   const [sort, setSort] = useState<ClientSort>("requests");
   const [page, setPage] = useState(0);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [message, setMessage] = useState("");
   const detailQuery = useQuery({
     queryKey: ["client-detail", selectedClient],
     queryFn: () => {
@@ -57,9 +62,40 @@ export function ClientsPage() {
   const pageCount = Math.max(1, Math.ceil(clients.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const visible = clients.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const downloadExport = async () => {
+    setExporting(true);
+    setMessage("");
+    try {
+      const blob = await api.exportClients();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "vpsguard-clients.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage("원시 IP export를 생성했습니다.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "원시 IP export에 실패했습니다.");
+    } finally {
+      setExporting(false);
+    }
+  };
   return (
     <>
-      <SectionHeading eyebrow="Client aggregates" title="외부 클라이언트" description="원본 IP는 보존기간과 인증 session 안에서만 표시하며, 기본 응답은 network 단위로 마스킹합니다." />
+      <SectionHeading
+        eyebrow="Client aggregates"
+        title="외부 클라이언트"
+        description={capabilities.view_raw_ip
+          ? "현재 역할은 raw IP retention 안의 원시 주소를 조회할 수 있습니다."
+          : "현재 역할에는 IPv4 /24·IPv6 /64로 집계한 마스킹 network만 표시합니다."}
+        action={capabilities.export_sensitive ? (
+          <Button size="sm" variant="outline" disabled={exporting} onClick={() => void downloadExport()}>
+            <Download className="size-3.5" />
+            {exporting ? "생성 중" : "원시 IP CSV"}
+          </Button>
+        ) : <Badge variant="neutral">민감 export 제한</Badge>}
+      />
+      {message ? <p className="mb-4 text-xs text-primary" aria-live="polite">{message}</p> : null}
       <div className="space-y-6">
         <ConsoleSection label="클라이언트 필터" title="필터와 정렬" description="IP·판정·전송량 기준으로 과다 요청 주체를 좁힙니다.">
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px_180px]">
@@ -94,16 +130,18 @@ export function ClientsPage() {
             {visible.map((client, index) => (
               <tr key={`${client.client_ip}:${currentPage * PAGE_SIZE + index}`} className="transition-colors hover:bg-muted/35">
                 <td className="px-4 py-3">
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="h-auto p-0 font-mono"
-                    aria-label={`${client.client_ip} 상세 보기`}
-                    aria-haspopup="dialog"
-                    onClick={() => setSelectedClient(client.client_ip)}
-                  >
-                    {client.client_ip}
-                  </Button>
+                  {capabilities.view_raw_ip ? (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 font-mono"
+                      aria-label={`${client.client_ip} 상세 보기`}
+                      aria-haspopup="dialog"
+                      onClick={() => setSelectedClient(client.client_ip)}
+                    >
+                      {client.client_ip}
+                    </Button>
+                  ) : <code className="font-mono text-xs">{client.client_ip}</code>}
                 </td>
                 <td className="px-4 py-3 font-mono">{client.requests.toLocaleString()}</td>
                 <td className="px-4 py-3 font-mono text-muted-foreground">{formatBytes(client.request_body_bytes + client.response_body_bytes)}</td>

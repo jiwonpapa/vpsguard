@@ -5,8 +5,8 @@
 use std::net::IpAddr;
 
 use super::{
-    AdminAuthProvider, ConfigError, CspMode, DetectionProfile, FirewallMode, GuardConfig,
-    InspectionMode, ServiceCollectorKind, TlsManagementMode, UiTlsTermination,
+    AdminAuthProvider, AdminRole, ConfigError, CspMode, DetectionProfile, FirewallMode,
+    GuardConfig, InspectionMode, ServiceCollectorKind, TlsManagementMode, UiTlsTermination,
 };
 use crate::crawler::CrawlerProvider;
 
@@ -213,6 +213,33 @@ fn validates_pam_authentication_and_firewall_ownership() {
             ..
         })
     ));
+}
+
+#[test]
+fn validates_typed_ui_role_bindings() {
+    let input = VALID_CONFIG.replace(
+        "language = \"ko\"",
+        "language = \"ko\"\nrole_bindings = [{ actor = \"audit.user\", role = \"analyst\" }, { actor = \"ops-user\", role = \"operator\" }]",
+    );
+    let config = GuardConfig::from_toml(&input).expect("role bindings should parse");
+    assert_eq!(config.ui.role_bindings.len(), 2);
+    assert_eq!(config.ui.role_bindings[0].role, AdminRole::Analyst);
+    assert!(config.ui.role_bindings[0].role.can_view_raw_ip());
+    assert!(config.ui.role_bindings[0].role.can_export_sensitive());
+    assert!(!config.ui.role_bindings[0].role.can_operate());
+    assert!(config.ui.role_bindings[1].role.can_operate());
+    assert!(!config.ui.role_bindings[1].role.can_export_sensitive());
+
+    for actor in ["audit.user", "break-glass", "root"] {
+        let invalid = input.replace("ops-user", actor);
+        assert!(matches!(
+            GuardConfig::from_toml(&invalid),
+            Err(ConfigError::Invalid {
+                field: "ui.role_bindings",
+                ..
+            })
+        ));
+    }
 }
 
 #[test]

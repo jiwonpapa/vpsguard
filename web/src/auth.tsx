@@ -25,6 +25,8 @@ import {
   restoreSession,
   startEnrollment,
   type AuthStatus,
+  type AdminCapabilities,
+  type AdminRole,
   type EnrollmentStart,
   type SessionInfo,
 } from "./lib/api";
@@ -55,6 +57,8 @@ interface AuthContextValue {
   ready: boolean;
   authenticated: boolean;
   actor: string | null;
+  role: AdminRole | null;
+  capabilities: AdminCapabilities;
   runAction: (path: string) => Promise<void>;
   openLogin: () => void;
   logout: () => Promise<void>;
@@ -64,6 +68,12 @@ interface AuthContextValue {
 type AuthView = "login" | "setup-account" | "setup-totp" | "recovery-codes" | "break-glass";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const noCapabilities: AdminCapabilities = {
+  view_raw_ip: false,
+  export_sensitive: false,
+  operate: false,
+  administer: false,
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -110,6 +120,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const execute = async (path: string) => {
+    const required = path.includes("emergency-proxy") || path.includes("provider-restore")
+      ? session?.capabilities.administer
+      : session?.capabilities.operate;
+    if (!required) {
+      setMessage("현재 역할에는 이 운영 명령 권한이 없습니다.");
+      return;
+    }
     try {
       const result = await performAction(path);
       setMessage(`상태 변경 완료: ${result.mode}`);
@@ -253,6 +270,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ready,
         authenticated: session !== null,
         actor: session?.actor ?? null,
+        role: session?.role ?? null,
+        capabilities: session?.capabilities ?? noCapabilities,
         runAction: async (path) => setConfirmPath(path),
         openLogin: showLogin,
         logout,

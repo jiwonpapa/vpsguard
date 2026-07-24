@@ -53,7 +53,7 @@ const navigation = [
 
 export function AppShell() {
   const queryClient = useQueryClient();
-  const { ready, authenticated, actor, logout, openLogin, revokeAll } = useAuth();
+  const { ready, authenticated, actor, role, capabilities, logout, openLogin, revokeAll } = useAuth();
   const [connected, setConnected] = useState(false);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
@@ -127,9 +127,11 @@ export function AppShell() {
               <>
                 <div className="mr-2 hidden text-right lg:block">
                   <div className="text-xs font-medium">{actor}</div>
-                  <div className="text-[10px] text-muted-foreground">인증된 관리자</div>
+                  <div className="text-[10px] text-muted-foreground">{roleLabel(role)}</div>
                 </div>
-                <IconAction label="모든 관리자 session 로그아웃" onClick={revokeAll}><ShieldX className="size-4" /></IconAction>
+                {capabilities.administer ? (
+                  <IconAction label="모든 관리자 session 로그아웃" onClick={revokeAll}><ShieldX className="size-4" /></IconAction>
+                ) : null}
                 <IconAction label={`${actor ?? "관리자"} 로그아웃`} onClick={() => void logout()}><LogOut className="size-4" /></IconAction>
               </>
             ) : (
@@ -165,6 +167,14 @@ export function AppShell() {
       </Dialog>
     </div>
   );
+}
+
+function roleLabel(role: ReturnType<typeof useAuth>["role"]): string {
+  if (role === "viewer") return "조회자 · IP 마스킹";
+  if (role === "analyst") return "분석자 · 민감 export";
+  if (role === "operator") return "운영자 · 로컬 조치";
+  if (role === "administrator") return "관리자 · 전체 권한";
+  return "인증된 사용자";
 }
 
 function SidebarBrand({ compact = false }: { compact?: boolean }) {

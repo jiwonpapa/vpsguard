@@ -103,6 +103,22 @@ impl AuthRepository {
         Ok(count > 0)
     }
 
+    /// 권한 API 회귀에서 setup gate를 통과할 최소 비로그인 계정을 만듭니다.
+    #[cfg(test)]
+    pub(crate) fn ensure_test_account(&self) -> Result<(), AuthStoreError> {
+        self.lock().execute(
+            "INSERT OR IGNORE INTO vpsguard_admin_accounts(
+                id, username, password_hash, totp_ciphertext, totp_kdf_salt, totp_nonce,
+                created_at, updated_at
+             ) VALUES (
+                1, 'test-admin', 'not-a-login-verifier',
+                X'00', zeroblob(16), zeroblob(24), 0, 0
+             )",
+            [],
+        )?;
+        Ok(())
+    }
+
     /// 단일 초기 관리자, 복구 코드와 첫 session을 한 transaction으로 저장합니다.
     pub(crate) fn create_initial_admin_and_session(
         &self,

@@ -13,7 +13,8 @@ use guard_agent::os::OsSnapshot;
 use guard_agent::services::ServiceSemanticSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::{
-    AdminAuthProvider, DetectionMode, InspectionMode, SecurityConfig, UiConfig, UiTlsTermination,
+    AdminAuthProvider, AdminRole, AdminRoleBinding, DetectionMode, InspectionMode, SecurityConfig,
+    UiConfig, UiTlsTermination,
 };
 use guard_core::correlation::is_valid_request_id;
 use guard_core::{GuardMode, GuardState};
@@ -54,6 +55,15 @@ fn app_with_options(
     public_host: Option<&str>,
     tls_plan_mode: guard_core::config::TlsManagementMode,
 ) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
+    app_with_options_and_roles(path, public_host, tls_plan_mode, Vec::new())
+}
+
+fn app_with_options_and_roles(
+    path: &std::path::Path,
+    public_host: Option<&str>,
+    tls_plan_mode: guard_core::config::TlsManagementMode,
+    role_bindings: Vec<AdminRoleBinding>,
+) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
     let (events, _) = broadcast::channel(32);
     let ui = UiConfig {
         bind: LOOPBACK_HOST.parse()?,
@@ -63,6 +73,7 @@ fn app_with_options(
         auth_provider: AdminAuthProvider::Local,
         pam_service: "vps-guard".to_owned(),
         pam_allowed_group: "vpsguard-admin".to_owned(),
+        role_bindings,
         admin_socket: "/tmp/vps-guard-admin-test.sock".into(),
         privileged_socket: "/tmp/vps-guard-privileged-test.sock".into(),
         login_rate_limit_rpm: 10,
@@ -902,6 +913,157 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
         )
         .await?;
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn role_matrix_masks_ip_and_separates_export_from_actions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app_with_options_and_roles(
+        &directory.path().join("state.json"),
+        None,
+        guard_core::config::TlsManagementMode::Auto,
+        vec![
+            AdminRoleBinding {
+                actor: "view.user".to_owned(),
+                role: AdminRole::Viewer,
+            },
+            AdminRoleBinding {
+                actor: "audit.user".to_owned(),
+                role: AdminRole::Analyst,
+            },
+            AdminRoleBinding {
+                actor: "ops.user".to_owned(),
+                role: AdminRole::Operator,
+            },
+        ],
+    )?;
+    state.storage.record_traffic(&TelemetryEnvelope {
+        schema_version: 1,
+        request_id: "request-role-matrix".to_owned(),
+        method: "GET".to_owned(),
+        route_class: "general".to_owned(),
+        normalized_route: "/".to_owned(),
+        route_cost: 1,
+        status: 200,
+        latency_micros: 50,
+        client_ip: Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 8))),
+        request_body_bytes: 3,
+        response_body_bytes: 7,
+        upstream_connection_reused: Some(true),
+        decision: "allow".to_owned(),
+        policy_version: 1,
+        occurred_at_unix_ms: 1_000,
+        ..TelemetryEnvelope::default()
+    })?;
+
+    let viewer = state.sessions.issue_test_session("view.user")?;
+    let session = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/api/v1/session")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&viewer))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let session_body = to_bytes(session.into_body(), 8_192).await?;
+    let session_json = serde_json::from_slice::<serde_json::Value>(&session_body)?;
+    assert_eq!(session_json["role"], "viewer");
+    assert_eq!(session_json["capabilities"]["view_raw_ip"], false);
+    let authentication_probe = Request::get("/api/v1/clients")
+        .header("cookie", session_cookie(&viewer))
+        .body(Body::empty())?;
+    assert!(
+        state
+            .sessions
+            .authenticate(authentication_probe.headers())?
+            .is_some()
+    );
+
+    let masked = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/api/v1/clients")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&viewer))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let masked_status = masked.status();
+    let masked_body = to_bytes(masked.into_body(), 8_192).await?;
+    assert_eq!(
+        masked_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&masked_body)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&masked_body)?["items"][0]["client_ip"],
+        "203.0.113.0/24"
+    );
+    let viewer_detail = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/api/v1/clients/203.0.113.8")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&viewer))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(viewer_detail.status(), StatusCode::FORBIDDEN);
+    let viewer_export = router(Arc::clone(&state))
+        .oneshot(action_request(
+            "/api/v1/clients/export",
+            "viewer-export",
+            &viewer,
+        )?)
+        .await?;
+    assert_eq!(viewer_export.status(), StatusCode::FORBIDDEN);
+
+    let analyst = state.sessions.issue_test_session("audit.user")?;
+    let analyst_export = router(Arc::clone(&state))
+        .oneshot(action_request(
+            "/api/v1/clients/export",
+            "analyst-export",
+            &analyst,
+        )?)
+        .await?;
+    assert_eq!(analyst_export.status(), StatusCode::OK);
+    let export_body = to_bytes(analyst_export.into_body(), 8_192).await?;
+    assert!(String::from_utf8(export_body.to_vec())?.contains("203.0.113.8"));
+    let analyst_action = router(Arc::clone(&state))
+        .oneshot(action_request(
+            "/api/v1/actions/manual-hold",
+            "analyst-action",
+            &analyst,
+        )?)
+        .await?;
+    assert_eq!(analyst_action.status(), StatusCode::FORBIDDEN);
+
+    let operator = state.sessions.issue_test_session("ops.user")?;
+    let operator_export = router(Arc::clone(&state))
+        .oneshot(action_request(
+            "/api/v1/clients/export",
+            "operator-export",
+            &operator,
+        )?)
+        .await?;
+    assert_eq!(operator_export.status(), StatusCode::FORBIDDEN);
+    let operator_provider_action = router(Arc::clone(&state))
+        .oneshot(action_request(
+            "/api/v1/actions/emergency-proxy",
+            "operator-provider-action",
+            &operator,
+        )?)
+        .await?;
+    assert_eq!(operator_provider_action.status(), StatusCode::FORBIDDEN);
+    let operator_action = router(state)
+        .oneshot(action_request(
+            "/api/v1/actions/manual-hold",
+            "operator-action",
+            &operator,
+        )?)
+        .await?;
+    assert_eq!(operator_action.status(), StatusCode::OK);
     Ok(())
 }
 

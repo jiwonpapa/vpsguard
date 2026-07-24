@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { ShieldCheck, ShieldOff } from "lucide-react";
 
+import { useAuth } from "../auth";
 import { ConsoleSection } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
 import { SectionHeading } from "../components/section-heading";
@@ -15,6 +16,7 @@ import { api, apiErrorMessage } from "../lib/api";
 import type { PendingFirewallPlan, UfwAction, UfwProtocol, UfwRule } from "../lib/types";
 
 export function FirewallPage() {
+  const { capabilities } = useAuth();
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: ["firewall"], queryFn: api.firewall, refetchInterval: 10_000 });
   const [plan, setPlan] = useState<PendingFirewallPlan | null>(null);
@@ -80,35 +82,40 @@ export function FirewallPage() {
           </dl>
         </ConsoleSection>
 
-        {!state.mutable ? (
+        {!state.mutable || !capabilities.operate ? (
           <Alert className="border-amber-800/70 bg-amber-950/20 text-amber-300">
             <ShieldOff className="size-5 text-amber-400" aria-hidden="true" />
             <AlertTitle>이 설치에서는 UFW를 변경하지 않습니다.</AlertTitle>
             <AlertDescription>
-              {state.mode === "jw_agent_delegated"
+              {!capabilities.operate
+                ? "현재 계정은 읽기 전용 역할입니다. UFW 상태는 볼 수 있지만 변경 계획과 적용은 허용되지 않습니다."
+                : state.mode === "jw_agent_delegated"
                 ? "JW-agent가 host firewall의 단일 소유자입니다. 충돌 방지를 위해 VPSGuard 변경 API가 닫혀 있습니다."
                 : "설정에서 firewall.mode를 standalone_ufw로 명시해야 UFW 관리가 열립니다."}
             </AlertDescription>
           </Alert>
-        ) : (
-          <div className="grid items-start gap-6 xl:grid-cols-2">
+        ) : null}
+
+        <div className={`grid items-start gap-6 ${state.mutable && capabilities.operate ? "xl:grid-cols-2" : ""}`}>
+          {state.mutable && capabilities.operate ? (
             <ConsoleSection label="새 규칙 계획" title="새 inbound rule 계획" description="UFW는 자동 활성화하지 않으며 SSH 포트 deny와 무제한 catch-all deny를 거부합니다.">
-            <form className="mt-5 grid gap-4" onSubmit={submit}>
-              <Field id="firewall-rule-id" label="Rule ID"><Input id="firewall-rule-id" value={ruleId} onChange={(event) => setRuleId(event.target.value)} pattern="[A-Za-z0-9_-]{1,48}" required /></Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field id="firewall-action" label="동작"><Select value={action} onValueChange={(value) => setAction(value as UfwAction)}><SelectTrigger id="firewall-action" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="allow">허용</SelectItem><SelectItem value="deny">차단</SelectItem></SelectContent></Select></Field>
-                <Field id="firewall-protocol" label="Protocol"><Select value={protocol} onValueChange={(value) => setProtocol(value as UfwProtocol)}><SelectTrigger id="firewall-protocol" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem><SelectItem value="any">ANY</SelectItem></SelectContent></Select></Field>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field id="firewall-source" label="Source IP/CIDR (선택)"><Input id="firewall-source" value={source} onChange={(event) => setSource(event.target.value)} placeholder="203.0.113.0/24" /></Field>
-                <Field id="firewall-port" label="Port (선택)"><Input id="firewall-port" value={port} onChange={(event) => setPort(event.target.value)} type="number" min="1" max="65535" /></Field>
-              </div>
-              <Button disabled={planner.isPending || applier.isPending} type="submit">{planner.isPending ? "검증 중" : "계획 만들기"}</Button>
-            </form>
+              <form className="mt-5 grid gap-4" onSubmit={submit}>
+                <Field id="firewall-rule-id" label="Rule ID"><Input id="firewall-rule-id" value={ruleId} onChange={(event) => setRuleId(event.target.value)} pattern="[A-Za-z0-9_-]{1,48}" required /></Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field id="firewall-action" label="동작"><Select value={action} onValueChange={(value) => setAction(value as UfwAction)}><SelectTrigger id="firewall-action" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="allow">허용</SelectItem><SelectItem value="deny">차단</SelectItem></SelectContent></Select></Field>
+                  <Field id="firewall-protocol" label="Protocol"><Select value={protocol} onValueChange={(value) => setProtocol(value as UfwProtocol)}><SelectTrigger id="firewall-protocol" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem><SelectItem value="any">ANY</SelectItem></SelectContent></Select></Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field id="firewall-source" label="Source IP/CIDR (선택)"><Input id="firewall-source" value={source} onChange={(event) => setSource(event.target.value)} placeholder="203.0.113.0/24" /></Field>
+                  <Field id="firewall-port" label="Port (선택)"><Input id="firewall-port" value={port} onChange={(event) => setPort(event.target.value)} type="number" min="1" max="65535" /></Field>
+                </div>
+                <Button disabled={planner.isPending || applier.isPending} type="submit">{planner.isPending ? "검증 중" : "계획 만들기"}</Button>
+              </form>
               {message ? <p className="mt-4 whitespace-pre-line text-xs leading-5 text-primary" aria-live="polite">{message}</p> : null}
             </ConsoleSection>
+          ) : null}
 
-            <ConsoleSection label="VPSGuard 소유 규칙" title="현재 VPSGuard 소유 rule" description="외부 rule은 변경하지 않고 아래 소유 rule만 plan/apply 합니다.">
+          <ConsoleSection label="VPSGuard 소유 규칙" title="현재 VPSGuard 소유 rule" description="외부 rule은 변경하지 않고 아래 소유 rule만 plan/apply 합니다.">
             <div className="divide-y rounded-lg border">
               {state.snapshot?.owned_rules.length ? state.snapshot.owned_rules.map((rule) => (
                 <div key={`${rule.number}-${rule.id}`} className="px-4 py-3">
@@ -119,7 +126,7 @@ export function FirewallPage() {
             </div>
             <p className="mt-3 font-mono text-[10px] text-muted-foreground">foreign rules preserved {state.snapshot?.foreign_rules.length ?? 0}</p>
 
-            {plan ? (
+            {plan && capabilities.operate ? (
               <div className="mt-7 rounded-lg border border-primary/40 bg-primary/5 p-5">
                 <ShieldCheck className="size-5 text-orange-400" aria-hidden="true" />
                 <h3 className="mt-3 text-sm font-semibold">승인 대기 계획</h3>
@@ -135,9 +142,8 @@ export function FirewallPage() {
                 </div>
               </div>
             ) : null}
-            </ConsoleSection>
-          </div>
-        )}
+          </ConsoleSection>
+        </div>
       </div>
     </>
   );

@@ -68,7 +68,9 @@ pub(super) async fn plan(
     headers: HeaderMap,
     Json(request): Json<PlanRequest>,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Operate).await
+    {
         return error;
     }
     match app.protection.plan(request.settings) {
@@ -83,7 +85,9 @@ pub(super) async fn apply(
     headers: HeaderMap,
     Json(request): Json<ApplyRequest>,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Operate).await
+    {
         return error;
     }
     let Some(operation_id) = headers

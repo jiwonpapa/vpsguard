@@ -2,6 +2,16 @@ import { expect, test, type Page } from "@playwright/test";
 
 // UI-002, UI-004, UI-005, UI-006, UI-008, UI-010: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
 
+const administratorAuthorization = {
+  role: "administrator",
+  capabilities: {
+    view_raw_ip: true,
+    export_sensitive: true,
+    operate: true,
+    administer: true,
+  },
+};
+
 const status = {
   schema_version: 1,
   inspection: "profiled",
@@ -64,6 +74,7 @@ async function mockApi(page: Page) {
           expires_in_seconds: 3600,
           actor: "guard.admin",
           authentication_method: "password_totp",
+          ...administratorAuthorization,
         }),
       });
       return;
@@ -622,6 +633,7 @@ test("PAM administrator enrolls a new authenticator before first login", async (
             expires_in_seconds: 43200,
             actor: "operator",
             authentication_method: "pam_mfa",
+            ...administratorAuthorization,
           },
         }),
       });
@@ -677,6 +689,7 @@ test("authenticated administrator can revoke every session with confirmation", a
           expires_in_seconds: 3600,
           actor: "guard.admin",
           authentication_method: "password_totp",
+          ...administratorAuthorization,
         }),
       });
       return;

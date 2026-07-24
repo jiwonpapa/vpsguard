@@ -69,7 +69,7 @@ UI-008|AUTO_PASS|web/src/components/infrastructure-readback.tsx|web/tests/consol
 UI-009|CODE_ONLY|web/src/auth.tsx|-|-
 UI-010|AUTO_PASS|web/src/pages/glossary.tsx|web/tests/console.e2e.ts|-
 UI-011|AUTO_PASS|web/src/components/ui/button.tsx|web/tests/visual.e2e.ts|-
-UI-012|PLANNED|-|-|-
+UI-012|AUTO_PASS|crates/guard-control/src/api.rs|web/tests/permissions.spec.ts|-
 UI-013|CODE_ONLY|web/src/components/query-state.tsx|-|-
 UI-014|CODE_ONLY|web/src/router.tsx|-|-
 UI-015|AUTO_PASS|web/src/auth.tsx|web/tests/console.e2e.ts|-

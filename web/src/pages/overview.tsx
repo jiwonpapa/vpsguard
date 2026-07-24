@@ -15,7 +15,7 @@ import type { CertbotAssistedPlan } from "../lib/types";
 import { formatBytes, formatLatency, formatTime, MODE_LABELS, percent } from "../lib/utils";
 
 export function OverviewPage() {
-  const { runAction } = useAuth();
+  const { capabilities, runAction } = useAuth();
   const [tlsEmail, setTlsEmail] = useState("");
   const [tlsPlan, setTlsPlan] = useState<CertbotAssistedPlan | null>(null);
   const [tlsPlanError, setTlsPlanError] = useState("");
@@ -43,14 +43,16 @@ export function OverviewPage() {
         title="현재 방어 상태"
         description="사이트 상태, 방어 판정, 서버 압력과 복구 경로를 한 화면에서 확인합니다."
         action={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => void runAction("/api/v1/actions/manual-hold")}>
-              <Pause className="size-3.5" /> 자동 대응 중지
-            </Button>
-            <Button size="sm" onClick={() => void runAction("/api/v1/actions/resume-auto")}>
-              <Play className="size-3.5" /> 자동 대응 재개
-            </Button>
-          </div>
+          capabilities.operate ? (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => void runAction("/api/v1/actions/manual-hold")}>
+                <Pause className="size-3.5" /> 자동 대응 중지
+              </Button>
+              <Button size="sm" onClick={() => void runAction("/api/v1/actions/resume-auto")}>
+                <Play className="size-3.5" /> 자동 대응 재개
+              </Button>
+            </div>
+          ) : <Badge variant="neutral">운영 변경 제한</Badge>
         }
       />
 
@@ -187,7 +189,7 @@ export function OverviewPage() {
                   <span>manager {state.tls_management.manager ?? "unavailable"}</span>
                   <span>certificates {state.tls_management.certificate_count}</span>
                 </div>
-                {state.tls_management.ownership === "vpsguard_assisted" && state.tls_management.renewal !== "healthy" ? (
+                {capabilities.operate && state.tls_management.ownership === "vpsguard_assisted" && state.tls_management.renewal !== "healthy" ? (
                   <div className="mt-5 max-w-xl">
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <Input type="email" autoComplete="email" value={tlsEmail} onChange={(event) => setTlsEmail(event.target.value)} placeholder="ACME 연락처 email" className="h-9 min-w-0 flex-1 text-xs" />
@@ -251,10 +253,12 @@ export function OverviewPage() {
               <div className="h-2 max-w-2xl overflow-hidden rounded-full bg-muted" aria-label={`Provider 진행률 ${providerProgress(state.provider)}%`}>
                 <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${providerProgress(state.provider)}%` }} />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="destructive" onClick={() => void runAction("/api/v1/actions/emergency-proxy")}><CloudCog className="size-3.5" /> 비상 보호</Button>
-                <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}><RotateCcw className="size-3.5" /> {state.mode === "RECOVERY_READY" ? "보호 해제 승인" : "긴급 Snapshot 복구"}</Button>
-              </div>
+              {capabilities.administer ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="destructive" onClick={() => void runAction("/api/v1/actions/emergency-proxy")}><CloudCog className="size-3.5" /> 비상 보호</Button>
+                  <Button variant="outline" onClick={() => void runAction("/api/v1/actions/provider-restore")}><RotateCcw className="size-3.5" /> {state.mode === "RECOVERY_READY" ? "보호 해제 승인" : "긴급 Snapshot 복구"}</Button>
+                </div>
+              ) : <Badge variant="neutral">Provider 변경 제한</Badge>}
             </div>
           </ConsoleSection>
         ) : null}

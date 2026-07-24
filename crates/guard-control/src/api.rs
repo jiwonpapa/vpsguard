@@ -14,11 +14,12 @@ use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use guard_agent::os::OsSnapshot;
 use guard_agent::{CollectorHealth, CollectorState};
 use guard_core::config::{
-    AdminAuthProvider, CspMode, DetectionMode, InspectionMode, SecurityConfig, TlsManagementMode,
+    AdminAuthProvider, AdminRole, CspMode, DetectionMode, InspectionMode, SecurityConfig,
+    TlsManagementMode,
 };
 use guard_core::correlation::{LOG_SCHEMA_VERSION, RequestIdGenerator, is_valid_request_id};
 use guard_core::{GuardEvent, GuardMode, GuardState, Severity};
@@ -34,8 +35,8 @@ use tokio_stream::wrappers::BroadcastStream;
 use tracing::Instrument;
 
 use crate::auth::{
-    AuthError, BootstrapStore, IssuedSession, LoginSecondFactor, SessionStore, UiAccessPolicy,
-    unix_seconds,
+    AuthError, BootstrapStore, IssuedSession, LoginSecondFactor, SessionIdentity, SessionStore,
+    UiAccessPolicy, unix_seconds,
 };
 use crate::firewall::{FirewallError, FirewallOperations};
 use crate::notification::{NotificationHandle, NotificationStatus};
@@ -204,6 +205,37 @@ struct SessionResponse {
     expires_in_seconds: u64,
     actor: String,
     authentication_method: String,
+    role: AdminRole,
+    capabilities: AdminCapabilities,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminCapabilities {
+    view_raw_ip: bool,
+    export_sensitive: bool,
+    operate: bool,
+    administer: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AdminPermission {
+    Authenticated,
+    ViewRawIp,
+    ExportSensitive,
+    Operate,
+    Administer,
+}
+
+impl AdminPermission {
+    const fn allows(self, role: AdminRole) -> bool {
+        match self {
+            Self::Authenticated => true,
+            Self::ViewRawIp => role.can_view_raw_ip(),
+            Self::ExportSensitive => role.can_export_sensitive(),
+            Self::Operate => role.can_operate(),
+            Self::Administer => role.can_administer(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +323,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/traffic/summary", get(traffic_summary))
         .route("/api/v1/traffic/series", get(traffic_series))
         .route("/api/v1/clients", get(clients))
+        .route("/api/v1/clients/export", post(export_clients))
         .route("/api/v1/clients/{client_ip}", get(client_detail))
         .route("/api/v1/routes", get(routes))
         .route("/api/v1/bots", get(bots))
@@ -431,18 +464,17 @@ async fn enforce_management_host(
 
 async fn require_session(
     State(app): State<Arc<AppState>>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
     let sessions = Arc::clone(&app.sessions);
     let headers = request.headers().clone();
-    let authenticated = tokio::task::spawn_blocking(move || sessions.authenticate(&headers))
+    let identity = tokio::task::spawn_blocking(move || sessions.authenticate(&headers))
         .await
         .ok()
         .and_then(Result::ok)
-        .flatten()
-        .is_some();
-    if !authenticated {
+        .flatten();
+    let Some(identity) = identity else {
         return api_error(
             StatusCode::UNAUTHORIZED,
             "SESSION_AUTH_REQUIRED",
@@ -450,7 +482,8 @@ async fn require_session(
             "관리 데이터와 운영 명령을 제공하지 않았습니다.",
             "관리자 계정과 2단계 인증으로 로그인하십시오.",
         );
-    }
+    };
+    request.extensions_mut().insert(identity);
     next.run(request).await
 }
 
@@ -643,7 +676,9 @@ async fn firewall_plan(
     headers: HeaderMap,
     Json(mutation): Json<UfwMutation>,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Operate).await
+    {
         return error;
     }
     let firewall = Arc::clone(&app.firewall);
@@ -665,7 +700,9 @@ async fn firewall_apply(
     headers: HeaderMap,
     Json(request): Json<FirewallApplyRequest>,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Operate).await
+    {
         return error;
     }
     if request.operation_id.trim().is_empty() || request.operation_id.len() > 64 {
@@ -746,7 +783,9 @@ async fn tls_assisted_plan(
     headers: HeaderMap,
     Json(request): Json<TlsPlanRequest>,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Operate).await
+    {
         return error;
     }
     match build_certbot_assisted_plan(app.tls_plan_mode, &app.tls_plan_domains, &request.email) {
@@ -884,15 +923,88 @@ async fn traffic_series(
     }
 }
 
-async fn clients(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
+async fn clients(
+    State(app): State<Arc<AppState>>,
+    Extension(identity): Extension<SessionIdentity>,
+    Query(query): Query<ListQuery>,
+) -> Response {
     let result = app.storage.clients(bounded_limit(query.limit));
-    storage_list::<ClientRow>(result)
+    let role = app
+        .access
+        .role_for_actor(&identity.actor, &identity.authentication_method);
+    if role.can_view_raw_ip() {
+        storage_list::<ClientRow>(result)
+    } else {
+        storage_list(result.map(masked_client_rows))
+    }
+}
+
+async fn export_clients(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::ExportSensitive).await
+    {
+        return error;
+    }
+    let rows = match app.storage.clients(1_000) {
+        Ok(rows) => rows,
+        Err(error) => {
+            api_warn!(
+                error_code = "CLIENT_EXPORT_STORAGE_FAILED",
+                error = %error,
+                "sensitive client export query failed"
+            );
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "CLIENT_EXPORT_STORAGE_FAILED",
+                "클라이언트 export 데이터를 읽지 못했습니다.",
+                "원시 IP 파일을 생성하지 않았습니다.",
+                "SQLite 상태와 raw IP retention을 확인하십시오.",
+            );
+        }
+    };
+    let mut csv = String::from(
+        "client_ip,requests,request_body_bytes,response_body_bytes,throttled,denied,last_seen_unix_ms\n",
+    );
+    for row in rows {
+        if row.client_ip.parse::<IpAddr>().is_err() {
+            continue;
+        }
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{}\n",
+            row.client_ip,
+            row.requests,
+            row.request_body_bytes,
+            row.response_body_bytes,
+            row.throttled,
+            row.denied,
+            row.last_seen_unix_ms
+        ));
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"vpsguard-clients.csv\"",
+            ),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        csv,
+    )
+        .into_response()
 }
 
 async fn client_detail(
     State(app): State<Arc<AppState>>,
+    Extension(identity): Extension<SessionIdentity>,
     Path(client_ip): Path<String>,
 ) -> Response {
+    let role = app
+        .access
+        .role_for_actor(&identity.actor, &identity.authentication_method);
+    if !role.can_view_raw_ip() {
+        return permission_error(AdminPermission::ViewRawIp);
+    }
     let Ok(client_ip) = client_ip.parse::<IpAddr>() else {
         return api_error(
             StatusCode::BAD_REQUEST,
@@ -924,6 +1036,51 @@ async fn client_detail(
                 "방어 동작은 계속되지만 상세 화면 데이터가 지연됩니다.",
                 "SQLite 상태와 disk 여유 공간을 확인하십시오.",
             )
+        }
+    }
+}
+
+fn masked_client_rows(rows: Vec<ClientRow>) -> Vec<ClientRow> {
+    let mut masked = BTreeMap::<String, ClientRow>::new();
+    for row in rows {
+        let Some(network) = masked_client_network(&row.client_ip) else {
+            continue;
+        };
+        let aggregate = masked.entry(network.clone()).or_insert(ClientRow {
+            client_ip: network,
+            requests: 0,
+            throttled: 0,
+            denied: 0,
+            request_body_bytes: 0,
+            response_body_bytes: 0,
+            last_seen_unix_ms: 0,
+        });
+        aggregate.requests = aggregate.requests.saturating_add(row.requests);
+        aggregate.throttled = aggregate.throttled.saturating_add(row.throttled);
+        aggregate.denied = aggregate.denied.saturating_add(row.denied);
+        aggregate.request_body_bytes = aggregate
+            .request_body_bytes
+            .saturating_add(row.request_body_bytes);
+        aggregate.response_body_bytes = aggregate
+            .response_body_bytes
+            .saturating_add(row.response_body_bytes);
+        aggregate.last_seen_unix_ms = aggregate.last_seen_unix_ms.max(row.last_seen_unix_ms);
+    }
+    let mut rows = masked.into_values().collect::<Vec<_>>();
+    rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.requests));
+    rows
+}
+
+fn masked_client_network(value: &str) -> Option<String> {
+    match value.parse::<IpAddr>().ok()? {
+        IpAddr::V4(address) => {
+            let mut octets = address.octets();
+            octets[3] = 0;
+            Some(format!("{}/24", std::net::Ipv4Addr::from(octets)))
+        }
+        IpAddr::V6(address) => {
+            let network = u128::from(address) & (u128::MAX << 64);
+            Some(format!("{}/64", std::net::Ipv6Addr::from(network)))
         }
     }
 }
@@ -1031,11 +1188,16 @@ async fn current_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -
             "관리자 계정과 2단계 인증으로 로그인하십시오.",
         );
     };
+    let role = app
+        .access
+        .role_for_actor(&identity.actor, &identity.authentication_method);
     Json(SessionResponse {
         csrf_token,
         expires_in_seconds: identity.expires_in_seconds,
         actor: identity.actor,
         authentication_method: identity.authentication_method,
+        role,
+        capabilities: capabilities(role),
     })
     .into_response()
 }
@@ -1134,7 +1296,7 @@ async fn confirm_enrollment(
                 [(header::SET_COOKIE, cookie)],
                 Json(EnrollmentCompleteResponse {
                     recovery_codes: complete.recovery_codes,
-                    session: session_response(complete.session),
+                    session: session_response(complete.session, &app.access),
                 }),
             )
                 .into_response()
@@ -1192,7 +1354,7 @@ async fn create_session(
             let cookie = issued.set_cookie.clone();
             (
                 [(header::SET_COOKIE, cookie)],
-                Json(session_response(issued)),
+                Json(session_response(issued, &app.access)),
             )
                 .into_response()
         }
@@ -1203,7 +1365,9 @@ async fn create_session(
 }
 
 async fn delete_session(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Authenticated).await
+    {
         return error;
     }
     let sessions = Arc::clone(&app.sessions);
@@ -1223,7 +1387,9 @@ async fn delete_session(State(app): State<Arc<AppState>>, headers: HeaderMap) ->
 }
 
 async fn revoke_all_sessions(State(app): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Some(error) = mutation_authorization_error(&headers, &app).await {
+    if let Some(error) =
+        mutation_authorization_error(&headers, &app, AdminPermission::Administer).await
+    {
         return error;
     }
     let sessions = Arc::clone(&app.sessions);
@@ -1264,7 +1430,9 @@ async fn apply_provider_action(
     headers: &HeaderMap,
     restore: bool,
 ) -> Response {
-    if let Some(error) = mutation_authorization_error(headers, app).await {
+    if let Some(error) =
+        mutation_authorization_error(headers, app, AdminPermission::Administer).await
+    {
         return error;
     }
     let Some(operation_id) = headers
@@ -1434,7 +1602,8 @@ async fn apply_provider_action(
 }
 
 async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> Response {
-    if let Some(error) = mutation_authorization_error(headers, app).await {
+    if let Some(error) = mutation_authorization_error(headers, app, AdminPermission::Operate).await
+    {
         return error;
     }
     let Some(operation_id) = headers
@@ -1510,7 +1679,11 @@ async fn apply_action(app: &Arc<AppState>, headers: &HeaderMap, hold: bool) -> R
     .into_response()
 }
 
-async fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Option<Response> {
+async fn mutation_authorization_error(
+    headers: &HeaderMap,
+    app: &AppState,
+    required: AdminPermission,
+) -> Option<Response> {
     if !app.access.accepts_origin(headers) {
         return Some(api_error(
             StatusCode::FORBIDDEN,
@@ -1522,13 +1695,12 @@ async fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Op
     }
     let sessions = Arc::clone(&app.sessions);
     let headers = headers.clone();
-    let authorized = tokio::task::spawn_blocking(move || sessions.authorize(&headers))
+    let identity = tokio::task::spawn_blocking(move || sessions.authorize(&headers))
         .await
         .ok()
         .and_then(Result::ok)
-        .flatten()
-        .is_some();
-    if !authorized {
+        .flatten();
+    let Some(identity) = identity else {
         return Some(api_error(
             StatusCode::FORBIDDEN,
             "CSRF_AUTH_REQUIRED",
@@ -1536,8 +1708,31 @@ async fn mutation_authorization_error(headers: &HeaderMap, app: &AppState) -> Op
             "운영 상태를 변경하지 않았습니다.",
             "session을 복원한 뒤 명령을 다시 확인하십시오.",
         ));
+    };
+    let role = app
+        .access
+        .role_for_actor(&identity.actor, &identity.authentication_method);
+    if !required.allows(role) {
+        return Some(permission_error(required));
     }
     None
+}
+
+fn permission_error(required: AdminPermission) -> Response {
+    let problem = match required {
+        AdminPermission::ViewRawIp => "현재 역할은 원시 IP를 조회할 수 없습니다.",
+        AdminPermission::ExportSensitive => "현재 역할은 민감 export를 만들 수 없습니다.",
+        AdminPermission::Operate => "현재 역할은 운영 상태를 변경할 수 없습니다.",
+        AdminPermission::Administer => "현재 역할은 provider·session 관리 권한이 없습니다.",
+        AdminPermission::Authenticated => "유효한 운영 session이 필요합니다.",
+    };
+    api_error(
+        StatusCode::FORBIDDEN,
+        "ROLE_PERMISSION_REQUIRED",
+        problem,
+        "원시 IP를 노출하거나 요청한 운영 작업을 실행하지 않았습니다.",
+        "관리자에게 필요한 역할 binding을 요청하십시오.",
+    )
 }
 
 fn invalid_origin_error(headers: &HeaderMap, app: &AppState) -> Option<Response> {
@@ -1552,12 +1747,25 @@ fn invalid_origin_error(headers: &HeaderMap, app: &AppState) -> Option<Response>
     })
 }
 
-fn session_response(issued: IssuedSession) -> SessionResponse {
+fn session_response(issued: IssuedSession, access: &UiAccessPolicy) -> SessionResponse {
+    let authentication_method = issued.authentication_method.as_str().to_owned();
+    let role = access.role_for_actor(&issued.actor, &authentication_method);
     SessionResponse {
         csrf_token: issued.csrf_token,
         expires_in_seconds: issued.expires_in_seconds,
         actor: issued.actor,
-        authentication_method: issued.authentication_method.as_str().to_owned(),
+        authentication_method,
+        role,
+        capabilities: capabilities(role),
+    }
+}
+
+const fn capabilities(role: AdminRole) -> AdminCapabilities {
+    AdminCapabilities {
+        view_raw_ip: role.can_view_raw_ip(),
+        export_sensitive: role.can_export_sensitive(),
+        operate: role.can_operate(),
+        administer: role.can_administer(),
     }
 }
 

@@ -68,6 +68,17 @@ export interface SessionInfo {
   expires_in_seconds: number;
   actor: string;
   authentication_method: string;
+  role: AdminRole;
+  capabilities: AdminCapabilities;
+}
+
+export type AdminRole = "viewer" | "analyst" | "operator" | "administrator";
+
+export interface AdminCapabilities {
+  view_raw_ip: boolean;
+  export_sensitive: boolean;
+  operate: boolean;
+  administer: boolean;
 }
 
 export interface EnrollmentStart {
@@ -248,6 +259,21 @@ export async function revokeAllSessions(): Promise<number> {
   return body.revoked_sessions;
 }
 
+export async function exportClients(): Promise<Blob> {
+  if (!csrfToken) {
+    throw new ApiError("관리자 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
+  }
+  const response = await fetch("/api/v1/clients/export", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+  if (!response.ok) {
+    return parseResponse<never>(response);
+  }
+  return response.blob();
+}
+
 export async function performAction(path: string): Promise<ActionResponse> {
   if (!csrfToken) {
     throw new ApiError("운영 session 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
@@ -323,6 +349,7 @@ export const api = {
     getJson<ListResponse<ClientRow>>("/api/v1/clients?limit=500").then(
       (value) => value.items,
     ),
+  exportClients,
   clientDetail: (clientIp: string) =>
     getJson<ClientDetailRow>(`/api/v1/clients/${encodeURIComponent(clientIp)}`),
   routes: () =>

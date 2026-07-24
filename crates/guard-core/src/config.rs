@@ -231,6 +231,9 @@ pub struct UiConfig {
     /// PAM 인증 뒤 허용할 Unix group입니다.
     #[serde(default = "default_pam_allowed_group")]
     pub pam_allowed_group: String,
+    /// 인증 actor에 부여할 최소 권한 역할입니다. 목록에 없는 actor는 호환상 관리자입니다.
+    #[serde(default)]
+    pub role_bindings: Vec<AdminRoleBinding>,
     /// local 관리자 명령을 받는 peer-credential Unix socket입니다.
     #[serde(default = "default_admin_socket")]
     pub admin_socket: PathBuf,
@@ -265,6 +268,56 @@ pub enum AdminAuthProvider {
     Local,
     /// Linux-PAM 서버 계정과 allowlisted group을 사용합니다.
     Pam,
+}
+
+/// 관리 session에 부여하는 고정 권한 역할입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminRole {
+    /// 마스킹된 운영 정보만 읽습니다.
+    Viewer,
+    /// 원시 IP를 조회하고 민감 export를 수행하지만 상태를 변경하지 않습니다.
+    Analyst,
+    /// 원시 IP를 조회하고 로컬 보호를 운영하지만 민감 export·provider 복구는 수행하지 않습니다.
+    Operator,
+    /// 민감 export, 로컬 보호와 provider·session 관리까지 수행합니다.
+    Administrator,
+}
+
+impl AdminRole {
+    /// 원시 client IP를 조회할 수 있는지 반환합니다.
+    #[must_use]
+    pub const fn can_view_raw_ip(self) -> bool {
+        !matches!(self, Self::Viewer)
+    }
+
+    /// 원시 IP가 포함된 민감 export를 만들 수 있는지 반환합니다.
+    #[must_use]
+    pub const fn can_export_sensitive(self) -> bool {
+        matches!(self, Self::Analyst | Self::Administrator)
+    }
+
+    /// 로컬 보호·방화벽 설정을 변경할 수 있는지 반환합니다.
+    #[must_use]
+    pub const fn can_operate(self) -> bool {
+        matches!(self, Self::Operator | Self::Administrator)
+    }
+
+    /// Cloudflare 전환·복구와 전체 session 폐기를 수행할 수 있는지 반환합니다.
+    #[must_use]
+    pub const fn can_administer(self) -> bool {
+        matches!(self, Self::Administrator)
+    }
+}
+
+/// root-owned 설정의 인증 actor와 역할 연결입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdminRoleBinding {
+    /// local 또는 PAM 인증이 반환하는 정확한 actor입니다.
+    pub actor: String,
+    /// actor가 로그인할 때 적용할 역할입니다.
+    pub role: AdminRole,
 }
 
 /// host firewall 변경 소유권 설정입니다.
@@ -1069,6 +1122,20 @@ impl GuardConfig {
                 return invalid(
                     "ui.pam_allowed_group",
                     "root가 아닌 전용 Unix group 이름이 필요합니다",
+                );
+            }
+        }
+        let mut role_actors = HashSet::new();
+        for binding in &self.ui.role_bindings {
+            let actor = binding.actor.to_ascii_lowercase();
+            if !is_safe_identity_name(&binding.actor)
+                || binding.actor.eq_ignore_ascii_case("root")
+                || binding.actor.eq_ignore_ascii_case("break-glass")
+                || !role_actors.insert(actor)
+            {
+                return invalid(
+                    "ui.role_bindings",
+                    "중복되지 않은 human actor와 typed role이 필요합니다",
                 );
             }
         }

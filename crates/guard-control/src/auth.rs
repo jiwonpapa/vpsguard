@@ -12,7 +12,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use guard_core::config::{AdminAuthProvider, UiConfig};
+use guard_core::config::{AdminAuthProvider, AdminRole, AdminRoleBinding, UiConfig};
 use hmac::{Hmac, Mac};
 use secrecy::zeroize::Zeroize;
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
@@ -170,6 +170,7 @@ pub(crate) struct UiAccessPolicy {
     expected_host: String,
     allowed_origin: String,
     secure_cookie: bool,
+    role_bindings: Vec<AdminRoleBinding>,
 }
 
 impl UiAccessPolicy {
@@ -181,6 +182,7 @@ impl UiAccessPolicy {
                 expected_host: config.bind.to_string(),
                 allowed_origin: format!("http://{}", config.bind),
                 secure_cookie: false,
+                role_bindings: config.role_bindings.clone(),
             },
             |host| Self {
                 expected_host: host.to_ascii_lowercase(),
@@ -194,6 +196,7 @@ impl UiAccessPolicy {
                     )
                 },
                 secure_cookie: true,
+                role_bindings: config.role_bindings.clone(),
             },
         )
     }
@@ -225,6 +228,17 @@ impl UiAccessPolicy {
     /// session cookie에 Secure를 붙여야 하는지 반환합니다.
     pub(crate) const fn secure_cookie(&self) -> bool {
         self.secure_cookie
+    }
+
+    /// 인증 actor의 root-owned 역할 binding을 반환하며 break-glass는 항상 관리자입니다.
+    pub(crate) fn role_for_actor(&self, actor: &str, authentication_method: &str) -> AdminRole {
+        if authentication_method == AuthenticationMethod::BreakGlass.as_str() {
+            return AdminRole::Administrator;
+        }
+        self.role_bindings
+            .iter()
+            .find(|binding| binding.actor.eq_ignore_ascii_case(actor))
+            .map_or(AdminRole::Administrator, |binding| binding.role)
     }
 }
 
@@ -426,6 +440,18 @@ impl SessionStore {
         Self::new(
             std::sync::Arc::new(AuthRepository::in_memory()?),
             login_rate_limit_rpm,
+        )
+    }
+
+    /// API 권한 회귀에서 지정 actor의 TOTP session을 발급합니다.
+    #[cfg(test)]
+    pub(crate) fn issue_test_session(&self, actor: &str) -> Result<IssuedSession, AuthError> {
+        self.repository.ensure_test_account()?;
+        self.issue_session(
+            actor.to_owned(),
+            AuthenticationMethod::PasswordTotp,
+            false,
+            unix_seconds()?,
         )
     }
 

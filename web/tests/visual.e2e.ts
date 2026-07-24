@@ -2,6 +2,16 @@ import { expect, test } from "@playwright/test";
 
 // UI-011: 관리자 shell과 인증 dialog의 viewport·theme 회귀를 고정합니다.
 
+const administratorAuthorization = {
+  role: "administrator",
+  capabilities: {
+    view_raw_ip: true,
+    export_sensitive: true,
+    operate: true,
+    administer: true,
+  },
+};
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -62,6 +72,7 @@ test("keeps the authenticated operations overview consistent", async ({ page }, 
         expires_in_seconds: 3600,
         actor: "guard.admin",
         authentication_method: "password_totp",
+        ...administratorAuthorization,
       },
       "/api/v1/auth/status": {
         auth_provider: "local",

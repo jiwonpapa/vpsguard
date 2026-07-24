@@ -47,6 +47,12 @@ bind = "127.0.0.1:7727"
 admin_socket = "/run/vps-guard/admin.sock"
 login_rate_limit_rpm = 10
 language = "ko"
+# 등록하지 않은 기존 허용 계정은 호환성을 위해 administrator입니다.
+# 운영에서는 Linux 계정별 최소 역할을 명시하십시오: viewer, analyst, operator, administrator.
+# role_bindings = [
+#   { actor = "audit-user", role = "analyst" },
+#   { actor = "ops-user", role = "operator" },
+# ]
 
 [detection]
 profile = "gnuboard7"

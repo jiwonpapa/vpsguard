@@ -124,7 +124,7 @@ last_reviewed: 2026-07-24
 | `UI-008` | `web/src/components/infrastructure-readback.tsx`, `web/tests/console.e2e.ts` | provider transaction stage·UFW snapshot fingerprint·TLS manager/renewal read-back과 개별 API 실패의 desktop·mobile 표시 |
 | `UI-010` | `web/src/pages/glossary.tsx`, `web/src/components/console-section.tsx`, `web/tests/console.e2e.ts` | 주요 수치 tooltip과 8개 지표의 의미·산정·출처를 desktop·mobile에서 확인 |
 | `UI-011` | `web/tests/console.e2e.ts`, `web/tests/visual.e2e.ts` | 메뉴 그룹·운영 section 계약, 비로그인 gate와 인증 후 overview의 theme·viewport screenshot diff |
-| `UI-012` | `web/tests/permissions.spec.ts` | role별 IP·export·action matrix |
+| `UI-012` | `crates/guard-core/src/config/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/permissions.spec.ts` | role별 IP masking·exact detail·민감 export·로컬 action·provider admin matrix |
 | `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
 | `UI-014` | public surface inventory gate | route·menu allowlist artifact |
 | `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 PAM 미등록 gate·사용자 QR 등록·계정/TOTP 로그인과 terminal 없는 일상 접속 browser report |

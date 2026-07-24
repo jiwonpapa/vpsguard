@@ -356,6 +356,10 @@ fn public_ui_policy_requires_exact_host_and_origin() -> Result<(), Box<dyn std::
         auth_provider: guard_core::config::AdminAuthProvider::Local,
         pam_service: "vps-guard".to_owned(),
         pam_allowed_group: "vpsguard-admin".to_owned(),
+        role_bindings: vec![guard_core::config::AdminRoleBinding {
+            actor: "audit.user".to_owned(),
+            role: guard_core::config::AdminRole::Analyst,
+        }],
         admin_socket: "/tmp/admin.sock".into(),
         privileged_socket: "/tmp/privileged.sock".into(),
         login_rate_limit_rpm: 10,
@@ -364,6 +368,18 @@ fn public_ui_policy_requires_exact_host_and_origin() -> Result<(), Box<dyn std::
     let policy = UiAccessPolicy::from_config(&config);
     assert!(policy.accepts_host(Some("guard.example.com:443")));
     assert!(!policy.accepts_host(Some("example.com")));
+    assert_eq!(
+        policy.role_for_actor("AUDIT.USER", "pam_mfa"),
+        guard_core::config::AdminRole::Analyst
+    );
+    assert_eq!(
+        policy.role_for_actor("unknown", "pam_mfa"),
+        guard_core::config::AdminRole::Administrator
+    );
+    assert_eq!(
+        policy.role_for_actor("audit.user", "break_glass"),
+        guard_core::config::AdminRole::Administrator
+    );
     let mut headers = HeaderMap::new();
     headers.insert(
         "origin",
