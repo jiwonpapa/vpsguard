@@ -257,7 +257,10 @@ def run_host_pressure(
             and memory_restored
             and balloon_restored
         ):
-            remove_pressure_stage(runner, root, manifest, stage_path)
+            try:
+                remove_pressure_stage(guest, stage_path)
+            except Exception as error:
+                failure = failure or error
 
     restored_release = guest_text(
         guest.execute(

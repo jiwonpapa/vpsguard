@@ -9,7 +9,6 @@ from .host_pressure_model import HostPressureManifest, fail
 from .protection_pilot_model import Bundle
 from .protection_pilot_remote import (
     balloon_driver_loaded,
-    remove_stage,
     restore_balloon_driver,
     set_domain_memory,
     ssh,
@@ -145,11 +144,26 @@ def require_pressure_restored(
 
 
 def remove_pressure_stage(
-    runner: CommandRunner,
-    root: Path,
-    manifest: HostPressureManifest,
+    guest: GuestAgent,
     stage_path: PurePosixPath,
 ) -> None:
-    """Remove only the source-commit-specific successful pressure stage."""
+    """Remove only a validated source-commit stage through root guest agent."""
 
-    remove_stage(runner, root, manifest.protection, stage_path)
+    guest.execute(pressure_cleanup_command(stage_path))
+
+
+def pressure_cleanup_command(stage_path: PurePosixPath) -> tuple[str, ...]:
+    """Build the exact root cleanup command for one DET-014 commit stage."""
+
+    commit = stage_path.name
+    if (
+        stage_path.parent.name != "det014-host-pressure"
+        or len(commit) != 40
+        or any(character not in "0123456789abcdef" for character in commit)
+    ):
+        fail(
+            "PRESSURE_STAGE_UNSAFE",
+            "pressure stage 정리 경로가 commit 경계와 일치하지 않습니다.",
+            str(stage_path),
+        )
+    return ("/bin/rm", "-rf", "--", str(stage_path))

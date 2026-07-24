@@ -15,6 +15,7 @@ from tools.vpsguard_harness.host_pressure import (
     HostPressureManifest,
     run_host_pressure,
 )
+from tools.vpsguard_harness.host_pressure_remote import pressure_cleanup_command
 
 
 def _load_probe() -> object:
@@ -222,6 +223,18 @@ class HostPressureTest(unittest.TestCase):
             probe.CPU_WORKER_COMMAND,
             ("/usr/bin/sha256sum", "/dev/zero"),
         )
+
+    def test_cleanup_is_root_capable_and_bound_to_one_commit_stage(self) -> None:
+        stage = (
+            Path("/home/gnuboard5/vpsguard-ui018-pilot/det014-host-pressure")
+            / "0123456789abcdef0123456789abcdef01234567"
+        )
+        self.assertEqual(
+            pressure_cleanup_command(stage),
+            ("/bin/rm", "-rf", "--", str(stage)),
+        )
+        with self.assertRaises(HostPressureError):
+            pressure_cleanup_command(Path("/home/gnuboard5"))
 
 
 if __name__ == "__main__":
