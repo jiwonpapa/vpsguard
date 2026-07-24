@@ -3,10 +3,21 @@
 
 import json
 import os
+import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SLOW_RESPONSE_SECONDS = 0.3
+
+
+class NoDelayThreadingHTTPServer(ThreadingHTTPServer):
+    """Disable delayed small-response writes in the load-test origin fixture."""
+
+    def get_request(self):
+        """Accept one connection with Nagle buffering disabled."""
+        connection, address = super().get_request()
+        connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        return connection, address
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -44,4 +55,4 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("VPS_GUARD_TEST_ORIGIN_PORT", "18081"))
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    NoDelayThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
