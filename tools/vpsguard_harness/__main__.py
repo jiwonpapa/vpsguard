@@ -17,6 +17,7 @@ from .coverage import validate_coverage
 from .dev_check import run_dev_check
 from .errors import HarnessError
 from .governance import validate_requirements, validate_rustdoc
+from .host_pressure import run_host_pressure
 from .ops import run_ops_harness
 from .policy import validate_language_policy
 from .protection_pilot import run_protection_pilot
@@ -82,6 +83,14 @@ def main(argv: list[str] | None = None) -> int:
     release_endurance.add_argument("--evidence", type=Path, required=True)
     release_endurance.add_argument("--run", action="store_true")
     release_endurance.add_argument("--confirm")
+    host_pressure = subcommands.add_parser(
+        "vm-host-pressure",
+        help="2GB CPU pressure, proc/API comparison and guard recovery",
+    )
+    host_pressure.add_argument("--manifest", type=Path, required=True)
+    host_pressure.add_argument("--evidence", type=Path, required=True)
+    host_pressure.add_argument("--run", action="store_true")
+    host_pressure.add_argument("--confirm")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
 
@@ -189,6 +198,26 @@ def main(argv: list[str] | None = None) -> int:
                     f"samples={summary.probe['samples']} "
                     f"max_outage_ms={summary.probe['max_outage_ms']} "
                     f"elapsed_ms={summary.elapsed_ms}"
+                )
+        elif arguments.command == "vm-host-pressure":
+            summary = run_host_pressure(
+                root,
+                arguments.manifest,
+                arguments.evidence,
+                execute=arguments.run,
+                confirmation=arguments.confirm,
+            )
+            if summary is None:
+                print("vm host pressure: PLAN")
+            else:
+                pressure = summary["pressure"]["summary"]
+                public = summary["public_probe"]
+                print(
+                    "vm host pressure: PASS "
+                    f"samples={pressure['samples']} "
+                    f"max_cpu={pressure['max_direct_cpu_percent']} "
+                    f"max_outage_ms={public['max_outage_ms']} "
+                    f"elapsed_ms={summary['elapsed_ms']}"
                 )
     except HarnessError as error:
         print(error, file=sys.stderr)
