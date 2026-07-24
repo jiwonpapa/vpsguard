@@ -19,6 +19,7 @@ from .errors import HarnessError
 from .governance import validate_requirements, validate_rustdoc
 from .ops import run_ops_harness
 from .policy import validate_language_policy
+from .protection_pilot import run_protection_pilot
 from .release_lifecycle import run_release_lifecycle_harness
 from .vm_lab import run_public_probe_timeline, run_vm_lab
 
@@ -62,6 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     vm_probe.add_argument("--evidence", type=Path, required=True)
     vm_probe.add_argument("--duration-seconds", type=int, required=True)
     vm_probe.add_argument("--interval-ms", type=int, default=100)
+    protection_pilot = subcommands.add_parser(
+        "vm-protection-pilot",
+        help="isolated 2GB VM update, policy read-back and automatic restore",
+    )
+    protection_pilot.add_argument("--manifest", type=Path, required=True)
+    protection_pilot.add_argument("--bundle", type=Path, required=True)
+    protection_pilot.add_argument("--evidence", type=Path, required=True)
+    protection_pilot.add_argument("--run", action="store_true")
+    protection_pilot.add_argument("--confirm")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
 
@@ -132,6 +142,24 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"vm probe timeline: PASS samples={summary['samples']} failures={summary['failures']}"
             )
+        elif arguments.command == "vm-protection-pilot":
+            summary = run_protection_pilot(
+                root,
+                arguments.manifest,
+                arguments.bundle,
+                arguments.evidence,
+                execute=arguments.run,
+                confirmation=arguments.confirm,
+            )
+            if summary is None:
+                print("vm protection pilot: PLAN")
+            else:
+                print(
+                    "vm protection pilot: PASS "
+                    f"source_commit={summary.source_commit} "
+                    f"guest_mem_total_kib={summary.guest_mem_total_kib} "
+                    f"elapsed_ms={summary.elapsed_ms}"
+                )
     except HarnessError as error:
         print(error, file=sys.stderr)
         return 1

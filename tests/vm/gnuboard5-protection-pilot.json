@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "target": {
+    "host_alias": "gnuboard7",
+    "domain": "gnuboard5",
+    "guest_copy_target": "gnuboard5@192.168.0.143",
+    "stage_base": "/home/gnuboard5/vpsguard-ui018-pilot",
+    "target_memory_kib": 2097152
+  },
+  "runtime": {
+    "current_release_path": "/usr/local/lib/vps-guard/current",
+    "services": [
+      "apache2.service",
+      "vps-guard-edge.service",
+      "vps-guard-control.service",
+      "vps-guard-privileged.service",
+      "vps-guard-privileged.socket"
+    ]
+  },
+  "management": {
+    "control_url": "http://127.0.0.1:7727",
+    "management_host": "192.168.0.143:7443",
+    "management_origin": "https://192.168.0.143:7443",
+    "admin_socket": "/run/vps-guard/admin.sock",
+    "edge_url": "http://127.0.0.1:18080",
+    "edge_host": "gnuboard5.local"
+  }
+}
