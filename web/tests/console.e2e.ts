@@ -338,7 +338,48 @@ async function mockApi(page: Page) {
         throttled: 0,
         response_body_bytes: 1024,
       }] },
-      "/api/v1/incidents": { items: [] },
+      "/api/v1/incidents": {
+        items: [
+          {
+            event_id: "provider-failed-1",
+            occurred_at: "2026-07-14T12:00:04Z",
+            severity: "critical",
+            kind: "provider.action_failed",
+            payload: {
+              schema_version: 1,
+              event_id: "provider-failed-1",
+              occurred_at: "2026-07-14T12:00:04Z",
+              severity: "critical",
+              kind: "provider.action_failed",
+              summary: "Provider 조치가 완료되지 않아 현재 단계를 유지합니다.",
+              reason_codes: ["PROVIDER_UNAVAILABLE"],
+              evidence: {},
+              action: { name: "emergency-proxy" },
+              result: { status: "failed" },
+              recovery: { next_action: "local guard 유지" },
+            },
+          },
+          {
+            event_id: "provider-restored-1",
+            occurred_at: "2026-07-14T12:01:00Z",
+            severity: "info",
+            kind: "provider.transaction",
+            payload: {
+              schema_version: 1,
+              event_id: "provider-restored-1",
+              occurred_at: "2026-07-14T12:01:00Z",
+              severity: "info",
+              kind: "provider.transaction",
+              summary: "Provider snapshot 복구와 read-back을 완료했습니다.",
+              reason_codes: [],
+              evidence: { read_back_stage: "Restored" },
+              action: { name: "provider-restore" },
+              result: { status: "restored" },
+              recovery: { method: "snapshot 역순 복구" },
+            },
+          },
+        ],
+      },
       "/api/v1/firewall": {
         mode: "standalone_ufw",
         backend: "ufw",
@@ -459,6 +500,54 @@ test("organizes the overview as a sectioned operations console", async ({ page }
   await expect(page.getByText("운영 경계", { exact: true })).toHaveCount(0);
 });
 
+test("keeps the public console surface on the approved allowlist", async ({ page }) => {
+  await page.goto("/");
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await page.getByRole("button", { name: "주요 메뉴 열기" }).click();
+  }
+  const scope = (page.viewportSize()?.width ?? 1280) < 768
+    ? page.getByRole("dialog").getByRole("navigation", { name: "주요 메뉴" })
+    : page.getByRole("navigation", { name: "주요 메뉴" });
+  const links = scope.getByRole("link");
+  await expect(links).toHaveCount(9);
+  await expect(links).toHaveText([
+    "개요",
+    "트래픽",
+    "클라이언트",
+    "경로",
+    "사건",
+    "자원",
+    "보호 정책",
+    "방화벽",
+    "용어집",
+  ]);
+  await expect(scope.getByText(/packet capture|패킷 캡처|process management|프로세스 관리/i)).toHaveCount(0);
+});
+
+test("shows disconnected live data and collector failures as degraded", async ({ page }) => {
+  await page.goto("/resources");
+  await expect(page.getByText("데이터 연결 대기", { exact: true })).toBeVisible();
+  const service = page.getByRole("article", { name: "php_fpm 상태" });
+  await expect(service).toContainText("delayed");
+  await expect(service).toContainText("semantic error");
+  await expect(service).toContainText("TIMEOUT");
+});
+
+test("confirms and idempotently submits administrator actions", async ({ page }) => {
+  await page.goto("/");
+  const requestPromise = page.waitForRequest((request) =>
+    request.method() === "POST"
+    && new URL(request.url()).pathname === "/api/v1/actions/manual-hold"
+  );
+  await page.getByRole("button", { name: "자동 대응 중지" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "운영 명령 확인" });
+  await expect(dialog).toContainText("idempotency key");
+  await dialog.getByRole("button", { name: "확인 후 실행" }).click();
+  const request = await requestPromise;
+  expect(request.headers()["idempotency-key"]).toBeTruthy();
+  expect(request.headers()["x-csrf-token"]).toBeTruthy();
+});
+
 test("opens the metric glossary without a terminal", async ({ page }) => {
   await page.goto("/");
   if ((page.viewportSize()?.width ?? 1280) < 768) {
@@ -514,6 +603,10 @@ test("renders bounded storage health and retention state", async ({ page }) => {
 
 test("finds a request by correlation ID without a terminal", async ({ page }) => {
   await page.goto("/incidents");
+  const timeline = page.getByRole("region", { name: "사건 타임라인" });
+  await expect(timeline).toContainText("provider.action_failed");
+  await expect(timeline).toContainText("PROVIDER_UNAVAILABLE");
+  await expect(timeline).toContainText("Provider snapshot 복구와 read-back을 완료했습니다.");
   await page.getByLabel("상관관계 ID").fill(
     "guard-0123456789abcdef0123456789abcdef-0000000000000009",
   );
@@ -526,6 +619,12 @@ test("finds a request by correlation ID without a terminal", async ({ page }) =>
 
 test("switches between live and persisted traffic resolutions", async ({ page }) => {
   await page.goto("/traffic");
+  const summary = page.getByRole("region", { name: "현재 트래픽 요약" });
+  await expect(summary).toContainText("1.2");
+  await expect(summary).toContainText("12.5 ms");
+  await expect(summary).toContainText("상태 2xx 1,100 · 3xx 20 · 4xx 70 · 5xx 10");
+  await expect(summary).toContainText(/대역폭 .+\/s/);
+  await expect(summary).toContainText("Upstream 연결 720");
   await expect(page.getByRole("img", { name: "1m 요청 추이" })).toBeVisible();
   await expect(page.getByText("spoofed crawler", { exact: true })).toBeVisible();
   await page.getByLabel("시계열 해상도").click();

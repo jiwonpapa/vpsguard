@@ -115,7 +115,7 @@ export function AppShell() {
             <Menu className="size-4" />
           </Button>
           <div className="md:hidden"><SidebarBrand compact /></div>
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="flex items-center gap-2">
             <CircleDot
               className={cn("size-3", connected ? "text-emerald-500" : authenticated ? "text-amber-500" : "text-muted-foreground")}
               aria-hidden="true"

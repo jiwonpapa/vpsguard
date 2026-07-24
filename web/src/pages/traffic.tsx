@@ -22,6 +22,12 @@ export function TrafficPage() {
   const bots = useQuery({ queryKey: ["bots"], queryFn: api.bots, refetchInterval: 10_000 });
   if (series.isPending || summary.isPending || bots.isPending) return <LoadingState />;
   if (series.error || summary.error || bots.error) return <ErrorState message="트래픽 시계열을 읽지 못했습니다." />;
+  const transferredBytes = summary.data.request_body_bytes + summary.data.response_body_bytes;
+  const bandwidthBytesPerSecond = Math.round(
+    transferredBytes / Math.max(1, summary.data.window_seconds),
+  );
+  const upstreamConnections =
+    summary.data.upstream_connections + summary.data.upstream_connections_reused;
   return (
     <>
       <SectionHeading
@@ -54,9 +60,10 @@ export function TrafficPage() {
           </MetricGrid>
           <div className="flex flex-wrap gap-x-5 gap-y-1 border-t px-5 py-4 font-mono text-[10px] text-muted-foreground sm:px-6">
             <span>처리 중 {summary.data.in_flight_requests.toLocaleString()}</span>
-            <span>5xx {summary.data.status_5xx.toLocaleString()}</span>
-            <span>body {formatBytes(summary.data.request_body_bytes + summary.data.response_body_bytes)}</span>
-            <span>연결 재사용 {percent(summary.data.upstream_connections_reused, summary.data.upstream_connections + summary.data.upstream_connections_reused)}%</span>
+            <span>상태 2xx {summary.data.status_2xx.toLocaleString()} · 3xx {summary.data.status_3xx.toLocaleString()} · 4xx {summary.data.status_4xx.toLocaleString()} · 5xx {summary.data.status_5xx.toLocaleString()}</span>
+            <span>대역폭 {formatBytes(bandwidthBytesPerSecond)}/s</span>
+            <span>Upstream 연결 {upstreamConnections.toLocaleString()}</span>
+            <span>연결 재사용 {percent(summary.data.upstream_connections_reused, upstreamConnections)}%</span>
             <span>edge emitted {summary.data.edge_telemetry_emitted.toLocaleString()}</span>
           </div>
         </ConsoleSection>

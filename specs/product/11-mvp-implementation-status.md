@@ -1,5 +1,5 @@
 ---
-title: VPSGuard pre-MVP Status
+title: VPSGuard v0.1.0-alpha Status
 status: active
 doc_type: implementation-status
 source_of_truth: true
@@ -7,13 +7,13 @@ spec_version: 1
 last_reviewed: 2026-07-24
 ---
 
-# pre-MVP 구현 현황
+# v0.1.0-alpha 구현 현황
 
 ## 판정
 
-현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF, 보호 정책 hot reload와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 증거도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
+현재 상태는 **v0.1.0-alpha 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF, 보호 정책 hot reload와 실제 2GB 실행 증거가 있습니다. 알파 지원 범위는 Ubuntu 24.04·systemd, 기존 ingress·인증서 관리자 보존, Cloudflare 기본 비활성, CSP report-only입니다. PAM+TOTP 실제 운영자 등록, Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 증거는 production release gate로 남깁니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 123개 중 `PLANNED` 0개, `CODE_ONLY` 20개, `AUTO_PASS` 83개, `VPS_PASS` 20개입니다. 즉 123개 모두 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 103개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 123개 중 `PLANNED` 0개, `CODE_ONLY` 15개, `AUTO_PASS` 88개, `VPS_PASS` 20개입니다. 즉 123개 모두 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 108개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -43,7 +43,7 @@ last_reviewed: 2026-07-24
 | `TLS-002` 하네스 | 갱신 PEM 원자 stage, 새 worker 사전검증, Pingora listener FD 인계, supervisor 보존과 기존 연결 drain | typed unit·packaging tests와 [격리 2GB VM의 동일 TLS socket in-flight 완료, 439/439 신규 handshake, leaf exact read-back](evidence/gnuboard5-tls-reload-20260724.md) |
 | `TLS-005`, `TLS-006` 하네스 | startup cert/key·SAN·유효기간 preflight, 6시간 공개 cert·Certbot renewal/timer 관측, external/assisted/manual 소유권, systemd credential 경계와 승인 전 HTTP-01 plan | typed unit/API/UI/packaging tests; 실제 ACME staging 발급·Certbot renew·timer 증거는 미수집 |
 | `TLS-004` 자동 검증 | 명시적 IP·port에 exact SNI handshake 후 파일과 실제 leaf SHA-256 비교, mismatch fail-closed Certbot hook | 일치·불일치 local TLS fixture와 CLI·packaging 계약, [격리 2GB VM의 stage leaf와 reload listener leaf exact 일치](evidence/gnuboard5-tls-reload-20260724.md); 실제 Certbot hook 경로는 미수집 |
-| `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | 별도 HTTPS 관리 Host→loopback Control 분리, CSR SPA, 인증된 SSE·조회, client 검색·필터·정렬·페이지, 운영 명령 확인, light/dark, stale/error | local TLS integration·Bun·Playwright·control tests |
+| `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | 별도 HTTPS 관리 Host→loopback Control 분리, CSR SPA, 인증된 SSE·조회, RPS·p95·대역폭·status·연결 집계, client 검색·필터·정렬·페이지, 실패·복구 timeline, 운영 명령 확인, light/dark, stale/error와 공개 메뉴 allowlist | local TLS integration·Bun·desktop/mobile Playwright·control tests |
 | `UI-005` | 인증된 exact-IP 상세에서 요청·bytes·5xx·최대 경로 비용 점수·마지막 실제 조치와 최대 32개 정규화 route 분해 | storage·API unit와 desktop/mobile Playwright 목록→상세 값 일치 |
 | `UI-006` | 1분 epoch bucket으로 상위 route 요청과 OS CPU·memory·allowlist service CPU·semantic pressure를 최대 24시간 비교 | storage·인증 API unit와 desktop/mobile Playwright; 사건 상세 자동 시간창과 실제 VPS 상관 증거는 미완료 |
 | `UI-008` | Overview에서 Cloudflare stage·UFW snapshot fingerprint·TLS manager/renewal을 한 read-back 경계로 표시하고 방화벽 조회 실패를 다른 상태와 격리 | desktop/mobile 정상·부분 실패 Playwright; 실제 Cloudflare test zone 전환은 미완료 |

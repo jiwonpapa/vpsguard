@@ -125,8 +125,8 @@ last_reviewed: 2026-07-24
 | `UI-010` | `web/src/pages/glossary.tsx`, `web/src/components/console-section.tsx`, `web/tests/console.e2e.ts` | 주요 수치 tooltip과 8개 지표의 의미·산정·출처를 desktop·mobile에서 확인 |
 | `UI-011` | `web/tests/console.e2e.ts`, `web/tests/visual.e2e.ts` | 메뉴 그룹·운영 section 계약, 비로그인 gate와 인증 후 overview의 theme·viewport screenshot diff |
 | `UI-012` | `crates/guard-core/src/config/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/permissions.spec.ts` | role별 IP masking·exact detail·민감 export·로컬 action·provider admin matrix |
-| `UI-013` | `web/tests/stale-data.spec.ts` | SSE·collector disconnect UI |
-| `UI-014` | public surface inventory gate | route·menu allowlist artifact |
+| `UI-013` | `web/tests/console.e2e.ts` | SSE·collector disconnect의 desktop·mobile degraded UI |
+| `UI-014` | `web/tests/console.e2e.ts` | route·menu allowlist와 packet capture·process management 부재 artifact |
 | `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 PAM 미등록 gate·사용자 QR 등록·계정/TOTP 로그인과 terminal 없는 일상 접속 browser report |
 | `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime.rs`, `web/tests/console.e2e.ts` | [Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure PAM session과 Control public port scan](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | [standalone typed UFW 화면과 JW-agent 위임 read-only browser/API report](evidence/gnuboard5-standalone-security-20260722.md) |

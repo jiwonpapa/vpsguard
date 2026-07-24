@@ -26,8 +26,8 @@ if grep -En '\brg([[:space:]]|$)' scripts/*.sh packaging/certbot/*; then
   exit 1
 fi
 
-grep -Fq 'pre-MVP' README.md
-grep -Fq 'pre-MVP' specs/product/11-mvp-implementation-status.md
+grep -Fq 'v0.1.0-alpha' README.md
+grep -Fq 'v0.1.0-alpha' specs/product/11-mvp-implementation-status.md
 grep -Fq 'CODE_ONLY' specs/product/verification-status.tsv
 
 if grep -Fq 'vpsguard-0.1.0' .github/workflows/release.yml; then
