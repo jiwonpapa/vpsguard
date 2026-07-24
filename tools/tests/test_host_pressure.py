@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -43,8 +44,10 @@ class HostPressureTest(unittest.TestCase):
         self.protection = self.root / "protection.json"
         self.manifest = self.root / "pressure.json"
         self.evidence = self.root / "evidence/pressure.json"
+        self.bundle = self.root / "bundle"
         self.write_protection()
         self.write_manifest()
+        self.write_bundle()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -106,10 +109,27 @@ class HostPressureTest(unittest.TestCase):
         value.update(changes)
         self.manifest.write_text(json.dumps(value), encoding="utf-8")
 
+    def write_bundle(self) -> None:
+        binary = self.bundle / "bin/vps-guard"
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"verified pressure fixture")
+        self.bundle.joinpath("BUILD-INFO.txt").write_text(
+            "target=x86_64-unknown-linux-gnu\n"
+            "version=0.1.0\n"
+            "0123456789abcdef0123456789abcdef01234567\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        self.bundle.joinpath("SHA256SUMS").write_text(
+            f"{digest}  ./bin/vps-guard\n",
+            encoding="utf-8",
+        )
+
     def test_plan_is_private_bounded_and_preserves_vm_state(self) -> None:
         summary = run_host_pressure(
             self.root,
             self.manifest,
+            self.bundle,
             self.evidence,
             execute=False,
             confirmation=None,
@@ -118,7 +138,16 @@ class HostPressureTest(unittest.TestCase):
         plan = json.loads(self.evidence.with_suffix(".plan.json").read_text(encoding="utf-8"))
         self.assertEqual(plan["execution"]["pressure_seconds"], 40)
         self.assertEqual(plan["execution"]["cpu_workers"], 4)
-        self.assertTrue(plan["target"]["stage"].endswith("/det014-host-pressure"))
+        self.assertEqual(
+            plan["source_commit"],
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+        self.assertIn("/det014-host-pressure/", plan["target"]["stage"])
+        self.assertTrue(
+            plan["target"]["stage"].endswith(
+                "/0123456789abcdef0123456789abcdef01234567"
+            )
+        )
         self.assertEqual(plan["public_probe"]["interval_ms"], 100)
         self.assertIn("restore_original_memory_and_balloon", plan["steps"])
         self.assertFalse(plan["stores_response_bodies"])

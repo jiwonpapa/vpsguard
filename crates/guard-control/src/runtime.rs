@@ -707,13 +707,13 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
                     }
                 }
             }
-            let state_changed = next.current_mode != current.current_mode;
-            if !state_changed && !policy_refresh_due {
+            let commit = detection_commit(&current, &next, policy_refresh_due, enforce);
+            if !commit.persist {
                 continue;
             }
             let _operation = app.policy_operation.lock().await;
             let mut policy_refreshed = false;
-            if enforce {
+            if commit.refresh_policy {
                 let Some(refreshed) = write_policy_for_mode(&app, next).await else {
                     continue;
                 };
@@ -728,7 +728,7 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             if policy_refreshed {
                 last_policy_refresh = Some(Instant::now());
             }
-            if state_changed {
+            if commit.emit_transition {
                 let event = transition_event(&current, &next, &assessment, occurred_at);
                 crate::api::publish_event(&app, event);
             }
@@ -784,6 +784,27 @@ fn is_distributed_pressure(input: &guard_core::DetectionInput, assessment: &Asse
 
 fn policy_renewal_due(last_refresh: Option<Instant>, now: Instant) -> bool {
     last_refresh.is_none_or(|last| now.saturating_duration_since(last) >= POLICY_REFRESH_INTERVAL)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DetectionCommit {
+    persist: bool,
+    refresh_policy: bool,
+    emit_transition: bool,
+}
+
+fn detection_commit(
+    current: &GuardState,
+    next: &GuardState,
+    policy_refresh_due: bool,
+    enforce: bool,
+) -> DetectionCommit {
+    let mode_changed = current.current_mode != next.current_mode;
+    DetectionCommit {
+        persist: current != next || policy_refresh_due,
+        refresh_policy: enforce && (mode_changed || policy_refresh_due),
+        emit_transition: mode_changed,
+    }
 }
 
 async fn run_provider_transaction(

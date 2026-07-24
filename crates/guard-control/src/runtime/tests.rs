@@ -16,9 +16,9 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::mpsc;
 
 use super::{
-    POLICY_REFRESH_INTERVAL, automatic_enforcement_enabled, host_pressure, is_distributed_pressure,
-    keep_local_guard, policy_renewal_due, reconcile_provider_activation_state, storage_writer_loop,
-    transition_event, update_incident,
+    POLICY_REFRESH_INTERVAL, automatic_enforcement_enabled, detection_commit, host_pressure,
+    is_distributed_pressure, keep_local_guard, policy_renewal_due,
+    reconcile_provider_activation_state, storage_writer_loop, transition_event, update_incident,
 };
 use crate::protection::build_policy_at;
 use crate::storage::{SqliteStore, TRAFFIC_QUEUE_CAPACITY};
@@ -33,6 +33,29 @@ fn policy_refresh_is_due_before_the_ten_minute_lease_expires() {
         now
     ));
     assert!(policy_renewal_due(Some(now - POLICY_REFRESH_INTERVAL), now));
+}
+
+#[test]
+fn detection_counters_persist_without_rewriting_policy_until_mode_changes() {
+    let mut current = GuardState::normal("2026-07-24T00:00:00Z");
+    current.current_mode = GuardMode::Watch;
+    let mut progressed = current.clone();
+    progressed.stable_windows = 1;
+
+    let counter_commit = detection_commit(&current, &progressed, false, true);
+    assert!(counter_commit.persist);
+    assert!(!counter_commit.refresh_policy);
+    assert!(!counter_commit.emit_transition);
+
+    let idle = detection_commit(&current, &current, false, true);
+    assert!(!idle.persist);
+    assert!(!idle.refresh_policy);
+
+    progressed.current_mode = GuardMode::Normal;
+    let transition = detection_commit(&current, &progressed, false, true);
+    assert!(transition.persist);
+    assert!(transition.refresh_policy);
+    assert!(transition.emit_transition);
 }
 
 #[test]

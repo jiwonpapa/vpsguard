@@ -88,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         help="2GB CPU pressure, proc/API comparison and guard recovery",
     )
     host_pressure.add_argument("--manifest", type=Path, required=True)
+    host_pressure.add_argument("--bundle", type=Path, required=True)
     host_pressure.add_argument("--evidence", type=Path, required=True)
     host_pressure.add_argument("--run", action="store_true")
     host_pressure.add_argument("--confirm")
@@ -203,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = run_host_pressure(
                 root,
                 arguments.manifest,
+                arguments.bundle,
                 arguments.evidence,
                 execute=arguments.run,
                 confirmation=arguments.confirm,

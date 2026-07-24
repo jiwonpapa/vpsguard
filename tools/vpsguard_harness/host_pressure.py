@@ -6,29 +6,33 @@ import json
 import time
 from pathlib import Path, PurePosixPath
 
-from .errors import HarnessError
 from .host_pressure_model import HostPressureError, HostPressureManifest, fail
-from .protection_pilot_model import atomic_json
+from .host_pressure_remote import (
+    remove_pressure_stage,
+    require_pressure_restored,
+    restore_pressure_memory,
+    stage_pressure_probe,
+)
+from .protection_pilot_model import Bundle, ProtectionPilotError, atomic_json
 from .protection_pilot_remote import (
     balloon_driver_loaded,
     domain_memory,
     ensure_balloon_driver,
     guest_text,
-    remove_stage,
-    restore_balloon_driver,
     service_states,
     set_domain_memory,
+    snapshot_path,
     ssh,
-    wait_domain_memory,
     wait_guest_memory,
 )
 from .qga import GuestAgent
 from .release_endurance_probe import EndurancePhase, ProbeTimeline
-from .runner import CommandRunner, CommandScope, CommandSpec
+from .runner import CommandRunner
 
 __all__ = [
     "HostPressureError",
     "HostPressureManifest",
+    "Bundle",
     "run_host_pressure",
 ]
 
@@ -36,6 +40,7 @@ __all__ = [
 def run_host_pressure(
     root: Path,
     manifest_path: Path,
+    bundle_path: Path,
     evidence_path: Path,
     *,
     execute: bool,
@@ -44,6 +49,10 @@ def run_host_pressure(
     """Plan or run bounded CPU pressure with `/proc`, API and public evidence."""
 
     manifest = HostPressureManifest.load(root, manifest_path)
+    try:
+        bundle = Bundle.verify(bundle_path)
+    except ProtectionPilotError as error:
+        fail("PRESSURE_BUNDLE_INVALID", "검증된 release bundle이 필요합니다.", error.cause)
     evidence_path = evidence_path.resolve(strict=False)
     if not evidence_path.is_relative_to(root.resolve()):
         fail(
@@ -51,8 +60,15 @@ def run_host_pressure(
             "pressure evidence는 repository 아래여야 합니다.",
             str(evidence_path),
         )
-    stage_path = manifest.protection.stage_base / "det014-host-pressure"
-    atomic_json(evidence_path.with_suffix(".plan.json"), _plan(manifest, stage_path))
+    stage_path = (
+        manifest.protection.stage_base
+        / "det014-host-pressure"
+        / bundle.source_commit
+    )
+    atomic_json(
+        evidence_path.with_suffix(".plan.json"),
+        _plan(manifest, bundle, stage_path),
+    )
     if not execute:
         return None
     if confirmation != manifest.confirmation:
@@ -95,13 +111,43 @@ def run_host_pressure(
     public_probe: ProbeTimeline | None = None
     public_summary: dict[str, object] = {}
     pressure_summary: dict[str, object] = {}
+    snapshot: str | None = None
+    candidate_release = ""
     guest_mem_total = 0
+    deployment_restored = False
     memory_restored = False
     balloon_restored = False
     failure: Exception | None = None
     started = time.monotonic_ns()
     try:
-        _stage_probe(runner, root, manifest, stage_path)
+        stage_pressure_probe(runner, root, manifest, bundle, stage_path)
+        update = guest.execute(
+            (
+                "/bin/bash",
+                f"{stage_path}/bundle/scripts/update-release.sh",
+                "--apply",
+                f"{stage_path}/bundle",
+            ),
+            environment=(
+                "LANG=C",
+                "VPS_GUARD_UPDATE_CONFIRM=update-with-rollback",
+                f"VPS_GUARD_EDGE_HOST={manifest.protection.edge_host}",
+            ),
+            timeout_seconds=60,
+        )
+        snapshot = snapshot_path(update.stdout)
+        candidate_release = guest_text(
+            guest.execute(
+                ("/bin/readlink", "-f", manifest.protection.current_release_path)
+            ),
+            "candidate release",
+        )
+        if not candidate_release.endswith(f"/{bundle.source_commit}"):
+            fail(
+                "PRESSURE_RELEASE_READBACK_MISMATCH",
+                "candidate release symlink가 source commit과 일치하지 않습니다.",
+                candidate_release,
+            )
         ensure_balloon_driver(guest)
         set_domain_memory(
             runner,
@@ -178,7 +224,25 @@ def run_host_pressure(
                 public_summary = public_probe.stop()
             except Exception as error:
                 failure = failure or error
-        memory_restored, balloon_restored = _restore_memory(
+        if snapshot is not None:
+            try:
+                guest.execute(
+                    (
+                        "/bin/bash",
+                        f"{stage_path}/bundle/scripts/deployment-state.sh",
+                        "--restore",
+                        snapshot,
+                    ),
+                    environment=(
+                        "LANG=C",
+                        "VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot",
+                    ),
+                    timeout_seconds=30,
+                )
+                deployment_restored = True
+            except Exception as error:
+                failure = failure or error
+        memory_restored, balloon_restored = restore_pressure_memory(
             runner,
             guest,
             root,
@@ -189,10 +253,11 @@ def run_host_pressure(
         if (
             failure is None
             and pressure_summary.get("result") == "PASS"
+            and deployment_restored
             and memory_restored
             and balloon_restored
         ):
-            remove_stage(runner, root, manifest.protection, stage_path)
+            remove_pressure_stage(runner, root, manifest, stage_path)
 
     restored_release = guest_text(
         guest.execute(
@@ -208,11 +273,12 @@ def run_host_pressure(
         ("/bin/true",),
         label="verify guest SSH after pressure",
     )
-    _require_restored(
+    require_pressure_restored(
         original_release,
         restored_release,
         services_before,
         services_after,
+        deployment_restored,
         memory_restored,
         balloon_restored,
     )
@@ -230,7 +296,9 @@ def run_host_pressure(
     summary = {
         "schema_version": 1,
         "result": "PASS",
+        "source_commit": bundle.source_commit,
         "source_release": original_release,
+        "candidate_release": candidate_release,
         "restored_release": restored_release,
         "original_memory_kib": original_memory,
         "target_memory_kib": manifest.protection.target_memory_kib,
@@ -250,45 +318,6 @@ def run_host_pressure(
     }
     atomic_json(evidence_path, summary)
     return summary
-
-
-def _stage_probe(
-    runner: CommandRunner,
-    root: Path,
-    manifest: HostPressureManifest,
-    stage_path: PurePosixPath,
-) -> None:
-    exists = ssh(
-        runner,
-        root,
-        manifest.protection.guest_copy_target,
-        ("/bin/test", "!", "-e", str(stage_path)),
-        label="pressure stage must not exist",
-    )
-    if exists.exit_code != 0:
-        fail("PRESSURE_STAGE_EXISTS", "pressure stage가 이미 존재합니다.", str(stage_path))
-    ssh(
-        runner,
-        root,
-        manifest.protection.guest_copy_target,
-        ("/bin/mkdir", "-p", str(stage_path)),
-        label="create pressure stage",
-    )
-    for name in ("host-pressure-probe.py", "host_pressure_support.py"):
-        runner.run(
-            CommandSpec(
-                label=f"copy pressure probe {name}",
-                argv=(
-                    "rsync",
-                    "-a",
-                    str(root / "tools/vm" / name),
-                    f"{manifest.protection.guest_copy_target}:{stage_path}/",
-                ),
-                cwd=root,
-                timeout_seconds=30,
-                scope=CommandScope.TEST,
-            )
-        )
 
 
 def _parse_pressure(output: str) -> dict[str, object]:
@@ -313,69 +342,9 @@ def _parse_pressure(output: str) -> dict[str, object]:
     return value
 
 
-def _restore_memory(
-    runner: CommandRunner,
-    guest: GuestAgent,
-    root: Path,
-    manifest: HostPressureManifest,
-    original_memory: int,
-    balloon_was_loaded: bool,
-) -> tuple[bool, bool]:
-    try:
-        set_domain_memory(
-            runner,
-            root,
-            manifest.protection,
-            original_memory,
-        )
-        memory_restored = wait_domain_memory(
-            runner,
-            root,
-            manifest.protection,
-            original_memory,
-        )
-    except HarnessError:
-        memory_restored = False
-    try:
-        if memory_restored and not balloon_was_loaded and balloon_driver_loaded(guest):
-            wait_guest_memory(guest, original_memory)
-        balloon_restored = restore_balloon_driver(
-            guest,
-            was_loaded=balloon_was_loaded,
-        )
-    except HarnessError:
-        balloon_restored = False
-    return memory_restored, balloon_restored
-
-
-def _require_restored(
-    original_release: str,
-    restored_release: str,
-    services_before: dict[str, str],
-    services_after: dict[str, str],
-    memory_restored: bool,
-    balloon_restored: bool,
-) -> None:
-    if (
-        original_release != restored_release
-        or services_before != services_after
-        or not memory_restored
-        or not balloon_restored
-    ):
-        fail(
-            "PRESSURE_AUTOMATIC_RESTORE_FAILED",
-            "pressure 종료 원상복구가 시작 상태와 일치하지 않습니다.",
-            (
-                f"release_match={original_release == restored_release}, "
-                f"services_match={services_before == services_after}, "
-                f"memory_restored={memory_restored}, "
-                f"balloon_restored={balloon_restored}"
-            ),
-        )
-
-
 def _plan(
     manifest: HostPressureManifest,
+    bundle: Bundle,
     stage_path: PurePosixPath,
 ) -> dict[str, object]:
     return {
@@ -387,6 +356,7 @@ def _plan(
             "target_memory_kib": manifest.protection.target_memory_kib,
             "stage": str(stage_path),
         },
+        "source_commit": bundle.source_commit,
         "execution": {
             "pressure_seconds": manifest.pressure_seconds,
             "recovery_timeout_seconds": manifest.recovery_timeout_seconds,
@@ -401,13 +371,15 @@ def _plan(
         },
         "steps": [
             "capture_release_memory_services",
-            "stage_fixed_pressure_probe",
+            "stage_verified_bundle_and_fixed_pressure_probe",
+            "update_with_snapshot_rollback",
             "balloon_to_2gib",
             "start_continuous_public_probe",
             "recover_normal_baseline",
             "run_fixed_cpu_workers_and_expensive_route",
             "compare_proc_and_control_resource",
             "observe_watch_local_recovering_normal",
+            "restore_deployment_snapshot",
             "restore_original_memory_and_balloon",
             "verify_release_services_ssh_public",
         ],
