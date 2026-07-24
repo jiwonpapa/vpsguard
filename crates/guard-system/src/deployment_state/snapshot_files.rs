@@ -240,3 +240,55 @@ fn ensure_copy_parent(path: &Path) -> Result<(), DeploymentStateError> {
         Err(source) => Err(io_error("copy_parent_metadata", path, source)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    use tempfile::tempdir;
+
+    use super::ensure_copy_parent;
+
+    #[test]
+    fn existing_copy_parent_keeps_its_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let parent = temp.path().join("existing");
+        fs::create_dir(&parent)?;
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755))?;
+
+        ensure_copy_parent(&parent)?;
+
+        assert_eq!(fs::metadata(&parent)?.permissions().mode() & 0o777, 0o755);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_copy_parent_is_created_private() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let parent = temp.path().join("payload/nested");
+
+        ensure_copy_parent(&parent)?;
+
+        assert!(parent.is_dir());
+        assert_eq!(fs::metadata(&parent)?.permissions().mode() & 0o777, 0o700);
+        Ok(())
+    }
+
+    #[test]
+    fn non_directory_copy_parents_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let file = temp.path().join("file");
+        let link = temp.path().join("link");
+        fs::write(&file, b"sentinel")?;
+        symlink(temp.path(), &link)?;
+
+        for path in [&file, &link] {
+            let error =
+                ensure_copy_parent(path).map_or_else(|error| error.to_string(), |()| String::new());
+            assert!(error.contains("실제 directory가 아닙니다"));
+        }
+        assert_eq!(fs::read(&file)?, b"sentinel");
+        Ok(())
+    }
+}
