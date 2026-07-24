@@ -13,6 +13,40 @@ from .qga import GuestAgent, GuestCommandResult
 from .runner import CommandResult, CommandRunner, CommandScope, CommandSpec
 
 
+def balloon_driver_loaded(guest: GuestAgent) -> bool:
+    """Read whether the guest kernel currently owns the virtio balloon driver."""
+
+    result = guest.execute(
+        ("/bin/test", "-d", "/sys/bus/virtio/drivers/virtio_balloon"),
+        accepted_exit_codes=(0, 1),
+    )
+    return result.exit_code == 0
+
+
+def ensure_balloon_driver(guest: GuestAgent) -> None:
+    """Load and read back the guest balloon driver when the image omitted it."""
+
+    if balloon_driver_loaded(guest):
+        return
+    guest.execute(("/sbin/modprobe", "virtio_balloon"))
+    if not balloon_driver_loaded(guest):
+        fail(
+            "PILOT_BALLOON_DRIVER_UNAVAILABLE",
+            "guest virtio balloon driver를 활성화하지 못했습니다.",
+            "module=virtio_balloon",
+        )
+
+
+def restore_balloon_driver(guest: GuestAgent, *, was_loaded: bool) -> bool:
+    """Return the guest balloon module to its exact pre-pilot loaded state."""
+
+    loaded = balloon_driver_loaded(guest)
+    if was_loaded or not loaded:
+        return loaded == was_loaded
+    guest.execute(("/sbin/modprobe", "-r", "virtio_balloon"))
+    return not balloon_driver_loaded(guest)
+
+
 def stage(
     runner: CommandRunner,
     root: Path,
@@ -136,10 +170,10 @@ def wait_domain_memory(
 ) -> bool:
     """Poll bounded libvirt memory read-back."""
 
-    for _attempt in range(20):
+    for _attempt in range(120):
         if domain_memory(runner, root, manifest) == expected_kib:
             return True
-        time.sleep(0.25)
+        time.sleep(0.5)
     return False
 
 

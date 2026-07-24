@@ -15,10 +15,13 @@ from .protection_pilot_model import (
     fail,
 )
 from .protection_pilot_remote import (
+    balloon_driver_loaded,
     domain_memory,
+    ensure_balloon_driver,
     guest_text,
     probe_json,
     remove_stage,
+    restore_balloon_driver,
     service_states,
     set_domain_memory,
     snapshot_path,
@@ -88,6 +91,7 @@ def run_protection_pilot(
             f"current={original_memory}, target={manifest.target_memory_kib}",
         )
     services_before = service_states(guest, manifest.services)
+    balloon_was_loaded = balloon_driver_loaded(guest)
     started = time.monotonic_ns()
     snapshot: str | None = None
     candidate_release = ""
@@ -95,6 +99,7 @@ def run_protection_pilot(
     policy: dict[str, object] = {}
     restored = False
     memory_restored = False
+    balloon_restored = False
     try:
         stage(runner, root, manifest, bundle, stage_path)
         update = guest.execute(
@@ -122,6 +127,7 @@ def run_protection_pilot(
                 "candidate release symlink가 source commit과 일치하지 않습니다.",
                 candidate_release,
             )
+        ensure_balloon_driver(guest)
         set_domain_memory(runner, root, manifest, manifest.target_memory_kib)
         guest_mem_total = wait_guest_memory(guest, manifest.target_memory_kib)
         policy = probe_json(
@@ -174,16 +180,26 @@ def run_protection_pilot(
             )
         except HarnessError:
             memory_restored = False
-        if restored and memory_restored:
+        try:
+            if memory_restored and not balloon_was_loaded and balloon_driver_loaded(guest):
+                wait_guest_memory(guest, original_memory)
+            balloon_restored = restore_balloon_driver(
+                guest,
+                was_loaded=balloon_was_loaded,
+            )
+        except HarnessError:
+            balloon_restored = False
+        if restored and memory_restored and balloon_restored:
             remove_stage(runner, root, manifest, stage_path)
 
-    if not restored or not memory_restored:
+    if not restored or not memory_restored or not balloon_restored:
         fail(
             "PILOT_AUTOMATIC_RESTORE_FAILED",
             "pilot 종료 복구를 완료하지 못했습니다.",
             (
                 f"deployment_restored={restored}, "
-                f"memory_restored={memory_restored}, stage={stage_path}"
+                f"memory_restored={memory_restored}, "
+                f"balloon_restored={balloon_restored}, stage={stage_path}"
             ),
         )
     restored_release = guest_text(
@@ -208,6 +224,8 @@ def run_protection_pilot(
         original_memory_kib=original_memory,
         target_memory_kib=manifest.target_memory_kib,
         guest_mem_total_kib=guest_mem_total,
+        balloon_driver_was_loaded=balloon_was_loaded,
+        balloon_driver_restored=balloon_restored,
         policy=policy,
         services_before=services_before,
         services_after=services_after,
@@ -247,7 +265,14 @@ def _plan(
             "verify_release_and_services",
         ],
         "confirmation": manifest.confirmation,
-        "preserves": ["SSH", "Apache", "certificate", "site data", "original VPSGuard state"],
+        "preserves": [
+            "SSH",
+            "Apache",
+            "certificate",
+            "site data",
+            "original VPSGuard state",
+            "guest balloon module state",
+        ],
         "stores_credentials": False,
         "stores_request_bodies": False,
     }

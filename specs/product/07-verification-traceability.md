@@ -109,7 +109,7 @@ last_reviewed: 2026-07-24
 | `OPS-007` | `.github/workflows/release.yml`, `crates/guard-control/tests/version_cli.rs`, `crates/guard-edge/tests/version_cli.rs`, `tools/tests/test_release_workflow.py` | [x86_64·aarch64 native bundle 실행, checksum·SBOM·attestation artifact](evidence/release-matrix-20260724.md) |
 | `OPS-008` | `crates/guard-system/src/command.rs`, `scripts/tests/repository-contracts.sh` | masked command log |
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
-| `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh` | 2GB Ubuntu VM 20회 apply·restore의 100ms probe timeline과 단계별 duration report |
+| `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh` | 기존 parent mode·payload mode·uid·gid 원복 회귀와 2GB Ubuntu VM 20회 apply·restore의 100ms probe timeline·단계별 duration report |
 | `OPS-011` | `crates/guard-system/src/ingress_state/apache/tests.rs`, `crates/guard-cli/tests/apache_ingress_cli.rs` | [`gnuboard5` Apache 전환·20회 왕복·rollback report](evidence/gnuboard5-apache-vm-20260722.md) |
 
 ### 3.6 UI, security and NFR
@@ -125,7 +125,7 @@ last_reviewed: 2026-07-24
 | `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 PAM 미등록 gate·사용자 QR 등록·계정/TOTP 로그인과 terminal 없는 일상 접속 browser report |
 | `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime.rs`, `web/tests/console.e2e.ts` | [Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure PAM session과 Control public port scan](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | [standalone typed UFW 화면과 JW-agent 위임 read-only browser/API report](evidence/gnuboard5-standalone-security-20260722.md) |
-| `UI-018` | `crates/guard-core/src/policy/tests.rs`, `crates/guard-control/src/protection/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts`, `tools/tests/test_protection_pilot.py` | `tools/vpsguard_harness/protection_pilot.py`로 2GB VPS 정책 적용 전후 Edge telemetry policy version과 정상·strict·upload 응답 read-back·원복 report |
+| `UI-018` | `crates/guard-core/src/policy/tests.rs`, `crates/guard-control/src/protection/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts`, `tools/tests/test_protection_pilot.py` | `tools/vpsguard_harness/protection_pilot.py`로 virtio balloon binding·2GB guest MemTotal·정책 적용 전후 Edge telemetry policy version·정상/strict/upload 응답·원복 read-back report |
 | `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |

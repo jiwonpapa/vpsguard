@@ -190,6 +190,8 @@ class ProtectionPilotSummary:
     original_memory_kib: int
     target_memory_kib: int
     guest_mem_total_kib: int
+    balloon_driver_was_loaded: bool
+    balloon_driver_restored: bool
     policy: dict[str, object]
     services_before: dict[str, str]
     services_after: dict[str, str]

@@ -14,6 +14,36 @@ from tools.vpsguard_harness.protection_pilot import (
     ProtectionPilotManifest,
     run_protection_pilot,
 )
+from tools.vpsguard_harness.protection_pilot_remote import (
+    balloon_driver_loaded,
+    ensure_balloon_driver,
+    restore_balloon_driver,
+)
+from tools.vpsguard_harness.qga import GuestCommandResult
+
+
+class FakeBalloonGuest:
+    """Minimal guest-agent double for exact module-state restoration."""
+
+    def __init__(self, *, loaded: bool) -> None:
+        self.loaded = loaded
+        self.commands: list[tuple[str, ...]] = []
+
+    def execute(
+        self,
+        argv: tuple[str, ...],
+        **_options: object,
+    ) -> GuestCommandResult:
+        self.commands.append(argv)
+        if argv == ("/bin/test", "-d", "/sys/bus/virtio/drivers/virtio_balloon"):
+            return GuestCommandResult(0 if self.loaded else 1, "", "")
+        if argv == ("/sbin/modprobe", "virtio_balloon"):
+            self.loaded = True
+        elif argv == ("/sbin/modprobe", "-r", "virtio_balloon"):
+            self.loaded = False
+        else:
+            raise AssertionError(f"unexpected guest command: {argv}")
+        return GuestCommandResult(0, "", "")
 
 
 class ProtectionPilotTest(unittest.TestCase):
@@ -93,7 +123,25 @@ class ProtectionPilotTest(unittest.TestCase):
         self.assertEqual(plan["confirmation"], "isolated-vm:gnuboard5")
         self.assertIn("restore_deployment_snapshot", plan["steps"])
         self.assertIn("restore_original_memory", plan["steps"])
+        self.assertIn("guest balloon module state", plan["preserves"])
         self.assertFalse(plan["stores_credentials"])
+
+    def test_balloon_driver_is_loaded_only_for_pilot_and_restored(self) -> None:
+        guest = FakeBalloonGuest(loaded=False)
+        self.assertFalse(balloon_driver_loaded(guest))  # type: ignore[arg-type]
+        ensure_balloon_driver(guest)  # type: ignore[arg-type]
+        self.assertTrue(guest.loaded)
+        self.assertTrue(restore_balloon_driver(guest, was_loaded=False))  # type: ignore[arg-type]
+        self.assertFalse(guest.loaded)
+
+        preloaded = FakeBalloonGuest(loaded=True)
+        ensure_balloon_driver(preloaded)  # type: ignore[arg-type]
+        self.assertTrue(restore_balloon_driver(preloaded, was_loaded=True))  # type: ignore[arg-type]
+        self.assertTrue(preloaded.loaded)
+        self.assertNotIn(
+            ("/sbin/modprobe", "-r", "virtio_balloon"),
+            preloaded.commands,
+        )
 
     def test_public_guest_and_non_2gb_target_are_rejected(self) -> None:
         self.write_manifest(ip="8.8.8.8")

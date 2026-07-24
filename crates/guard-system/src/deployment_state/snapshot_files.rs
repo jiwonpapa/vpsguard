@@ -50,7 +50,7 @@ pub(super) fn copy_file(
     let parent = destination.parent().ok_or_else(|| {
         DeploymentStateError::Contract("snapshot payload parent가 없습니다".to_owned())
     })?;
-    create_private_dir_all(parent)?;
+    ensure_copy_parent(parent)?;
     let mut input = File::open(source).map_err(|error| io_error("open_source", source, error))?;
     let mut options = OpenOptions::new();
     options
@@ -226,5 +226,17 @@ fn reject_directory_destination(path: &Path) -> Result<(), DeploymentStateError>
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(io_error("destination_metadata", path, source)),
+    }
+}
+
+fn ensure_copy_parent(path: &Path) -> Result<(), DeploymentStateError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(DeploymentStateError::Contract(format!(
+            "copy parent가 실제 directory가 아닙니다: {}",
+            path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => create_private_dir_all(path),
+        Err(source) => Err(io_error("copy_parent_metadata", path, source)),
     }
 }

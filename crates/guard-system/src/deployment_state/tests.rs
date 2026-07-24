@@ -156,6 +156,14 @@ fn snapshot_restore_preserves_owned_state_and_only_observes_protected_trees()
         "old-config\n"
     );
     assert_eq!(
+        fs::metadata(fixture.root.join("etc/vps-guard"))?
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "restore must not chmod an existing destination parent"
+    );
+    assert_eq!(
         fs::metadata(fixture.root.join("etc/vps-guard/secrets/cloudflare-token"))?
             .permissions()
             .mode()
