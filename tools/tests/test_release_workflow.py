@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unittest
-import tomllib
 from pathlib import Path
 
 
@@ -13,17 +12,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
     workflow = (
         Path(__file__).resolve().parents[2] / ".github/workflows/release.yml"
     ).read_text(encoding="utf-8")
-    cross = tomllib.loads(
-        (Path(__file__).resolve().parents[2] / "Cross.toml").read_text(encoding="utf-8")
-    )
 
-    def test_both_linux_architectures_execute_under_qemu(self) -> None:
+    def test_both_linux_architectures_build_on_matching_native_runners(self) -> None:
         self.assertIn("x86_64-unknown-linux-gnu", self.workflow)
         self.assertIn("aarch64-unknown-linux-gnu", self.workflow)
-        self.assertIn(
-            "docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8",
-            self.workflow,
-        )
+        self.assertIn("runner: ubuntu-24.04", self.workflow)
+        self.assertIn("runner: ubuntu-24.04-arm", self.workflow)
+        self.assertIn("runs-on: ${{ matrix.runner }}", self.workflow)
+        self.assertNotIn("setup-qemu", self.workflow)
+        self.assertNotIn("CARGO_BUILD_TOOL: cross", self.workflow)
         self.assertIn('platform="linux/amd64"', self.workflow)
         self.assertIn('platform="linux/arm64"', self.workflow)
         self.assertIn('docker run --rm --platform "${platform}"', self.workflow)
@@ -44,13 +41,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.workflow,
         )
 
-    def test_cross_images_install_host_bindgen_and_target_pam_dependencies(self) -> None:
-        for target in ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"):
-            commands = self.cross["target"][target]["pre-build"]
-            self.assertTrue(any("$CROSS_DEB_ARCH" in command for command in commands))
-            install = next(command for command in commands if "apt-get" in command)
-            self.assertIn("libclang-dev", install)
-            self.assertIn("libpam0g-dev:$CROSS_DEB_ARCH", install)
+    def test_native_runners_install_bindgen_and_pam_dependencies(self) -> None:
+        self.assertIn(
+            "sudo apt-get update && sudo apt-get install --yes "
+            "libclang-dev libpam0g-dev",
+            self.workflow,
+        )
+        self.assertIn("tool: cargo-cyclonedx", self.workflow)
 
 
 if __name__ == "__main__":

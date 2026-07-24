@@ -83,14 +83,15 @@ sudo apt-get install -y ca-certificates curl ufw
 
 ### 2. 검증된 release bundle 생성·전송
 
-신뢰한 Ubuntu Linux builder에서 Rust `1.96.0`, Bun `1.3.10`, `cross`와 Docker를 준비한 뒤 대상 CPU에 맞게 빌드합니다.
+대상 CPU와 같은 신뢰한 Ubuntu Linux builder에서 Rust `1.96.0`, Bun `1.3.10`과
+PAM·Clang 개발 package를 준비한 뒤 빌드합니다.
 
 ```bash
 git clone https://github.com/jiwonpapa/vpsguard.git
 cd vpsguard
 
 TARGET=x86_64-unknown-linux-gnu # ARM64는 aarch64-unknown-linux-gnu
-CARGO_BUILD_TOOL=cross cargo xtask release "$TARGET"
+cargo xtask release "$TARGET"
 
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 BUNDLE="target/release-bundle/$TARGET/vpsguard-$VERSION"
@@ -98,7 +99,10 @@ BUNDLE="target/release-bundle/$TARGET/vpsguard-$VERSION"
 rsync -a "$BUNDLE/" operator@example.com:/tmp/vpsguard-bundle/
 ```
 
-태그 빌드는 GitHub Actions의 `Release artifacts` workflow에서도 x86_64·aarch64 bundle, checksum, SBOM과 provenance를 생성합니다. 현재 GitHub Release 자동 첨부는 release gate이므로 Actions artifact 또는 직접 검증한 bundle을 사용합니다.
+태그 빌드는 GitHub Actions의 `Release artifacts` workflow에서도 x86_64·aarch64
+네이티브 Ubuntu runner로 bundle, checksum, SBOM과 provenance를 생성합니다. 현재
+GitHub Release 자동 첨부는 release gate이므로 Actions artifact 또는 직접 검증한
+bundle을 사용합니다.
 
 ### 3. 서버 계정·설정·systemd 설치
 

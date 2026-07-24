@@ -34,6 +34,15 @@ if grep -Fq 'vpsguard-0.1.0' .github/workflows/release.yml; then
   echo "release workflow must derive the workspace version" >&2
   exit 1
 fi
+grep -Fq 'runner: ubuntu-24.04' .github/workflows/release.yml
+grep -Fq 'runner: ubuntu-24.04-arm' .github/workflows/release.yml
+grep -Fq 'runs-on: ${{ matrix.runner }}' .github/workflows/release.yml
+grep -Fq 'sudo apt-get update && sudo apt-get install --yes libclang-dev libpam0g-dev' \
+  .github/workflows/release.yml
+if grep -Eq 'setup-qemu|tool: cross|CARGO_BUILD_TOOL: cross' .github/workflows/release.yml; then
+  echo "release workflow must build on matching native architecture runners" >&2
+  exit 1
+fi
 grep -Fq 'SHA256SUMS' scripts/deploy-g7devops.sh
 grep -Fq 'g7devops-shadow:${git_commit}' scripts/deploy-g7devops.sh
 grep -Fq 'scripts/deployment-state.sh' scripts/deploy-g7devops.sh
