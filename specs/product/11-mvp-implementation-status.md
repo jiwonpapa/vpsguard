@@ -69,7 +69,7 @@ last_reviewed: 2026-07-24
 - `EDGE-014`, `DET-013`, `SEC-016`, `SEC-017`: 여러 실제 source high-cardinality, 실제 공식 crawler allow, HTTP/2·WebSocket framing과 authenticated 글쓰기·업로드 WAF 오탐 replay
 - `ACT-006`~`ACT-010`: User token과 record ID·type preflight는 fake API까지 구현됐으며, Cloudflare test zone 전환·복구와 실제 kernel/SSH·non-web port diff 증거가 남음. Account API Token onboarding은 zone-scoped DNS Write 재현 전까지 제외
 - `TLS-002`~`TLS-006`: 기존 manager·timer 감지, 승인 전 plan과 served certificate exact 비교는 구현됐으며, plan hash 기반 apply, Certbot staging HTTP-01·systemd timer renew, graceful reload와 실제 renewal·bypass 후 fingerprint 증거가 남음
-- `OPS-005`~`OPS-007`, `OPS-010`: update/uninstall 자동 fixture는 통과했으며 실제 systemd·Nginx bundle 실증, x86_64/aarch64 artifact 실행 smoke, 격리 Ubuntu VM 20회 apply·restore와 100ms 순단 timeline이 남음. public cutover·bypass와 `OPS-009` shadow 복구는 기존 VPS 증거가 있으나 현재 서버는 원본 Nginx topology로 복구됨
+- `OPS-005`, `OPS-006`, `OPS-010`: update/uninstall 자동 fixture는 통과했으며 실제 systemd·Nginx bundle 실증, 격리 Ubuntu VM 20회 apply·restore와 100ms 순단 timeline이 남음. `OPS-007` x86_64/aarch64 native artifact 실행·SBOM·attestation은 AUTO_PASS이며, public cutover·bypass와 `OPS-009` shadow 복구는 기존 VPS 증거가 있으나 현재 서버는 원본 Nginx topology로 복구됨
 - 2GB `g7devops` 성능·장애·복구 파일럿
 
 ## 실행 범위
