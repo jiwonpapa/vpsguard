@@ -168,6 +168,18 @@ class UninstallPilotTest(unittest.TestCase):
         self.assertEqual(plan["budgets"]["max_outage_ms"], 5_000)
         self.assertIn("apply_owned_only_uninstall", plan["steps"])
         self.assertIn("restore_release_tree_and_typed_deployment_snapshot", plan["steps"])
+        self.assertLess(
+            plan["steps"].index("typed_apache_bypass"),
+            plan["steps"].index(
+                "snapshot_owned_deployment_at_apache_bypass_boundary"
+            ),
+        )
+        self.assertLess(
+            plan["steps"].index(
+                "snapshot_owned_deployment_at_apache_bypass_boundary"
+            ),
+            plan["steps"].index("apply_owned_only_uninstall"),
+        )
         self.assertFalse(plan["scans_site_tree"])
         self.assertFalse(plan["stores_credentials"])
         self.assertFalse(plan["stores_site_content"])

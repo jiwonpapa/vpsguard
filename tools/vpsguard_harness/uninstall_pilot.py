@@ -169,8 +169,6 @@ def run_uninstall_pilot(
             guest,
             bundle_stage,
         )
-        deployment_snapshot = create_deployment_snapshot(guest, bundle_stage)
-        generated.add(deployment_snapshot)
 
         ensure_balloon_driver(guest)
         set_domain_memory(
@@ -213,6 +211,11 @@ def run_uninstall_pilot(
                 "Apache direct bypass read-back이 일치하지 않습니다.",
                 repr(bypass_readback),
             )
+        # The typed Apache bypass has stopped edge and released ports 80/443.
+        # Snapshot that intentional recovery boundary so owned-state restore
+        # cannot restart edge before Apache returns to the origin ports.
+        deployment_snapshot = create_deployment_snapshot(guest, bundle_stage)
+        generated.add(deployment_snapshot)
 
         phase.set(1, "uninstall")
         uninstall_started = True
@@ -282,7 +285,7 @@ def run_uninstall_pilot(
     except Exception as error:
         failure = error
     finally:
-        if mutation_started and deployment_snapshot is not None:
+        if mutation_started:
             try:
                 release_root = PurePosixPath(
                     "/", "usr", "local", "lib", "vps-guard", "releases"
@@ -295,7 +298,7 @@ def run_uninstall_pilot(
                 ):
                     restore_release_snapshot(guest, bundle_stage, release_snapshot)
                     release_restored = True
-                if not deployment_restored:
+                if deployment_snapshot is not None and not deployment_restored:
                     recovered_ms, paths = restore_deployment(
                         guest,
                         manifest,
@@ -556,9 +559,10 @@ def _plan(
         "steps": [
             "verify_bundle_and_guarded_public_topology",
             "inventory_bounded_versioned_releases",
-            "snapshot_owned_deployment_and_backup_release_binaries",
+            "backup_bounded_versioned_release_binaries",
             "set_exact_2GB_live_memory_and_start_100ms_probe",
             "typed_apache_bypass",
+            "snapshot_owned_deployment_at_apache_bypass_boundary",
             "apply_owned_only_uninstall",
             "verify_public_site_certificate_ssh_firewall_and_non_web_listeners",
             "restore_release_tree_and_typed_deployment_snapshot",
