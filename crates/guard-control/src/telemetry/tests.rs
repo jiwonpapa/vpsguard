@@ -69,6 +69,31 @@ fn creates_and_resets_detection_window() {
 }
 
 #[test]
+fn crawler_trust_requires_a_majority_of_edge_verified_requests() {
+    let mut aggregate = TrafficAggregator::new(10);
+    let mut verified = telemetry(1, 200, 100);
+    verified.bot_verified = true;
+    aggregate.ingest(&verified);
+    aggregate.ingest(&verified);
+    aggregate.ingest(&telemetry(2, 200, 100));
+    assert!(
+        aggregate
+            .take_detection_input(HostPressure::available(0))
+            .is_some_and(|input| input.crawler_verified && input.trust == 75)
+    );
+
+    let mut minority = TrafficAggregator::new(10);
+    minority.ingest(&verified);
+    minority.ingest(&telemetry(2, 200, 100));
+    minority.ingest(&telemetry(3, 200, 100));
+    assert!(
+        minority
+            .take_detection_input(HostPressure::available(0))
+            .is_some_and(|input| !input.crawler_verified && input.trust == 40)
+    );
+}
+
+#[test]
 fn bounds_and_aggregates_one_second_live_ring() {
     let mut aggregate = TrafficAggregator::with_live_window(10, 2);
     let mut first = telemetry(1, 200, 100);

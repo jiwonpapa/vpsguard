@@ -158,6 +158,7 @@ struct DetectionWindow {
     requests: u64,
     protective: u64,
     server_errors: u64,
+    verified_crawler_requests: u64,
     max_route_cost: u8,
     max_latency_micros: u64,
 }
@@ -292,6 +293,10 @@ impl TrafficAggregator {
         if telemetry.status >= 500 {
             self.window.server_errors = self.window.server_errors.saturating_add(1);
         }
+        self.window.verified_crawler_requests = self
+            .window
+            .verified_crawler_requests
+            .saturating_add(u64::from(telemetry.bot_verified));
         self.window.max_route_cost = self.window.max_route_cost.max(telemetry.route_cost);
         self.window.max_latency_micros =
             self.window.max_latency_micros.max(telemetry.latency_micros);
@@ -450,8 +455,10 @@ impl TrafficAggregator {
         } else {
             0
         };
+        let crawler_verified =
+            window.verified_crawler_requests.saturating_mul(2) >= window.requests;
         Some(DetectionInput {
-            trust: 40,
+            trust: if crawler_verified { 75 } else { 40 },
             automation: u8::try_from(protective_percent.min(100))
                 .unwrap_or(100)
                 .max(volume_pressure),
@@ -461,7 +468,7 @@ impl TrafficAggregator {
                 .max(latency_pressure),
             host_pressure,
             session_continuity: false,
-            crawler_verified: false,
+            crawler_verified,
         })
     }
 

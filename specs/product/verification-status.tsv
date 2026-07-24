@@ -29,13 +29,13 @@ OBS-013|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-
 OBS-014|AUTO_PASS|crates/guard-control/src/notification.rs|crates/guard-control/src/notification/tests.rs|-
 DET-001|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-002|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-
-DET-003|PLANNED|-|-|-
+DET-003|AUTO_PASS|crates/guard-core/src/crawler.rs|crates/guard-control/src/telemetry/tests.rs|-
 DET-004|CODE_ONLY|crates/guard-core/src/detection.rs|-|-
 DET-005|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-006|CODE_ONLY|crates/guard-core/src/detection.rs|-|-
 DET-007|AUTO_PASS|crates/guard-core/src/state.rs|crates/guard-core/src/state/tests.rs|-
 DET-008|AUTO_PASS|crates/guard-edge/src/policy_runtime.rs|crates/guard-edge/src/policy_runtime/tests.rs|-
-DET-009|PLANNED|-|-|-
+DET-009|CODE_ONLY|crates/guard-core/src/detection.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 DET-010|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-011|AUTO_PASS|crates/guard-edge/src/runtime.rs|crates/guard-edge/src/runtime/tests.rs|-
 DET-012|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-

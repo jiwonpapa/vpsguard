@@ -99,6 +99,29 @@ fn rotating_clients_cannot_bypass_route_and_global_fallback() {
     assert_eq!(limiter.tracked_entries(), 1);
 }
 
+#[test]
+fn shared_ip_limit_expires_at_the_next_minute() {
+    let limiter = BoundedRateLimiter::new(4);
+    let shared_ip = ip("192.0.2.10");
+    assert_eq!(
+        limiter.check(shared_ip, RouteClass::Strict, policy(1), UNIX_EPOCH),
+        LimitDecision::Allow
+    );
+    assert_eq!(
+        limiter.check(shared_ip, RouteClass::Strict, policy(1), UNIX_EPOCH),
+        LimitDecision::Deny(LimitScope::Client)
+    );
+    assert_eq!(
+        limiter.check(
+            shared_ip,
+            RouteClass::Strict,
+            policy(1),
+            UNIX_EPOCH + Duration::from_secs(60),
+        ),
+        LimitDecision::Allow
+    );
+}
+
 const fn policy(client_rpm: u32) -> RateLimitPolicy {
     RateLimitPolicy::from_multipliers(client_rpm, 32, 128, 256)
 }

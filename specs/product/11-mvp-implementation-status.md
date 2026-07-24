@@ -13,7 +13,7 @@ last_reviewed: 2026-07-24
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF, 보호 정책 hot reload와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 증거도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 123개 중 `PLANNED` 4개, `CODE_ONLY` 28개, `AUTO_PASS` 72개, `VPS_PASS` 19개입니다. 즉 119개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 91개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 123개 중 `PLANNED` 2개, `CODE_ONLY` 29개, `AUTO_PASS` 73개, `VPS_PASS` 19개입니다. 즉 121개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 92개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -30,6 +30,8 @@ last_reviewed: 2026-07-24
 | `OBS-003`~`OBS-006`, `OBS-011` | Linux `/proc/stat` delta CPU·logical core·load·memory·swap 서버값, allowlist systemd unit의 cgroup v2 CPU·memory·I/O·process/task, Nginx/Apache·PHP-FPM·MySQL/MariaDB·Redis semantic metric과 component별 timeout/error/stale 상태 | config·bounded parser·loopback transport·cgroup fixture, Control resource API와 Playwright; disk wait·network 및 실제 DB/Redis·2GB VPS 대조는 미완료 |
 | `OBS-007` 자동 검증 | 설정 상한이 적용된 1초 live ring, 전용 blocking batch writer, SQLite WAL 상세·client IP·10초·1분 rollup, 계층별 bounded retention, DB/WAL·disk·drop health | telemetry·storage·API·UI 회귀 테스트; busy·disk-full fault와 2GB VPS 부하 증거는 미완료 |
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
+| `DET-003` | 검색 crawler UA에 허용 provider·공식 CIDR 일치를 강제하고, Control은 과반 verified 요청만 crawler trust로 합성 | crawler 판정·telemetry window unit tests; 실제 공식 crawler source allow는 미완료 |
+| `DET-009` 코드 | 정상 session trust 신호와 1분 만료 client limit으로 영구 shared-IP 차단을 금지 | detector·limiter unit test; signed/origin session의 aggregate wiring과 실제 NAT browser E2E는 미완료 |
 | `DET-002`, `DET-011`, `DET-012` | 범용 PHP·GnuBoard 5·GnuBoard 7·WordPress route 분리, app 분류와 site override 합성, generic 보안 core와 G7 CSP·auth overlay 분리 | profile·edge runtime·security tests |
 | `DET-013` | 공식 CIDR feed의 Google·Naver·Bing 판정, 위조 crawler와 미허용 declared AI bot 분리 | crawler/config/updater unit와 VM GPTBot·Meta·위조 Googlebot 403; 실제 공식 crawler source allow는 미완료 |
 | `DET-014` | traffic latency·5xx와 실제 CPU·core-normalized load·memory·swap host pressure를 합성하고 `protocol_only + enforce` 자동 전이를 유지 | `/proc` fixture와 [격리 2GB VM의 100% CPU·API exact 대조, `NORMAL→WATCH→LOCAL_GUARD→RECOVERING→NORMAL`, 75/75 public 200·무순단·자동 원복](evidence/gnuboard5-host-pressure-20260724.md); provider가 없는 VM이라 실제 `EMERGENCY_PROXY`는 미완료 |

@@ -68,10 +68,10 @@ last_reviewed: 2026-07-24
 |---|---|---|
 | `DET-001`, `DET-005` | `crates/guard-core/tests/scoring.rs` | score explanation snapshot |
 | `DET-002` | `crates/guard-profiles/src/tests.rs` | 범용 PHP·GnuBoard 5·7·WordPress route inventory |
-| `DET-003`, `DET-004` | `crates/guard-core/tests/crawler_identity.rs` | verified·spoofed crawler replay |
+| `DET-003`, `DET-004` | `crates/guard-core/src/crawler.rs`, `crates/guard-control/src/telemetry/tests.rs` | verified·spoofed crawler replay |
 | `DET-006`, `DET-007` | `crates/guard-core/tests/baseline_windows.rs` | spike와 지속 부하 비교 |
 | `DET-008` | `crates/guard-core/tests/rule_expiry.rs` | TTL expiry event |
-| `DET-009` | `crates/guard-core/tests/shared_ip.rs` | NAT browser scenario |
+| `DET-009` | `crates/guard-core/src/detection/tests.rs`, `crates/guard-edge/src/rate_limit/tests.rs` | signed session continuity wiring과 NAT browser scenario |
 | `DET-010` | `tests/fault/collector_missing.rs` | degraded-confidence incident |
 | `DET-011` | `crates/guard-edge/src/runtime/tests.rs` | app profile·site override·incident policy 합성 replay |
 | `DET-012` | `crates/guard-profiles/src/tests.rs` | generic core와 G7 auth·CSP overlay 교차 profile fixture |
