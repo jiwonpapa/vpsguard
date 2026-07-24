@@ -45,12 +45,12 @@ ACT-002|AUTO_PASS|crates/guard-edge/src/response.rs|scripts/integration-gate.sh|
 ACT-003|AUTO_PASS|crates/guard-edge/src/challenge.rs|crates/guard-edge/src/challenge.rs|-
 ACT-004|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 ACT-005|CODE_ONLY|crates/guard-core/src/policy.rs|-|-
-ACT-006|CODE_ONLY|crates/guard-provider/src/lib.rs|-|-
+ACT-006|AUTO_PASS|crates/guard-provider/src/lib.rs|crates/guard-provider/src/tests.rs|-
 ACT-007|AUTO_PASS|crates/guard-provider/src/lib.rs|crates/guard-provider/src/tests.rs|-
 ACT-008|AUTO_PASS|crates/guard-core/src/state.rs|crates/guard-core/src/state/tests.rs|-
 ACT-009|AUTO_PASS|crates/guard-core/src/state.rs|crates/guard-core/src/state/tests.rs|-
 ACT-010|CODE_ONLY|crates/guard-system/src/nftables.rs|-|-
-ACT-011|CODE_ONLY|crates/guard-control/src/runtime.rs|-|-
+ACT-011|AUTO_PASS|crates/guard-control/src/runtime.rs|scripts/integration-gate.sh|-
 ACT-012|AUTO_PASS|crates/guard-control/src/api.rs|crates/guard-control/src/api/tests.rs|-
 TLS-001|AUTO_PASS|crates/guard-edge/src/tls.rs|crates/guard-edge/src/tls/tests.rs|-
 TLS-002|VPS_PASS|crates/guard-edge/src/supervisor.rs|tools/tests/test_tls_reload.py|specs/product/evidence/gnuboard5-tls-reload-20260724.md
@@ -83,10 +83,10 @@ OPS-007|AUTO_PASS|.github/workflows/release.yml|tools/tests/test_release_workflo
 OPS-008|AUTO_PASS|crates/guard-system/src/command.rs|crates/guard-system/src/command.rs|-
 OPS-009|VPS_PASS|crates/guard-system/src/deployment_state.rs|scripts/tests/deployment-restore-harness.sh|specs/product/evidence/g7devops-shadow-roundtrip-20260715.md
 OPS-010|VPS_PASS|crates/guard-system/src/operation.rs|tools/tests/test_release_endurance.py|specs/product/evidence/gnuboard5-release-endurance-20260724.md
-SEC-001|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
+SEC-001|AUTO_PASS|crates/guard-provider/src/cloudflare.rs|crates/guard-provider/src/cloudflare.rs|-
 SEC-002|CODE_ONLY|crates/guard-control/src/api.rs|-|-
 SEC-003|AUTO_PASS|crates/guard-control/src/admin_socket.rs|scripts/integration-gate.sh|-
-SEC-004|CODE_ONLY|crates/guard-provider/src/cloudflare.rs|-|-
+SEC-004|AUTO_PASS|crates/guard-provider/src/cloudflare.rs|crates/guard-provider/src/cloudflare.rs|-
 SEC-005|AUTO_PASS|crates/guard-edge/src/telemetry.rs|scripts/integration-gate.sh|-
 SEC-006|AUTO_PASS|crates/guard-control/src/auth.rs|crates/guard-control/src/api/tests.rs|-
 SEC-007|AUTO_PASS|crates/guard-control/src/api.rs|scripts/integration-gate.sh|-

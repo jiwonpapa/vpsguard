@@ -90,7 +90,7 @@ last_reviewed: 2026-07-24
 | `ACT-008` | `crates/guard-core/src/state/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 실제 test zone에서 `RECOVERY_READY` 유지·관리자 승인·DNS only read-back artifact |
 | `ACT-009` | `crates/guard-core/tests/manual_hold.rs` | UI hold 중 state timeline |
 | `ACT-010` | `crates/guard-provider/tests/firewall_invariants.rs` | 전후 SSH·non-web listener·firewall rule diff |
-| `ACT-011` | `tests/fault/provider_unavailable.rs` | local guard 지속 report |
+| `ACT-011` | `crates/guard-control/src/runtime/tests.rs`, `crates/guard-control/src/api/tests.rs`, `crates/guard-provider/src/cloudflare.rs` | 401·403·429·5xx provider 장애 중 local guard·public edge 지속 report |
 | `ACT-012` | `crates/guard-control/tests/idempotent_actions.rs` | 중복 요청 provider call count |
 | `ACT-013`, `ACT-014` | `crates/guard-system/src/ufw.rs`, `crates/guard-control/src/api/tests.rs`, `tools/vm/standalone-security-probe.sh` | [standalone UFW apply·read-back·remove, foreign rule·SSH 보존과 JW-agent delegated mutation 0](evidence/gnuboard5-standalone-security-20260722.md) |
 
@@ -131,8 +131,8 @@ last_reviewed: 2026-07-24
 | `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime.rs`, `web/tests/console.e2e.ts` | [Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure PAM session과 Control public port scan](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | [standalone typed UFW 화면과 JW-agent 위임 read-only browser/API report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-018` | `crates/guard-core/src/policy/tests.rs`, `crates/guard-control/src/protection/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts`, `tools/tests/test_protection_pilot.py` | 구버전 policy writer의 설정 일치 version 전진·불일치 거부와 [격리 VM의 verified bundle update·2GB guest MemTotal·정책 적용 전후 Edge telemetry version·정상/strict/upload 응답·원복 read-back](evidence/gnuboard5-ui018-policy-20260724.md) |
-| `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
-| `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
+| `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | `crates/guard-provider/src/cloudflare.rs`, admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial과 provider error·debug token 비노출 report |
+| `SEC-004`, `SEC-005` | `crates/guard-provider/src/cloudflare.rs`, provider allowlist·secret scan tests | fake cross-zone·hostname·record denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |
 | `SEC-012`, `SEC-013`, `SEC-014` | `crates/guard-control/src/auth/tests.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/api/tests.rs` | 2GB VPS 재시작 session, root-only AEAD TOTP·hash-only 복구 코드와 auth 저장소 secret scan report |
 | `SEC-015` | `crates/guard-control/src/pam_auth.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/auth/tests.rs`, `tools/vm/pam-login-probe.sh` | Ubuntu PAM group·root/locked denial, 실제 사용자 QR 등록과 사용자 입력 TOTP session report. 2026-07-22 자동 생성 test seed 증거는 사용자 등록 증거에서 제외 |

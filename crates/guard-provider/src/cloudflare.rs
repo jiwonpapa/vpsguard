@@ -783,6 +783,157 @@ mod tests {
     }
 
     #[test]
+    fn preflight_classifies_provider_failures_without_leaking_response_body()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (status, expected) in [
+            (401, ProviderError::AuthenticationFailed),
+            (403, ProviderError::PermissionDenied),
+            (429, ProviderError::RateLimited),
+            (503, ProviderError::Unavailable),
+        ] {
+            let mut server = mockito::Server::new();
+            let token_mock = server
+                .mock("GET", "/user/tokens/verify")
+                .with_status(status)
+                .with_body(format!("provider rejected bearer {TEST_TOKEN}"))
+                .create();
+            let directory = tempfile::tempdir()?;
+            let path = directory.path().join("token");
+            fs::write(&path, TEST_TOKEN)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+            let backend = CloudflareBackend::from_token_file_with_api_base(
+                ZONE_ID,
+                vec![target()],
+                &path,
+                FakeOrigin,
+                &server.url(),
+            )?;
+
+            let error = match backend.preflight() {
+                Ok(()) => return Err("provider failure unexpectedly passed".into()),
+                Err(error) => error,
+            };
+            assert_eq!(error, expected);
+            assert!(!format!("{error:?}").contains(TEST_TOKEN));
+            assert!(!error.to_string().contains(TEST_TOKEN));
+            token_mock.assert();
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unlisted_hostname_before_any_provider_request()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = mockito::Server::new();
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("token");
+        fs::write(&path, TEST_TOKEN)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        let mut backend = CloudflareBackend::from_token_file_with_api_base(
+            ZONE_ID,
+            vec![target()],
+            &path,
+            FakeOrigin,
+            &server.url(),
+        )?;
+
+        assert_eq!(
+            backend.request_proxy_enable("outside.example.net"),
+            Err(ProviderError::RecordNotAllowed(
+                "outside.example.net".to_owned()
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_zone_and_mixed_hostname_allowlists() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("token");
+        fs::write(&path, TEST_TOKEN)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+
+        assert!(matches!(
+            CloudflareBackend::from_token_file("not-a-zone-id", vec![target()], &path, FakeOrigin),
+            Err(ProviderError::Configuration("ZONE_OR_RECORDS_INVALID"))
+        ));
+        assert!(matches!(
+            CloudflareBackend::from_token_file(
+                ZONE_ID,
+                vec![
+                    target(),
+                    CloudflareRecordConfig {
+                        id: "22222222222222222222222222222222".to_owned(),
+                        name: "outside.example.net".to_owned(),
+                        record_type: DnsRecordType::AAAA,
+                    },
+                ],
+                &path,
+                FakeOrigin
+            ),
+            Err(ProviderError::Configuration("RECORD_ALLOWLIST_INVALID"))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn restore_requires_exact_post_change_readback() -> Result<(), Box<dyn std::error::Error>> {
+        let mut server = mockito::Server::new();
+        let restore_record = server
+            .mock(
+                "PATCH",
+                format!("/zones/{ZONE_ID}/dns_records/{RECORD_ID}").as_str(),
+            )
+            .match_body(mockito::Matcher::JsonString(
+                r#"{"proxied":false,"ttl":300}"#.to_owned(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(record_body(false))
+            .create();
+        let stale_readback = server
+            .mock(
+                "GET",
+                format!("/zones/{ZONE_ID}/dns_records/{RECORD_ID}").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(record_body(true))
+            .create();
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("token");
+        fs::write(&path, TEST_TOKEN)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        let mut backend = CloudflareBackend::from_token_file_with_api_base(
+            ZONE_ID,
+            vec![target()],
+            &path,
+            FakeOrigin,
+            &server.url(),
+        )?;
+        let snapshot = crate::ProviderSnapshot {
+            record_name: "example.com".to_owned(),
+            records: vec![crate::ProviderRecordSnapshot {
+                id: RECORD_ID.to_owned(),
+                name: "example.com".to_owned(),
+                record_type: DnsRecordType::A,
+                proxied: false,
+                ttl_seconds: 300,
+            }],
+            origin_locked: false,
+        };
+
+        assert_eq!(
+            backend.restore(&snapshot),
+            Err(ProviderError::RecordMismatch("example.com".to_owned()))
+        );
+        restore_record.assert();
+        stale_readback.assert();
+        Ok(())
+    }
+
+    #[test]
     fn multi_record_failure_rolls_back_already_changed_records()
     -> Result<(), Box<dyn std::error::Error>> {
         const RECORD_ID_V6: &str = "22222222222222222222222222222222";
