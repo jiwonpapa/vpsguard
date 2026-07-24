@@ -3,9 +3,11 @@
 use guard_core::policy::ProtectionSettings;
 use guard_core::{GuardMode, GuardState, PolicySnapshot};
 use guard_system::AtomicJsonStore;
+use time::OffsetDateTime;
 
 use super::{
     CurrentProtection, PersistedProtection, ProtectionPolicyError, ProtectionPolicyManager,
+    build_policy_at,
 };
 
 #[tokio::test]
@@ -148,6 +150,61 @@ async fn manager_recovers_settings_and_keeps_them_across_mode_refresh()
     let refreshed = recovered.write_for_state(state).await?;
     assert_eq!(refreshed.policy_version, 2);
     assert_eq!(recovered.snapshot()?.settings, candidate);
+    Ok(())
+}
+
+#[test]
+fn legacy_writer_version_is_reconciled_only_when_settings_still_match()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("policy.json");
+    let manager =
+        ProtectionPolicyManager::load(path.clone(), 0, GuardMode::Normal, 1_048_576, 10_000)?;
+    drop(manager);
+    AtomicJsonStore::<PolicySnapshot>::new(path.clone()).write(&build_policy_at(
+        GuardMode::Watch,
+        5,
+        1_048_576,
+        10_000,
+        ProtectionSettings::default(),
+        OffsetDateTime::now_utc(),
+    )?)?;
+
+    let recovered =
+        ProtectionPolicyManager::load(path.clone(), 5, GuardMode::Watch, 1_048_576, 10_000)?;
+    assert_eq!(recovered.snapshot()?.policy_version, 5);
+    let metadata =
+        AtomicJsonStore::<PersistedProtection>::new(path.with_extension("settings.json")).read()?;
+    assert_eq!(metadata.policy_version, 5);
+    assert_eq!(metadata.settings, ProtectionSettings::default());
+    Ok(())
+}
+
+#[test]
+fn legacy_writer_version_recovery_rejects_changed_route_settings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("policy.json");
+    let manager =
+        ProtectionPolicyManager::load(path.clone(), 0, GuardMode::Normal, 1_048_576, 10_000)?;
+    drop(manager);
+    let changed = ProtectionSettings {
+        local_strict_requests_per_minute: 29,
+        ..ProtectionSettings::default()
+    };
+    AtomicJsonStore::<PolicySnapshot>::new(path.clone()).write(&build_policy_at(
+        GuardMode::LocalGuard,
+        5,
+        1_048_576,
+        10_000,
+        changed,
+        OffsetDateTime::now_utc(),
+    )?)?;
+
+    assert!(matches!(
+        ProtectionPolicyManager::load(path, 5, GuardMode::LocalGuard, 1_048_576, 10_000),
+        Err(ProtectionPolicyError::PolicySettingsMismatch)
+    ));
     Ok(())
 }
 

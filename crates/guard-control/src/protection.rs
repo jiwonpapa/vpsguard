@@ -174,16 +174,6 @@ pub enum ProtectionPolicyError {
     /// 보호 설정 sidecar 본문 hash가 일치하지 않습니다.
     #[error("보호 설정 metadata hash가 일치하지 않습니다")]
     MetadataHashMismatch,
-    /// policy가 설정 sidecar보다 앞서 있어 안전하게 복원할 수 없습니다.
-    #[error(
-        "policy version {policy_version}이 설정 metadata version {metadata_version}보다 앞섭니다"
-    )]
-    MetadataVersionBehind {
-        /// Edge policy 파일의 version입니다.
-        policy_version: u64,
-        /// 보호 설정 sidecar의 version입니다.
-        metadata_version: u64,
-    },
     /// 같은 version의 policy route 규칙과 설정 sidecar가 일치하지 않습니다.
     #[error("보호 policy route 규칙과 설정 metadata가 일치하지 않습니다")]
     PolicySettingsMismatch,
@@ -468,18 +458,22 @@ fn recover_current(
         }
         (Some(policy), Some(metadata)) => {
             if policy.policy_version > metadata.policy_version {
-                return Err(ProtectionPolicyError::MetadataVersionBehind {
+                ensure_policy_matches_settings(&policy, metadata.settings)?;
+                let current = CurrentProtection {
+                    settings: metadata.settings,
                     policy_version: policy.policy_version,
-                    metadata_version: metadata.policy_version,
-                });
-            }
-            let current = metadata.current();
-            if current.policy_version > policy.policy_version {
-                write_recovered_policy(store, state_mode, current, limits)?;
+                };
+                metadata_store.write(&PersistedProtection::new(current)?)?;
+                current
             } else {
-                ensure_policy_matches_settings(&policy, current.settings)?;
+                let current = metadata.current();
+                if current.policy_version > policy.policy_version {
+                    write_recovered_policy(store, state_mode, current, limits)?;
+                } else {
+                    ensure_policy_matches_settings(&policy, current.settings)?;
+                }
+                current
             }
-            current
         }
     };
     if state_policy_version > current.policy_version {

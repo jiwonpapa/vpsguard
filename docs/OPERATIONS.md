@@ -200,7 +200,14 @@ sudo VPS_GUARD_UNINSTALL_CONFIRM=remove-owned-artifacts-only \
   bash scripts/uninstall.sh --apply
 ```
 
-Update는 binary/unit/tmpfiles snapshot을 만든 뒤 control과 Host-safe edge health 중 하나라도 실패하면 복구합니다. Uninstall은 Nginx 설정·활성 상태와 public probe를 확인하고 edge를 중지한 뒤 probe를 다시 통과해야만 `packaging/ownership-manifest.txt`의 정확한 allowlist를 제거합니다. 중간 probe가 실패하면 edge를 재기동하고 제거를 중단합니다.
+Update는 binary/unit/tmpfiles snapshot을 만든 뒤 control과 Host-safe edge health 중
+하나라도 실패하면 복구합니다. 각 health 대기는 재시도 전체를 15초 hard limit 안에
+끝내며, 개별 요청 timeout과 재시도 횟수를 곱해 update 60초 예산을 넘기지 않습니다.
+이전 Control이 policy version만 갱신한 상태는 저장된 보호 설정과 실제 route 규칙이
+정확히 일치할 때만 metadata version을 전진 복구하고, 규칙이 다르면 시작을 거부합니다.
+Uninstall은 Nginx 설정·활성 상태와 public probe를 확인하고 edge를 중지한 뒤 probe를
+다시 통과해야만 `packaging/ownership-manifest.txt`의 정확한 allowlist를 제거합니다.
+중간 probe가 실패하면 edge를 재기동하고 제거를 중단합니다.
 
 Update는 VPSGuard가 현재 public 443을 소유하면 즉시 거부합니다. 먼저 Nginx bypass를
 적용하고 HTTPS read-back으로 Nginx가 public port를 소유함을 확인한 뒤 update를 실행해야
@@ -231,7 +238,9 @@ x86_64 bundle의 모든 checksum을 검사한 뒤 다음 순서를 한 transacti
 
 1. 현재 release·memory·service 상태를 기록하고 bundle과 body-free probe만 guest
    사용자 home의 commit별 stage에 복사
-2. QEMU guest agent root 경계에서 기존 `update-release.sh`의 snapshot rollback 적용
+2. QEMU guest agent root 경계에서 기존 `update-release.sh`의 snapshot rollback 적용.
+   모든 guest 명령은 GNU `timeout`의 TERM·15초 KILL grace로 감싸 하네스 연결이
+   끊겨도 원격 update process를 남기지 않음
 3. libvirt live memory를 정확히 2GiB로 축소하고 guest `MemTotal` read-back
 4. root 전용 admin socket의 단회 code로 break-glass session을 만들되 code·cookie·CSRF는
    출력하거나 evidence에 저장하지 않음

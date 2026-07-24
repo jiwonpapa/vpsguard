@@ -63,7 +63,27 @@ class GuestAgentTest(unittest.TestCase):
         self.assertEqual(command.argv[:4], ("ssh", "-o", "BatchMode=yes", "gnuboard7"))
         self.assertIn("qemu-agent-command", command.argv[4])
         self.assertIn("guest-exec", command.argv[4])
+        self.assertIn("/usr/bin/timeout", command.argv[4])
+        self.assertIn("--kill-after=15s", command.argv[4])
+        self.assertIn("/bin/systemctl", command.argv[4])
         self.assertNotIn("\n", command.argv[4])
+
+    def test_guest_timeout_exit_is_reported_after_remote_process_is_bounded(self) -> None:
+        runner = _Runner(
+            [
+                {"return": {"pid": 43}},
+                {
+                    "return": {
+                        "exited": True,
+                        "exitcode": 124,
+                    }
+                },
+            ]
+        )
+        guest = GuestAgent(runner, self.root, host_alias="gnuboard7", domain="gnuboard5")
+
+        with self.assertRaisesRegex(GuestAgentError, "QGA_GUEST_COMMAND_TIMEOUT"):
+            guest.execute(("/bin/sleep", "90"), timeout_seconds=1)
 
     def test_nonzero_guest_exit_and_unsafe_argv_fail_closed(self) -> None:
         runner = _Runner(

@@ -12,6 +12,9 @@ from pathlib import Path
 from .errors import HarnessError
 from .runner import CommandRunner, CommandScope, CommandSpec
 
+_GUEST_TIMEOUT_PATH = "/usr/bin/timeout"
+_GUEST_TIMEOUT_GRACE_SECONDS = 15
+
 
 class GuestAgentError(HarnessError):
     """The host transport or guest command violated the QGA contract."""
@@ -76,8 +79,13 @@ class GuestAgent:
                 f"timeout={timeout_seconds}, environment_count={len(environment)}",
             )
         arguments: dict[str, object] = {
-            "path": argv[0],
-            "arg": list(argv[1:]),
+            "path": _GUEST_TIMEOUT_PATH,
+            "arg": [
+                "--signal=TERM",
+                f"--kill-after={_GUEST_TIMEOUT_GRACE_SECONDS}s",
+                f"{timeout_seconds}s",
+                *argv,
+            ],
             "capture-output": True,
         }
         if environment:
@@ -90,7 +98,12 @@ class GuestAgent:
             process_id = int(started["return"]["pid"])
         except (KeyError, TypeError, ValueError) as error:
             _raise("QGA_EXEC_START_FAILED", "guest command PID를 받지 못했습니다.", str(error))
-        deadline = time.monotonic() + timeout_seconds
+        deadline = (
+            time.monotonic()
+            + timeout_seconds
+            + _GUEST_TIMEOUT_GRACE_SECONDS
+            + 2
+        )
         while time.monotonic() < deadline:
             status = self._agent_call(
                 {
@@ -106,6 +119,12 @@ class GuestAgent:
                     stdout=_decoded(result.get("out-data")),
                     stderr=_decoded(result.get("err-data")),
                 )
+                if completed.exit_code in (124, 137):
+                    _raise(
+                        "QGA_GUEST_COMMAND_TIMEOUT",
+                        "guest 명령이 제한 시간 안에 끝나지 않았습니다.",
+                        f"timeout={timeout_seconds}s, exit={completed.exit_code}",
+                    )
                 if completed.exit_code not in accepted_exit_codes:
                     _raise(
                         "QGA_GUEST_COMMAND_FAILED",

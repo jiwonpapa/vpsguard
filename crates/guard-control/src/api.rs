@@ -814,7 +814,6 @@ fn protection_policy_error(error: ProtectionPolicyError) -> Response {
         | ProtectionPolicyError::ReadBackMismatch
         | ProtectionPolicyError::UnsupportedMetadataSchema(_)
         | ProtectionPolicyError::MetadataHashMismatch
-        | ProtectionPolicyError::MetadataVersionBehind { .. }
         | ProtectionPolicyError::PolicySettingsMismatch
         | ProtectionPolicyError::MissingPolicy(_)
         | ProtectionPolicyError::StateVersionAhead { .. } => {
