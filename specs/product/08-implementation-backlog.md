@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: execution-plan
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-23
+last_reviewed: 2026-07-24
 ---
 
 # 구현 백로그
@@ -61,6 +61,16 @@ vps-guard/
 | `guard-profiles` | GnuBoard·WordPress route와 비용 profile |
 
 OS 명령과 provider API를 `guard-core`에 넣지 않습니다. `guard-edge`는 웹 UI와 SQLite에 의존하지 않습니다.
+
+### 현재 배치: 재시작 없는 관리자 보호 정책
+
+- 요구사항: `UI-018`, `ACT-001`, `ACT-004`, `NFR-004`
+- [x] WATCH·LOCAL_GUARD·EMERGENCY_PROXY strict/upload 제한의 typed model과 단계 관계 검증
+- [x] 기존 policy와 hash settings sidecar에서 설정·version 복원, 구버전 Edge schema 호환과 writer 단일화
+- [x] fingerprint 기반 plan·diff·stale plan 거부·idempotent apply
+- [x] 원자 policy write·read-back 뒤 Edge telemetry 관측 version 분리
+- [x] 관리자 정책 화면과 desktop/mobile Playwright
+- [ ] 2GB VPS 정상·strict·upload 적용 전후 read-back 증거
 
 ### 현재 배치: multi-architecture release 실행 검증
 

@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: verification-contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-23
+last_reviewed: 2026-07-24
 ---
 
 # 검증 추적표
@@ -125,6 +125,7 @@ last_reviewed: 2026-07-23
 | `UI-015` | `crates/guard-control/src/api/tests.rs`, `web/src/lib/auth.test.ts`, `web/tests/console.e2e.ts` | 별도 HTTPS 관리 Host에서 PAM 미등록 gate·사용자 QR 등록·계정/TOTP 로그인과 terminal 없는 일상 접속 browser report |
 | `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime.rs`, `web/tests/console.e2e.ts` | [Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure PAM session과 Control public port scan](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | [standalone typed UFW 화면과 JW-agent 위임 read-only browser/API report](evidence/gnuboard5-standalone-security-20260722.md) |
+| `UI-018` | `crates/guard-core/src/policy/tests.rs`, `crates/guard-control/src/protection/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 2GB VPS에서 정책 적용 전후 Edge telemetry policy version과 정상·strict·upload 응답 read-back report |
 | `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial report |
 | `SEC-004`, `SEC-005` | provider allowlist·secret scan tests | fake cross-zone denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |

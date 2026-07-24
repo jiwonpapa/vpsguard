@@ -26,6 +26,7 @@ use crate::auth::{
     AuthError, BootstrapStore, IssuedSession, SessionStore, UiAccessPolicy, unix_seconds,
 };
 use crate::firewall::FirewallManager;
+use crate::protection::ProtectionPolicyManager;
 use crate::storage::SqliteStore;
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
 
@@ -88,6 +89,14 @@ fn app_with_options(
         notification: crate::notification::NotificationHandle::disabled(Arc::new(
             SqliteStore::in_memory()?,
         )),
+        protection: Arc::new(ProtectionPolicyManager::load(
+            path.with_extension("policy.json"),
+            0,
+            GuardMode::Normal,
+            1_048_576,
+            10,
+        )?),
+        policy_operation: tokio::sync::Mutex::new(()),
         sessions: Arc::new(SessionStore::in_memory(10)?),
         access: UiAccessPolicy::from_config(&ui),
         firewall: Arc::new(FirewallManager::system(
@@ -142,6 +151,34 @@ fn action_request(
         .header("x-csrf-token", &issued.csrf_token)
         .header("idempotency-key", operation_id)
         .body(Body::empty())
+}
+
+fn json_mutation_request(
+    path: &str,
+    issued: &IssuedSession,
+    operation_id: Option<&str>,
+    body: serde_json::Value,
+) -> Result<Request<Body>, axum::http::Error> {
+    let mut request = Request::post(path)
+        .header("host", LOOPBACK_HOST)
+        .header("origin", LOOPBACK_ORIGIN)
+        .header("cookie", session_cookie(issued))
+        .header("x-csrf-token", &issued.csrf_token)
+        .header("content-type", "application/json");
+    if let Some(operation_id) = operation_id {
+        request = request.header("idempotency-key", operation_id);
+    }
+    request.body(Body::from(body.to_string()))
+}
+
+fn protection_settings(local_strict_requests_per_minute: u32) -> serde_json::Value {
+    serde_json::json!({
+        "watch_strict_requests_per_minute": 120,
+        "local_strict_requests_per_minute": local_strict_requests_per_minute,
+        "local_upload_requests_per_minute": 15,
+        "emergency_strict_requests_per_minute": 10,
+        "emergency_upload_requests_per_minute": 5
+    })
 }
 
 #[test]
@@ -536,6 +573,171 @@ async fn tls_assisted_plan_requires_mode_and_returns_no_apply_command()
     assert_eq!(json["requires_explicit_approval"], true);
     assert!(json.get("command").is_none());
     assert_eq!(json["steps"][0], "verify_dns");
+    Ok(())
+}
+
+#[tokio::test]
+async fn protection_settings_plan_apply_duplicate_and_edge_readback_work()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    let issued = issue_session(&state)?;
+
+    let current = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/api/v1/settings/protection")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(current.status(), StatusCode::OK);
+    let current =
+        serde_json::from_slice::<serde_json::Value>(&to_bytes(current.into_body(), 8_192).await?)?;
+    assert_eq!(current["policy_version"], 0);
+    assert_eq!(current["edge_readback"], "pending");
+    assert_eq!(current["enforcement_active"], false);
+
+    let settings = protection_settings(29);
+    let planned = router(Arc::clone(&state))
+        .oneshot(json_mutation_request(
+            "/api/v1/settings/protection/plan",
+            &issued,
+            None,
+            serde_json::json!({"settings": settings}),
+        )?)
+        .await?;
+    assert_eq!(planned.status(), StatusCode::OK);
+    let planned =
+        serde_json::from_slice::<serde_json::Value>(&to_bytes(planned.into_body(), 8_192).await?)?;
+    assert_eq!(
+        planned["changes"][0]["field"],
+        "local_strict_requests_per_minute"
+    );
+    assert_eq!(planned["next_policy_version"], 1);
+
+    let apply_body = serde_json::json!({
+        "settings": protection_settings(29),
+        "current_fingerprint": planned["current_fingerprint"],
+        "plan_hash": planned["plan_hash"]
+    });
+    let applied = router(Arc::clone(&state))
+        .oneshot(json_mutation_request(
+            "/api/v1/settings/protection/apply",
+            &issued,
+            Some("protection-operation-1"),
+            apply_body.clone(),
+        )?)
+        .await?;
+    assert_eq!(applied.status(), StatusCode::OK);
+    let applied =
+        serde_json::from_slice::<serde_json::Value>(&to_bytes(applied.into_body(), 8_192).await?)?;
+    assert_eq!(applied["applied"], true);
+    assert_eq!(applied["policy_version"], 1);
+    assert_eq!(state.state.read().await.policy_version, 1);
+
+    let duplicate = router(Arc::clone(&state))
+        .oneshot(json_mutation_request(
+            "/api/v1/settings/protection/apply",
+            &issued,
+            Some("protection-operation-1"),
+            apply_body,
+        )?)
+        .await?;
+    assert_eq!(duplicate.status(), StatusCode::OK);
+    let duplicate = serde_json::from_slice::<serde_json::Value>(
+        &to_bytes(duplicate.into_body(), 8_192).await?,
+    )?;
+    assert_eq!(duplicate["applied"], false);
+    assert_eq!(duplicate["policy_version"], 1);
+
+    state.storage.record_traffic(&TelemetryEnvelope {
+        request_id: "protection-readback".to_owned(),
+        policy_version: 1,
+        occurred_at_unix_ms: 1,
+        ..TelemetryEnvelope::default()
+    })?;
+    let observed = router(state)
+        .oneshot(
+            Request::get("/api/v1/settings/protection")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let observed =
+        serde_json::from_slice::<serde_json::Value>(&to_bytes(observed.into_body(), 8_192).await?)?;
+    assert_eq!(observed["edge_observed_policy_version"], 1);
+    assert_eq!(observed["edge_readback"], "observed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn protection_settings_reject_invalid_and_stale_plans_without_overwrite()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state = app(&directory.path().join("state.json"))?;
+    let issued = issue_session(&state)?;
+
+    let invalid = router(Arc::clone(&state))
+        .oneshot(json_mutation_request(
+            "/api/v1/settings/protection/plan",
+            &issued,
+            None,
+            serde_json::json!({"settings": protection_settings(9)}),
+        )?)
+        .await?;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let mut plans = Vec::new();
+    for local_strict in [29, 28] {
+        let response = router(Arc::clone(&state))
+            .oneshot(json_mutation_request(
+                "/api/v1/settings/protection/plan",
+                &issued,
+                None,
+                serde_json::json!({"settings": protection_settings(local_strict)}),
+            )?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        plans.push(serde_json::from_slice::<serde_json::Value>(
+            &to_bytes(response.into_body(), 8_192).await?,
+        )?);
+    }
+
+    for (index, expected_status) in [(0, StatusCode::OK), (1, StatusCode::CONFLICT)] {
+        let response = router(Arc::clone(&state))
+            .oneshot(json_mutation_request(
+                "/api/v1/settings/protection/apply",
+                &issued,
+                Some(if index == 0 {
+                    "protection-first"
+                } else {
+                    "protection-stale"
+                }),
+                serde_json::json!({
+                    "settings": protection_settings(if index == 0 { 29 } else { 28 }),
+                    "current_fingerprint": plans[index]["current_fingerprint"],
+                    "plan_hash": plans[index]["plan_hash"]
+                }),
+            )?)
+            .await?;
+        assert_eq!(response.status(), expected_status);
+        if index == 1 {
+            let body = serde_json::from_slice::<serde_json::Value>(
+                &to_bytes(response.into_body(), 8_192).await?,
+            )?;
+            assert_eq!(body["error"]["code"], "PROTECTION_PLAN_STALE");
+        }
+    }
+    assert_eq!(
+        state
+            .protection
+            .snapshot()?
+            .settings
+            .local_strict_requests_per_minute,
+        29
+    );
     Ok(())
 }
 

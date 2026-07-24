@@ -14,10 +14,9 @@ use guard_agent::services::{
 };
 use guard_core::config::{DetectionMode, ServiceCollectorKind};
 use guard_core::correlation::LOG_SCHEMA_VERSION;
-use guard_core::policy::{RouteRule, StaticLimits};
 use guard_core::{
     Assessment, ConfigError, Detector, GuardConfig, GuardEvent, GuardMode, GuardState,
-    HostPressure, PolicySnapshot, Severity, TransitionInput,
+    HostPressure, Severity, TransitionInput,
 };
 use guard_system::{AtomicJsonStore, StoreError, inspect_tls_management};
 use thiserror::Error;
@@ -43,6 +42,7 @@ use crate::auth::{AuthError, BootstrapStore, SessionStore, UiAccessPolicy};
 use crate::auth_store::{AuthRepository, AuthStoreError};
 use crate::firewall::FirewallManager;
 use crate::notification;
+use crate::protection::{ProtectionPolicyError, ProtectionPolicyManager};
 use crate::provider::{ProviderController, ProviderControllerError};
 use crate::storage::{RetentionCutoffs, SqliteStore, StorageError, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::{TelemetryEnvelope, TrafficAggregator};
@@ -78,6 +78,9 @@ pub enum ControlError {
     /// Provider adapter 초기화 실패입니다.
     #[error(transparent)]
     Provider(#[from] ProviderControllerError),
+    /// 관리자 보호 policy 초기화 실패입니다.
+    #[error(transparent)]
+    Protection(#[from] ProtectionPolicyError),
     /// 핵심 service collector 초기화 실패입니다.
     #[error(transparent)]
     Collector(#[from] ServiceTargetsError),
@@ -101,7 +104,7 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/var/lib/vps-guard/state.json"));
     let store = AtomicJsonStore::new(state_path);
-    let initial_state = if store.path().exists() {
+    let mut initial_state = if store.path().exists() {
         store.read()?
     } else {
         GuardState::normal("1970-01-01T00:00:00Z")
@@ -109,6 +112,18 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
     initial_state
         .validate()
         .map_err(|error| ControlError::Serve(error.to_string()))?;
+    let protection = Arc::new(ProtectionPolicyManager::load(
+        config.edge.policy_path.clone(),
+        initial_state.policy_version,
+        initial_state.current_mode,
+        config.edge.max_body_bytes,
+        config.edge.max_tracked_clients,
+    )?);
+    let restored_policy_version = protection.snapshot()?.policy_version;
+    if restored_policy_version > initial_state.policy_version {
+        initial_state.policy_version = restored_policy_version;
+        store.write(&initial_state)?;
+    }
     let storage = Arc::new(SqliteStore::open(
         &config.storage.database_path,
         config.storage.max_database_bytes,
@@ -161,6 +176,8 @@ pub async fn run_from_path(config_path: &Path) -> Result<(), ControlError> {
         storage: Arc::clone(&storage),
         events,
         notification,
+        protection,
+        policy_operation: tokio::sync::Mutex::new(()),
         sessions: Arc::new(sessions),
         access: UiAccessPolicy::from_config(&config.ui),
         firewall: Arc::new(FirewallManager::system(
@@ -559,9 +576,6 @@ fn spawn_storage_health(storage: Arc<SqliteStore>) {
 
 fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
     let enforce = automatic_enforcement_enabled(config);
-    let policy_store = AtomicJsonStore::<PolicySnapshot>::new(config.edge.policy_path.clone());
-    let max_body_bytes = config.edge.max_body_bytes;
-    let max_tracked_clients = config.edge.max_tracked_clients;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         let mut last_policy_refresh = None;
@@ -570,21 +584,17 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             let activation_pending = provider_activation_pending(&app);
             let manual_hold = app.state.read().await.manual_hold;
             if activation_pending && !manual_hold {
+                let _operation = app.policy_operation.lock().await;
                 let current = app.state.read().await.clone();
                 if let Some(reconciled) =
                     reconcile_provider_activation_state(current, &current_timestamp())
-                    && let Some(refreshed) = write_policy_for_mode(
-                        &policy_store,
-                        reconciled,
-                        max_body_bytes,
-                        max_tracked_clients,
-                    )
-                    .await
+                    && let Some(refreshed) = write_policy_for_mode(&app, reconciled).await
                     && persist_state(&app, &refreshed).await.is_ok()
                 {
                     *app.state.write().await = refreshed;
                     last_policy_refresh = Some(Instant::now());
                 }
+                drop(_operation);
                 match run_provider_transaction(&app, false).await {
                     Ok(
                         guard_provider::ProviderStage::Complete
@@ -623,18 +633,15 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             let occurred_at = current_timestamp();
             let current = app.state.read().await.clone();
             let Some(input) = input else {
-                if policy_refresh_due
-                    && let Some(refreshed) = write_policy_for_mode(
-                        &policy_store,
-                        current,
-                        max_body_bytes,
-                        max_tracked_clients,
-                    )
-                    .await
-                    && persist_state(&app, &refreshed).await.is_ok()
-                {
-                    *app.state.write().await = refreshed;
-                    last_policy_refresh = Some(Instant::now());
+                if policy_refresh_due {
+                    let _operation = app.policy_operation.lock().await;
+                    let current = app.state.read().await.clone();
+                    if let Some(refreshed) = write_policy_for_mode(&app, current).await
+                        && persist_state(&app, &refreshed).await.is_ok()
+                    {
+                        *app.state.write().await = refreshed;
+                        last_policy_refresh = Some(Instant::now());
+                    }
                 }
                 continue;
             };
@@ -704,12 +711,10 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
             if !state_changed && !policy_refresh_due {
                 continue;
             }
+            let _operation = app.policy_operation.lock().await;
             let mut policy_refreshed = false;
             if enforce {
-                let Some(refreshed) =
-                    write_policy_for_mode(&policy_store, next, max_body_bytes, max_tracked_clients)
-                        .await
-                else {
+                let Some(refreshed) = write_policy_for_mode(&app, next).await else {
                     continue;
                 };
                 next = refreshed;
@@ -731,40 +736,18 @@ fn spawn_detection_loop(app: Arc<AppState>, config: &GuardConfig) {
     });
 }
 
-async fn write_policy_for_mode(
-    policy_store: &AtomicJsonStore<PolicySnapshot>,
-    mut state: GuardState,
-    max_body_bytes: u64,
-    max_tracked_clients: usize,
-) -> Option<GuardState> {
-    let policy_version = state.policy_version.saturating_add(1);
-    let policy = match build_policy(
-        state.current_mode,
-        policy_version,
-        max_body_bytes,
-        max_tracked_clients,
-    ) {
-        Ok(policy) => policy,
+async fn write_policy_for_mode(app: &AppState, state: GuardState) -> Option<GuardState> {
+    match app.protection.write_for_state(state).await {
+        Ok(state) => Some(state),
         Err(error) => {
             control_warn!(
                 "CONTROL_POLICY_SNAPSHOT_GENERATION_FAILED",
                 error = %error,
                 "policy snapshot generation failed"
             );
-            return None;
+            None
         }
-    };
-    let policy_store = policy_store.clone();
-    let write_result = tokio::task::spawn_blocking(move || policy_store.write(&policy)).await;
-    if !matches!(write_result, Ok(Ok(()))) {
-        control_warn!(
-            "CONTROL_POLICY_SNAPSHOT_WRITE_FAILED",
-            "policy snapshot write failed; state update deferred"
-        );
-        return None;
     }
-    state.policy_version = policy_version;
-    Some(state)
 }
 
 fn provider_activation_pending(app: &AppState) -> bool {
@@ -879,63 +862,6 @@ async fn persist_state(app: &AppState, state: &GuardState) -> Result<(), ()> {
             Err(())
         }
     }
-}
-
-fn build_policy(
-    mode: GuardMode,
-    policy_version: u64,
-    max_body_bytes: u64,
-    max_tracked_clients: usize,
-) -> Result<PolicySnapshot, guard_core::PolicyError> {
-    use time::OffsetDateTime;
-    use time::format_description::well_known::Rfc3339;
-
-    let now = OffsetDateTime::now_utc();
-    let route_rules = match mode {
-        GuardMode::Normal => Vec::new(),
-        GuardMode::Watch | GuardMode::Recovering => vec![RouteRule {
-            route_class: "strict".to_owned(),
-            requests_per_minute: 120,
-        }],
-        GuardMode::LocalGuard => vec![
-            RouteRule {
-                route_class: "strict".to_owned(),
-                requests_per_minute: 30,
-            },
-            RouteRule {
-                route_class: "upload".to_owned(),
-                requests_per_minute: 15,
-            },
-        ],
-        GuardMode::EmergencyProxy | GuardMode::RecoveryReady => vec![
-            RouteRule {
-                route_class: "strict".to_owned(),
-                requests_per_minute: 10,
-            },
-            RouteRule {
-                route_class: "upload".to_owned(),
-                requests_per_minute: 5,
-            },
-        ],
-        GuardMode::ManualHold => Vec::new(),
-    };
-    PolicySnapshot {
-        schema_version: 1,
-        policy_version,
-        generated_at: now.format(&Rfc3339).unwrap_or_default(),
-        expires_at: (now + time::Duration::minutes(10))
-            .format(&Rfc3339)
-            .unwrap_or_default(),
-        mode,
-        route_rules,
-        client_rules: Vec::new(),
-        static_limits: StaticLimits {
-            max_body_bytes,
-            max_tracked_clients,
-        },
-        content_sha256: String::new(),
-    }
-    .seal()
 }
 
 #[cfg(test)]

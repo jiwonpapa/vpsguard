@@ -715,6 +715,17 @@ impl SqliteStore {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Edge telemetry에서 마지막으로 관측한 policy version입니다.
+    pub(crate) fn latest_policy_version(&self) -> Result<Option<u64>, StorageError> {
+        let connection = self.lock();
+        let value = connection.query_row(
+            "SELECT MAX(policy_version) FROM traffic_samples",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        Ok(value.map(from_i64))
+    }
+
     /// 장기 1분 rollup에서 route aggregate를 반환합니다.
     pub(crate) fn routes(&self, limit: usize) -> Result<Vec<RouteRow>, StorageError> {
         let connection = self.lock();

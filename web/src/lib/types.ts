@@ -289,6 +289,49 @@ export interface ActionResponse {
   operation_id: string;
 }
 
+export interface ProtectionSettings {
+  watch_strict_requests_per_minute: number;
+  local_strict_requests_per_minute: number;
+  local_upload_requests_per_minute: number;
+  emergency_strict_requests_per_minute: number;
+  emergency_upload_requests_per_minute: number;
+}
+
+export interface ProtectionSettingsStatus {
+  schema_version: number;
+  settings: ProtectionSettings;
+  policy_version: number;
+  fingerprint: string;
+  edge_observed_policy_version: number | null;
+  edge_readback: "pending" | "observed" | "superseded";
+  enforcement_active: boolean;
+}
+
+export interface ProtectionChange {
+  field: keyof ProtectionSettings;
+  before: number;
+  after: number;
+}
+
+export interface ProtectionPlan {
+  settings: ProtectionSettings;
+  current_fingerprint: string;
+  plan_hash: string;
+  current_policy_version: number;
+  next_policy_version: number;
+  changes: ProtectionChange[];
+}
+
+export interface ProtectionApplyResult {
+  applied: boolean;
+  operation_id: string;
+  settings: ProtectionSettings;
+  policy_version: number;
+  fingerprint: string;
+  edge_observed_policy_version: number | null;
+  edge_readback: "pending" | "observed" | "superseded";
+}
+
 export type FirewallMode = "standalone_ufw" | "jw_agent_delegated" | "disabled";
 export type UfwAction = "allow" | "deny";
 export type UfwProtocol = "tcp" | "udp" | "any";

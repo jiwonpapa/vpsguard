@@ -27,7 +27,7 @@ use guard_system::{
 };
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::Instrument;
@@ -38,6 +38,7 @@ use crate::auth::{
 };
 use crate::firewall::{FirewallError, FirewallOperations};
 use crate::notification::{NotificationHandle, NotificationStatus};
+use crate::protection::{ProtectionPolicyError, ProtectionPolicyManager};
 use crate::provider::ProviderController;
 use crate::storage::{
     AuditActionRow, BotRow, ClientRow, EventRow, RequestTraceRow, RouteRow, SqliteStore,
@@ -54,6 +55,8 @@ macro_rules! api_warn {
         )
     };
 }
+
+mod protection_api;
 
 const INDEX_HTML: &str = include_str!("../../../web/dist/index.html");
 const APP_CSS: &str = include_str!("../../../web/dist/assets/app.css");
@@ -78,6 +81,8 @@ pub(crate) struct AppState {
     pub(crate) storage: Arc<SqliteStore>,
     pub(crate) events: broadcast::Sender<GuardEvent>,
     pub(crate) notification: NotificationHandle,
+    pub(crate) protection: Arc<ProtectionPolicyManager>,
+    pub(crate) policy_operation: AsyncMutex<()>,
     pub(crate) sessions: Arc<SessionStore>,
     pub(crate) access: UiAccessPolicy,
     pub(crate) firewall: Arc<dyn FirewallOperations>,
@@ -290,6 +295,15 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/firewall/plan", post(firewall_plan))
         .route("/api/v1/firewall/apply", post(firewall_apply))
         .route("/api/v1/tls/assisted-plan", post(tls_assisted_plan))
+        .route("/api/v1/settings/protection", get(protection_api::settings))
+        .route(
+            "/api/v1/settings/protection/plan",
+            post(protection_api::plan),
+        )
+        .route(
+            "/api/v1/settings/protection/apply",
+            post(protection_api::apply),
+        )
         .route("/api/v1/actions/manual-hold", post(manual_hold))
         .route("/api/v1/actions/resume-auto", post(resume_auto))
         .route("/api/v1/actions/emergency-proxy", post(emergency_proxy))
@@ -724,6 +738,99 @@ async fn tls_assisted_plan(
             "발급 plan을 만들지 않았습니다.",
             "공백 없는 실제 연락처 email을 입력하십시오.",
         ),
+    }
+}
+
+async fn edge_observed_policy_version(app: &AppState) -> Result<Option<u64>, Response> {
+    let storage = Arc::clone(&app.storage);
+    match tokio::task::spawn_blocking(move || storage.latest_policy_version()).await {
+        Ok(Ok(version)) => Ok(version),
+        Ok(Err(error)) => {
+            api_warn!(
+                error_code = "EDGE_POLICY_READBACK_UNAVAILABLE",
+                error = %error,
+                "edge policy telemetry read-back failed"
+            );
+            Err(api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "EDGE_POLICY_READBACK_UNAVAILABLE",
+                "Edge가 관측한 policy version을 읽지 못했습니다.",
+                "설정 파일 적용 여부와 Edge 실제 반영 여부를 구분할 수 없습니다.",
+                "Control 저장 계층과 telemetry 수집 상태를 확인하십시오.",
+            ))
+        }
+        Err(error) => {
+            api_warn!(
+                error_code = "EDGE_POLICY_READBACK_TASK_FAILED",
+                error = %error,
+                "edge policy telemetry read-back task failed"
+            );
+            Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "EDGE_POLICY_READBACK_TASK_FAILED",
+                "Edge policy read-back task가 종료됐습니다.",
+                "설정 파일 적용 여부와 Edge 실제 반영 여부를 구분할 수 없습니다.",
+                "Control 로그와 runtime worker 상태를 확인하십시오.",
+            ))
+        }
+    }
+}
+
+fn protection_policy_error(error: ProtectionPolicyError) -> Response {
+    match error {
+        ProtectionPolicyError::InvalidSettings(_) => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "PROTECTION_SETTINGS_INVALID",
+            "보호 제한값이 안전 계약을 위반했습니다.",
+            "현재 policy와 Edge 동작을 변경하지 않았습니다.",
+            "각 값을 1..=6000 범위로 두고 WATCH ≥ LOCAL ≥ EMERGENCY, strict ≥ upload 관계를 확인하십시오.",
+        ),
+        ProtectionPolicyError::StalePlan => api_error(
+            StatusCode::CONFLICT,
+            "PROTECTION_PLAN_STALE",
+            "계획을 만든 뒤 보호 설정이 변경됐습니다.",
+            "오래된 후보를 적용하지 않았습니다.",
+            "현재 설정을 다시 읽고 diff 계획을 새로 만드십시오.",
+        ),
+        ProtectionPolicyError::PlanHashMismatch => api_error(
+            StatusCode::BAD_REQUEST,
+            "PROTECTION_PLAN_HASH_MISMATCH",
+            "보호 설정 plan hash가 후보와 일치하지 않습니다.",
+            "현재 policy를 변경하지 않았습니다.",
+            "후보를 수정했다면 plan을 다시 생성하십시오.",
+        ),
+        ProtectionPolicyError::IdempotencyConflict => idempotency_conflict(),
+        ProtectionPolicyError::VersionExhausted => api_error(
+            StatusCode::CONFLICT,
+            "PROTECTION_POLICY_VERSION_EXHAUSTED",
+            "보호 policy version을 더 증가시킬 수 없습니다.",
+            "현재 마지막 정상 policy를 유지합니다.",
+            "상태 파일과 policy version을 운영자가 점검하십시오.",
+        ),
+        ProtectionPolicyError::Policy(_)
+        | ProtectionPolicyError::Store(_)
+        | ProtectionPolicyError::Serialize(_)
+        | ProtectionPolicyError::Time(_)
+        | ProtectionPolicyError::ReadBackMismatch
+        | ProtectionPolicyError::UnsupportedMetadataSchema(_)
+        | ProtectionPolicyError::MetadataHashMismatch
+        | ProtectionPolicyError::MetadataVersionBehind { .. }
+        | ProtectionPolicyError::PolicySettingsMismatch
+        | ProtectionPolicyError::MissingPolicy(_)
+        | ProtectionPolicyError::StateVersionAhead { .. } => {
+            api_warn!(
+                error_code = "PROTECTION_POLICY_APPLY_FAILED",
+                error = %error,
+                "protection policy apply failed"
+            );
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PROTECTION_POLICY_APPLY_FAILED",
+                "보호 policy를 원자 적용·검증하지 못했습니다.",
+                "Control이 적용 성공을 확정하지 않으며 Edge는 검증 가능한 policy만 사용합니다.",
+                "policy 경로 권한, disk 여유와 Control 로그를 확인하십시오.",
+            )
+        }
     }
 }
 

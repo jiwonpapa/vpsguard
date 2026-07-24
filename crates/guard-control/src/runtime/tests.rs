@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use guard_agent::os::OsSnapshot;
 use guard_core::config::{DetectionMode, InspectionMode};
+use guard_core::policy::ProtectionSettings;
 use guard_core::{
     DetectionInput, Detector, GuardConfig, GuardMode, GuardState, HostPressure, TransitionInput,
 };
@@ -15,10 +16,11 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::mpsc;
 
 use super::{
-    POLICY_REFRESH_INTERVAL, automatic_enforcement_enabled, build_policy, host_pressure,
-    is_distributed_pressure, keep_local_guard, policy_renewal_due,
-    reconcile_provider_activation_state, storage_writer_loop, transition_event, update_incident,
+    POLICY_REFRESH_INTERVAL, automatic_enforcement_enabled, host_pressure, is_distributed_pressure,
+    keep_local_guard, policy_renewal_due, reconcile_provider_activation_state, storage_writer_loop,
+    transition_event, update_incident,
 };
+use crate::protection::build_policy_at;
 use crate::storage::{SqliteStore, TRAFFIC_QUEUE_CAPACITY};
 use crate::telemetry::TelemetryEnvelope;
 
@@ -35,7 +37,15 @@ fn policy_refresh_is_due_before_the_ten_minute_lease_expires() {
 
 #[test]
 fn generated_policy_keeps_a_ten_minute_bounded_lease() -> Result<(), Box<dyn std::error::Error>> {
-    let policy = build_policy(GuardMode::LocalGuard, 8, 1_024, 100)?;
+    let now = OffsetDateTime::now_utc();
+    let policy = build_policy_at(
+        GuardMode::LocalGuard,
+        8,
+        1_024,
+        100,
+        ProtectionSettings::default(),
+        now,
+    )?;
     let generated = OffsetDateTime::parse(&policy.generated_at, &Rfc3339)?;
     let expires = OffsetDateTime::parse(&policy.expires_at, &Rfc3339)?;
     assert_eq!(expires - generated, time::Duration::minutes(10));
@@ -44,7 +54,14 @@ fn generated_policy_keeps_a_ten_minute_bounded_lease() -> Result<(), Box<dyn std
 
 #[test]
 fn recovery_ready_keeps_emergency_route_limits() -> Result<(), Box<dyn std::error::Error>> {
-    let policy = build_policy(GuardMode::RecoveryReady, 8, 1_024, 100)?;
+    let policy = build_policy_at(
+        GuardMode::RecoveryReady,
+        8,
+        1_024,
+        100,
+        ProtectionSettings::default(),
+        OffsetDateTime::now_utc(),
+    )?;
     assert_eq!(
         policy
             .route_rules

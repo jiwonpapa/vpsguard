@@ -9,6 +9,7 @@ import { ClientsPage } from "./pages/clients";
 import { IncidentsPage } from "./pages/incidents";
 import { FirewallPage } from "./pages/firewall";
 import { OverviewPage } from "./pages/overview";
+import { ProtectionPage } from "./pages/protection";
 import { ResourcesPage } from "./pages/resources";
 import { RoutesPage } from "./pages/routes";
 import { TrafficPage } from "./pages/traffic";
@@ -57,6 +58,12 @@ const firewallRoute = createRoute({
   component: FirewallPage,
 });
 
+const protectionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/protection",
+  component: ProtectionPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   trafficRoute,
@@ -64,6 +71,7 @@ const routeTree = rootRoute.addChildren([
   routesRoute,
   incidentsRoute,
   resourcesRoute,
+  protectionRoute,
   firewallRoute,
 ]);
 

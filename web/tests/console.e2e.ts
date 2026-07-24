@@ -110,6 +110,51 @@ async function mockApi(page: Page) {
       });
       return;
     }
+    if (
+      path === "/api/v1/settings/protection/plan"
+      && route.request().method() === "POST"
+    ) {
+      const settings = route.request().postDataJSON().settings;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          settings,
+          current_fingerprint: "protection-current",
+          plan_hash: "protection-plan",
+          current_policy_version: 7,
+          next_policy_version: 8,
+          changes: [{
+            field: "local_strict_requests_per_minute",
+            before: 30,
+            after: settings.local_strict_requests_per_minute,
+          }],
+        }),
+      });
+      return;
+    }
+    if (
+      path === "/api/v1/settings/protection/apply"
+      && route.request().method() === "POST"
+    ) {
+      const idempotencyKey = route.request().headers()["idempotency-key"];
+      await route.fulfill({
+        status: idempotencyKey ? 200 : 400,
+        contentType: "application/json",
+        body: JSON.stringify(idempotencyKey ? {
+          applied: true,
+          operation_id: idempotencyKey,
+          settings: route.request().postDataJSON().settings,
+          policy_version: 8,
+          fingerprint: "protection-applied",
+          edge_observed_policy_version: 7,
+          edge_readback: "pending",
+        } : {
+          error: { code: "IDEMPOTENCY_KEY_REQUIRED" },
+        }),
+      });
+      return;
+    }
     const data: Record<string, unknown> = {
       "/api/v1/status": status,
       "/api/v1/traffic/summary": {
@@ -247,6 +292,21 @@ async function mockApi(page: Page) {
           foreign_rules: Array.from({ length: 8 }, (_, index) => `foreign-${index}`),
         },
       },
+      "/api/v1/settings/protection": {
+        schema_version: 1,
+        settings: {
+          watch_strict_requests_per_minute: 120,
+          local_strict_requests_per_minute: 30,
+          local_upload_requests_per_minute: 15,
+          emergency_strict_requests_per_minute: 10,
+          emergency_upload_requests_per_minute: 5,
+        },
+        policy_version: 7,
+        fingerprint: "protection-current",
+        edge_observed_policy_version: 7,
+        edge_readback: "observed",
+        enforcement_active: true,
+      },
       "/api/v1/traffic/series": {
         items: [
           {
@@ -382,6 +442,18 @@ test("renders typed standalone UFW controls without exposing raw commands", asyn
   await expect(page.getByLabel("Source IP/CIDR (선택)")).toBeVisible();
   await expect(page.getByText("foreign rules preserved 8")).toBeVisible();
   await expect(page.getByText(/ufw allow|sudo|shell/i)).toHaveCount(0);
+});
+
+test("plans and atomically applies typed protection limits", async ({ page }) => {
+  await page.goto("/protection");
+  await expect(page.getByRole("heading", { name: "보호 정책" })).toBeVisible();
+  await expect(page.getByText("Edge 반영 확인", { exact: true })).toBeVisible();
+  await page.getByLabel("LOCAL strict").fill("25");
+  await page.getByRole("button", { name: "변경 계획 만들기" }).click();
+  const plan = page.getByRole("region", { name: "보호 정책 변경 계획" });
+  await expect(plan).toContainText("30 → 25 rpm");
+  await plan.getByRole("button", { name: "확인 후 적용" }).click();
+  await expect(page.getByText(/policy v8 원자 적용을 완료했습니다/)).toBeVisible();
 });
 
 test("renders JW-agent delegated firewall as read-only", async ({ page }) => {

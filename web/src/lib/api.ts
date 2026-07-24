@@ -9,6 +9,10 @@ import type {
   FirewallStatus,
   ListResponse,
   PendingFirewallPlan,
+  ProtectionApplyResult,
+  ProtectionPlan,
+  ProtectionSettings,
+  ProtectionSettingsStatus,
   ResourcesResponse,
   RouteRow,
   SeriesPoint,
@@ -28,17 +32,23 @@ export interface AuthStatus {
   break_glass_available: boolean;
 }
 
-async function authenticatedJson<T>(path: string, body: unknown): Promise<T> {
+async function authenticatedJson<T>(
+  path: string,
+  body: unknown,
+  idempotencyKey?: string,
+): Promise<T> {
   if (!csrfToken) {
     throw new ApiError("운영 session 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
   }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-CSRF-Token": csrfToken,
+  };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(path, {
     method: "POST",
     credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRF-Token": csrfToken,
-    },
+    headers,
     body: JSON.stringify(body),
   });
   try {
@@ -284,6 +294,22 @@ export function applyFirewallPlan(operationId: string): Promise<FirewallApplyRes
   });
 }
 
+export function requestProtectionPlan(settings: ProtectionSettings): Promise<ProtectionPlan> {
+  return authenticatedJson<ProtectionPlan>("/api/v1/settings/protection/plan", { settings });
+}
+
+export function applyProtectionPlan(plan: ProtectionPlan): Promise<ProtectionApplyResult> {
+  return authenticatedJson<ProtectionApplyResult>(
+    "/api/v1/settings/protection/apply",
+    {
+      settings: plan.settings,
+      current_fingerprint: plan.current_fingerprint,
+      plan_hash: plan.plan_hash,
+    },
+    crypto.randomUUID(),
+  );
+}
+
 export const api = {
   status: () => getJson<StatusResponse>("/api/v1/status"),
   summary: () => getJson<TrafficSummary>("/api/v1/traffic/summary"),
@@ -313,5 +339,9 @@ export const api = {
   firewall: () => getJson<FirewallStatus>("/api/v1/firewall"),
   firewallPlan: requestFirewallPlan,
   firewallApply: applyFirewallPlan,
+  protection: () =>
+    getJson<ProtectionSettingsStatus>("/api/v1/settings/protection"),
+  protectionPlan: requestProtectionPlan,
+  protectionApply: applyProtectionPlan,
   tlsAssistedPlan: requestTlsAssistedPlan,
 };

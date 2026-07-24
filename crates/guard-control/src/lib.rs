@@ -9,6 +9,7 @@ mod notification;
 mod pam_auth;
 mod pam_mfa;
 mod privileged;
+mod protection;
 mod provider;
 mod runtime;
 mod storage;

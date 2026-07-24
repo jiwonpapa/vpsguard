@@ -10,6 +10,8 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::state::GuardMode;
 
+const MAX_PROTECTION_REQUESTS_PER_MINUTE: u32 = 6_000;
+
 /// route 단위 실행 규칙입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +44,142 @@ pub struct StaticLimits {
     pub max_body_bytes: u64,
     /// limiter cardinality 상한입니다.
     pub max_tracked_clients: usize,
+}
+
+/// 재시작 없이 hot policy로 조정하는 단계별 경로 제한입니다.
+///
+/// 수치가 작을수록 강한 제한입니다. 비상 단계가 로컬 단계보다 느슨해지거나 upload
+/// 경로가 같은 단계의 strict 경로보다 느슨해지는 설정은 거부합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtectionSettings {
+    /// WATCH·RECOVERING의 strict 경로 분당 요청 한도입니다.
+    pub watch_strict_requests_per_minute: u32,
+    /// LOCAL_GUARD의 strict 경로 분당 요청 한도입니다.
+    pub local_strict_requests_per_minute: u32,
+    /// LOCAL_GUARD의 upload 경로 분당 요청 한도입니다.
+    pub local_upload_requests_per_minute: u32,
+    /// EMERGENCY_PROXY·RECOVERY_READY의 strict 경로 분당 요청 한도입니다.
+    pub emergency_strict_requests_per_minute: u32,
+    /// EMERGENCY_PROXY·RECOVERY_READY의 upload 경로 분당 요청 한도입니다.
+    pub emergency_upload_requests_per_minute: u32,
+}
+
+impl Default for ProtectionSettings {
+    fn default() -> Self {
+        Self {
+            watch_strict_requests_per_minute: 120,
+            local_strict_requests_per_minute: 30,
+            local_upload_requests_per_minute: 15,
+            emergency_strict_requests_per_minute: 10,
+            emergency_upload_requests_per_minute: 5,
+        }
+    }
+}
+
+/// 관리자 보호 제한값 검증 실패입니다.
+#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
+pub enum ProtectionSettingsError {
+    /// 분당 요청 한도가 지원 범위를 벗어났습니다.
+    #[error("보호 제한값은 1..={MAX_PROTECTION_REQUESTS_PER_MINUTE} 범위여야 합니다: {0}")]
+    OutOfRange(&'static str),
+    /// 더 강한 단계 또는 upload 경로가 앞 단계보다 느슨합니다.
+    #[error("보호 단계별 제한 강도가 올바르지 않습니다: {0}")]
+    StageOrder(&'static str),
+}
+
+impl ProtectionSettings {
+    /// 각 값의 범위와 단계별 단조 강화 관계를 검증합니다.
+    ///
+    /// # Errors
+    ///
+    /// 범위를 벗어나거나 비상·upload 제한이 앞 단계보다 느슨하면 오류를 반환합니다.
+    pub fn validate(self) -> Result<(), ProtectionSettingsError> {
+        for (name, value) in [
+            (
+                "watch_strict_requests_per_minute",
+                self.watch_strict_requests_per_minute,
+            ),
+            (
+                "local_strict_requests_per_minute",
+                self.local_strict_requests_per_minute,
+            ),
+            (
+                "local_upload_requests_per_minute",
+                self.local_upload_requests_per_minute,
+            ),
+            (
+                "emergency_strict_requests_per_minute",
+                self.emergency_strict_requests_per_minute,
+            ),
+            (
+                "emergency_upload_requests_per_minute",
+                self.emergency_upload_requests_per_minute,
+            ),
+        ] {
+            if !(1..=MAX_PROTECTION_REQUESTS_PER_MINUTE).contains(&value) {
+                return Err(ProtectionSettingsError::OutOfRange(name));
+            }
+        }
+        if self.local_strict_requests_per_minute > self.watch_strict_requests_per_minute {
+            return Err(ProtectionSettingsError::StageOrder(
+                "local_strict_requests_per_minute",
+            ));
+        }
+        if self.emergency_strict_requests_per_minute > self.local_strict_requests_per_minute {
+            return Err(ProtectionSettingsError::StageOrder(
+                "emergency_strict_requests_per_minute",
+            ));
+        }
+        if self.local_upload_requests_per_minute > self.local_strict_requests_per_minute {
+            return Err(ProtectionSettingsError::StageOrder(
+                "local_upload_requests_per_minute",
+            ));
+        }
+        if self.emergency_upload_requests_per_minute > self.local_upload_requests_per_minute {
+            return Err(ProtectionSettingsError::StageOrder(
+                "emergency_upload_requests_per_minute",
+            ));
+        }
+        if self.emergency_upload_requests_per_minute > self.emergency_strict_requests_per_minute {
+            return Err(ProtectionSettingsError::StageOrder(
+                "emergency_upload_requests_per_minute",
+            ));
+        }
+        Ok(())
+    }
+
+    /// 현재 방어 mode에 적용할 bounded route 규칙을 생성합니다.
+    #[must_use]
+    pub fn route_rules(self, mode: GuardMode) -> Vec<RouteRule> {
+        match mode {
+            GuardMode::Normal | GuardMode::ManualHold => Vec::new(),
+            GuardMode::Watch | GuardMode::Recovering => vec![RouteRule {
+                route_class: "strict".to_owned(),
+                requests_per_minute: self.watch_strict_requests_per_minute,
+            }],
+            GuardMode::LocalGuard => vec![
+                RouteRule {
+                    route_class: "strict".to_owned(),
+                    requests_per_minute: self.local_strict_requests_per_minute,
+                },
+                RouteRule {
+                    route_class: "upload".to_owned(),
+                    requests_per_minute: self.local_upload_requests_per_minute,
+                },
+            ],
+            GuardMode::EmergencyProxy | GuardMode::RecoveryReady => vec![
+                RouteRule {
+                    route_class: "strict".to_owned(),
+                    requests_per_minute: self.emergency_strict_requests_per_minute,
+                },
+                RouteRule {
+                    route_class: "upload".to_owned(),
+                    requests_per_minute: self.emergency_upload_requests_per_minute,
+                },
+            ],
+        }
+    }
 }
 
 /// edge에 원자 적용되는 정책 snapshot입니다.
@@ -89,6 +227,9 @@ pub enum PolicyError {
     /// 안전 한도가 0입니다.
     #[error("정책 안전 한도는 0일 수 없습니다: {0}")]
     ZeroLimit(&'static str),
+    /// 관리자 보호 제한이 범위 또는 단계 관계를 위반했습니다.
+    #[error(transparent)]
+    ProtectionSettings(#[from] ProtectionSettingsError),
 }
 
 impl PolicySnapshot {

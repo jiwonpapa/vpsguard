@@ -12,6 +12,7 @@ import {
   Menu,
   Moon,
   Route,
+  SlidersHorizontal,
   ShieldCheck,
   ShieldEllipsis,
   ShieldX,
@@ -42,6 +43,7 @@ const navigation = [
     items: [
       ["/incidents", "사건", BookOpenCheck],
       ["/resources", "자원", Cpu],
+      ["/protection", "보호 정책", SlidersHorizontal],
       ["/firewall", "방화벽", ShieldEllipsis],
     ],
   },
