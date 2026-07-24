@@ -13,7 +13,7 @@ last_reviewed: 2026-07-23
 
 현재 상태는 **pre-MVP 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF와 실제 2GB 실행 증거가 있습니다. PAM+TOTP는 자동 생성 test seed 증거를 폐기하고 실제 운영자 QR 등록 재검증을 기다립니다. Cloudflare test zone, 공식 crawler source, authenticated upload WAF 오탐과 multi-architecture release 인증도 남았습니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 122개 중 `PLANNED` 9개, `CODE_ONLY` 31개, `AUTO_PASS` 68개, `VPS_PASS` 14개입니다. 즉 113개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 82개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 122개 중 `PLANNED` 9개, `CODE_ONLY` 29개, `AUTO_PASS` 70개, `VPS_PASS` 14개입니다. 즉 113개는 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 84개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -42,7 +42,7 @@ last_reviewed: 2026-07-23
 | `TLS-004` 자동 검증 | 명시적 IP·port에 exact SNI handshake 후 파일과 실제 leaf SHA-256 비교, mismatch fail-closed Certbot hook | 일치·불일치 local TLS fixture와 CLI·packaging 계약; 실제 renewal 직후 증거는 미수집 |
 | `UI-001`~`UI-004`, `UI-007`, `UI-009`, `UI-011`, `UI-013`, `UI-014` | 별도 HTTPS 관리 Host→loopback Control 분리, CSR SPA, 인증된 SSE·조회, client 검색·필터·정렬·페이지, 운영 명령 확인, light/dark, stale/error | local TLS integration·Bun·Playwright·control tests |
 | `UI-016`, `UI-017` | trusted Apache TLS terminator의 직접 관리자와 standalone/delegated 방화벽 SPA | 실제 `:7443` PAM session·Control 비공개·Playwright typed form/read-only delegation |
-| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | 실제 script와 Rust snapshot CLI를 결합한 update 성공·health 실패 exact rollback·owned-only uninstall 자동 fixture; 실제 systemd update/uninstall·다중 architecture 실증은 미완료 |
+| `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | update 성공·health 실패 exact rollback·owned-only uninstall 자동 fixture와 x86_64/aarch64 QEMU bundle 실행 gate; 실제 systemd update/uninstall과 GitHub release workflow 증거는 미완료 |
 | `OPS-009` | Rust `DeploymentRestoreDriver` 기반 first install·shadow 배포 전 checksum snapshot, legacy v1 호환, stdin root-only token 전달, 실패·수동 원상복귀와 protected directory identity·listener 경계 read-back | Rust fixture exact restore·corrupt snapshot·partial mutation 자동 rollback과 [`g7devops` 실패 자동 복구·수동 restore·재설치 운영 증거](evidence/g7devops-shadow-roundtrip-20260715.md); 사용자 site tree는 scan·복구하지 않음 |
 | `OPS-010` | 단일 OS operation lock, plan hash, typed 단계 ledger·원자 rollback checkpoint 재개, deployment·direct ingress·edge/bypass 실제 driver, 5초 public 순단·60초 apply/update·30초 restore·10초 rollback 예산, 실패 자동 rollback | Rust engine·driver fault·process reconstruction·staged exact-file rollback tests, site tree 거부와 빠른 restore fixture; 격리 Ubuntu VM 20회 100ms probe timeline은 미수집 |
 | 회귀 차단 코드 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 merge gate로 연결 | GitHub branch protection 적용 전에는 강제되지 않음 |

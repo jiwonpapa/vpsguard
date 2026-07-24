@@ -3,12 +3,22 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::Parser;
 use guard_core::correlation::LOG_SCHEMA_VERSION;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "vps-guard-privileged",
+    version,
+    about = "VPSGuard privileged helper"
+)]
+struct Cli {}
+
 #[tokio::main]
 async fn main() -> ExitCode {
+    Cli::parse();
     if let Err(initialization_error) = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .json()

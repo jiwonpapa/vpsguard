@@ -212,6 +212,16 @@ Rust deployment snapshot/restore CLI를 실행합니다. 정상 후보 활성화
 `VPS_GUARD_TEST_ROOT`는 `VPS_GUARD_FIXTURE_CONFIRM=isolated-root`와 `/`가 아닌 절대
 경로가 함께 없으면 거부되며 운영 설치 절차로 사용하지 않습니다.
 
+## Release artifact
+
+태그 또는 수동 `Release artifacts` workflow는 x86_64·aarch64 Linux bundle을 각각
+빌드하고 checksum, target ELF, CycloneDX SBOM을 검증합니다. 이어서 target architecture의
+Ubuntu 24.04 QEMU container에서 `vps-guard`, Control, privileged helper와 Edge의
+`--version`을 실제 실행하고, bundle의 example config를 packaged CLI로 검사합니다.
+이 실행 단계가 성공한 bundle만 provenance attestation과 artifact upload로 넘어갑니다.
+Cross image는 `Cross.toml`에서 host bindgen용 Clang과 `$CROSS_DEB_ARCH`의 PAM 개발
+library를 설치하므로 runner host package를 target link 성공으로 오인하지 않습니다.
+
 ## TLS 갱신
 
 `packaging/certbot/vps-guard-deploy-hook`를 Certbot deploy hook으로 설치합니다. hook은 certificate/key public key 일치, 24시간 이상 유효기간, VPSGuard config를 검사한 뒤 edge를 재시작하고 health를 read-back합니다. 이어서 `VPS_GUARD_TLS_SERVER_NAME`을 SNI로, `VPS_GUARD_TLS_ADDRESS`의 명시적 IP·port로 TLS handshake를 수행해 갱신 파일과 실제 listener leaf의 SHA-256이 정확히 같을 때만 성공합니다. DNS·CDN 경로와 origin listener 검증을 혼합하지 않습니다.

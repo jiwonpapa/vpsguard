@@ -62,6 +62,18 @@ vps-guard/
 
 OS 명령과 provider API를 `guard-core`에 넣지 않습니다. `guard-edge`는 웹 UI와 SQLite에 의존하지 않습니다.
 
+### 현재 배치: multi-architecture release 실행 검증
+
+- 요구사항: `OPS-007`, `NFR-008`
+- [x] CLI·Control·privileged helper·Edge의 공통 package version 실행 경로
+- [x] x86_64·aarch64 Linux checksum·ELF architecture 사전 검증
+- [x] Cross target image의 bindgen host 도구와 target architecture PAM library 명시
+- [x] QEMU 등록 뒤 target별 Ubuntu container에서 bundle의 네 binary 직접 실행
+- [x] bundle에 포함된 실제 example config를 packaged CLI로 검증
+- [x] 실행 smoke 성공 뒤에만 provenance attestation과 artifact upload
+- [x] QEMU action commit 고정과 workflow 순서 회귀
+- [ ] GitHub workflow_dispatch에서 두 matrix job의 artifact·SBOM·attestation 증거 수집
+
 ### 최근 완료 배치: update 자동 원복·owned-only uninstall 회귀
 
 - 요구사항: `OPS-005`, `OPS-006`, `OPS-009`, `NFR-009`

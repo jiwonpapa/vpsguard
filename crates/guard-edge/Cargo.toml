@@ -17,6 +17,7 @@ arc-swap.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
+clap.workspace = true
 guard-core = { path = "../guard-core", version = "0.1.0" }
 guard-profiles = { path = "../guard-profiles", version = "0.1.0" }
 guard-system = { path = "../guard-system", version = "0.1.0" }
