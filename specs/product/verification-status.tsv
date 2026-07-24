@@ -62,7 +62,7 @@ UI-001|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 UI-002|AUTO_PASS|web/src/pages/overview.tsx|web/tests/console.e2e.ts|-
 UI-003|CODE_ONLY|web/src/pages/traffic.tsx|-|-
 UI-004|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
-UI-005|PLANNED|-|-|-
+UI-005|AUTO_PASS|web/src/pages/clients.tsx|web/tests/console.e2e.ts|-
 UI-006|PLANNED|-|-|-
 UI-007|CODE_ONLY|web/src/pages/incidents.tsx|-|-
 UI-008|PLANNED|-|-|-

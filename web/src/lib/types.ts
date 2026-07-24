@@ -188,6 +188,34 @@ export interface ClientRow {
   last_seen_unix_ms: number;
 }
 
+export interface ClientDetailRow {
+  client_ip: string;
+  requests: number;
+  errors: number;
+  throttled: number;
+  challenged: number;
+  denied: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
+  max_route_cost: number;
+  last_decision: string;
+  last_seen_unix_ms: number;
+  routes: ClientRouteRow[];
+}
+
+export interface ClientRouteRow {
+  normalized_route: string;
+  route_class: string;
+  requests: number;
+  errors: number;
+  throttled: number;
+  challenged: number;
+  denied: number;
+  max_route_cost: number;
+  request_body_bytes: number;
+  response_body_bytes: number;
+}
+
 export interface RouteRow {
   normalized_route: string;
   route_class: string;

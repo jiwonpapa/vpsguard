@@ -861,7 +861,7 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
     let issued = issue_session(&state)?;
-    let authenticated = router(state)
+    let authenticated = router(Arc::clone(&state))
         .oneshot(
             Request::get("/api/v1/clients")
                 .header("host", LOOPBACK_HOST)
@@ -874,6 +874,33 @@ async fn client_ip_requires_authenticated_session() -> Result<(), Box<dyn std::e
         serde_json::from_slice::<serde_json::Value>(&authenticated_body)?["items"][0]["client_ip"],
         "203.0.113.8"
     );
+
+    let detail = router(Arc::clone(&state))
+        .oneshot(
+            Request::get("/api/v1/clients/203.0.113.8")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail_body = to_bytes(detail.into_body(), 8_192).await?;
+    let detail_json = serde_json::from_slice::<serde_json::Value>(&detail_body)?;
+    assert_eq!(detail_json["client_ip"], "203.0.113.8");
+    assert_eq!(detail_json["requests"], 1);
+    assert_eq!(detail_json["max_route_cost"], 1);
+    assert_eq!(detail_json["last_decision"], "allow");
+    assert_eq!(detail_json["routes"][0]["normalized_route"], "/health");
+
+    let invalid = router(state)
+        .oneshot(
+            Request::get("/api/v1/clients/not-an-ip")
+                .header("host", LOOPBACK_HOST)
+                .header("cookie", session_cookie(&issued))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
     Ok(())
 }
 

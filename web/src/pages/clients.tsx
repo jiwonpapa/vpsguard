@@ -2,11 +2,18 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { DataTable } from "../components/data-table";
-import { ConsoleSection } from "../components/console-section";
+import { ConsoleSection, MetricGrid, MetricItem } from "../components/console-section";
 import { ErrorState, LoadingState } from "../components/query-state";
 import { SectionHeading } from "../components/section-heading";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -23,6 +30,15 @@ export function ClientsPage() {
   const [filter, setFilter] = useState<ClientFilter>("all");
   const [sort, setSort] = useState<ClientSort>("requests");
   const [page, setPage] = useState(0);
+  const [selectedClient, setSelectedClient] = useState<string | null>(null);
+  const detailQuery = useQuery({
+    queryKey: ["client-detail", selectedClient],
+    queryFn: () => {
+      if (!selectedClient) throw new Error("client is not selected");
+      return api.clientDetail(selectedClient);
+    },
+    enabled: selectedClient !== null,
+  });
   const clients = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return [...(query.data ?? [])]
@@ -77,7 +93,18 @@ export function ClientsPage() {
           <DataTable headers={["Client IP", "요청", "전송 body", "제한", "거부", "마지막 관측"]} empty={visible.length === 0}>
             {visible.map((client, index) => (
               <tr key={`${client.client_ip}:${currentPage * PAGE_SIZE + index}`} className="transition-colors hover:bg-muted/35">
-                <td className="px-4 py-3 font-mono text-foreground">{client.client_ip}</td>
+                <td className="px-4 py-3">
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 font-mono"
+                    aria-label={`${client.client_ip} 상세 보기`}
+                    aria-haspopup="dialog"
+                    onClick={() => setSelectedClient(client.client_ip)}
+                  >
+                    {client.client_ip}
+                  </Button>
+                </td>
                 <td className="px-4 py-3 font-mono">{client.requests.toLocaleString()}</td>
                 <td className="px-4 py-3 font-mono text-muted-foreground">{formatBytes(client.request_body_bytes + client.response_body_bytes)}</td>
                 <td className="px-4 py-3"><Badge variant={client.throttled ? "warning" : "neutral"}>{client.throttled}</Badge></td>
@@ -95,6 +122,80 @@ export function ClientsPage() {
           </div>
         </ConsoleSection>
       </div>
+      <ClientDetailDialog
+        clientIp={selectedClient}
+        detail={detailQuery.data}
+        pending={detailQuery.isPending && selectedClient !== null}
+        error={detailQuery.error}
+        onOpenChange={(open) => {
+          if (!open) setSelectedClient(null);
+        }}
+      />
     </>
+  );
+}
+
+function ClientDetailDialog({
+  clientIp,
+  detail,
+  pending,
+  error,
+  onOpenChange,
+}: {
+  clientIp: string | null;
+  detail: Awaited<ReturnType<typeof api.clientDetail>> | undefined;
+  pending: boolean;
+  error: Error | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={clientIp !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>클라이언트 상세</DialogTitle>
+          <DialogDescription>
+            {clientIp ?? "선택 없음"} · 상세 retention 안의 정규화된 경로와 실제 Edge 조치만 표시합니다.
+          </DialogDescription>
+        </DialogHeader>
+        {pending ? <LoadingState /> : null}
+        {error ? <ErrorState message="클라이언트 상세 기록을 읽지 못했습니다. 상세 보존기간과 저장 상태를 확인하십시오." /> : null}
+        {detail ? (
+          <div className="space-y-5">
+            <MetricGrid className="rounded-lg border">
+              <MetricItem label="요청" value={detail.requests.toLocaleString()} />
+              <MetricItem label="5xx 오류" value={detail.errors.toLocaleString()} emphasis={detail.errors > 0} />
+              <MetricItem label="경로 비용 점수" value={detail.max_route_cost.toLocaleString()} />
+              <MetricItem label="마지막 조치" value={detail.last_decision} emphasis={detail.last_decision !== "allow"} />
+            </MetricGrid>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant={detail.throttled > 0 ? "warning" : "neutral"}>제한 {detail.throttled}</Badge>
+              <Badge variant={detail.challenged > 0 ? "warning" : "neutral"}>검증 {detail.challenged}</Badge>
+              <Badge variant={detail.denied > 0 ? "danger" : "neutral"}>거부 {detail.denied}</Badge>
+              <Badge variant="neutral">전송 {formatBytes(detail.request_body_bytes + detail.response_body_bytes)}</Badge>
+              <Badge variant="neutral">최근 {formatTime(detail.last_seen_unix_ms)}</Badge>
+            </div>
+            <div className="overflow-hidden rounded-lg border">
+              <DataTable headers={["정규화 경로", "등급", "요청", "5xx", "비용 점수", "실제 조치", "전송"]} empty={detail.routes.length === 0}>
+                {detail.routes.map((route) => (
+                  <tr key={`${route.route_class}:${route.normalized_route}`}>
+                    <td className="px-4 py-3 font-mono text-foreground">{route.normalized_route}</td>
+                    <td className="px-4 py-3"><Badge variant="neutral">{route.route_class}</Badge></td>
+                    <td className="px-4 py-3 font-mono">{route.requests.toLocaleString()}</td>
+                    <td className="px-4 py-3 font-mono">{route.errors.toLocaleString()}</td>
+                    <td className="px-4 py-3 font-mono">{route.max_route_cost.toLocaleString()}</td>
+                    <td className="px-4 py-3 font-mono text-muted-foreground">
+                      T {route.throttled} · C {route.challenged} · D {route.denied}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-muted-foreground">
+                      {formatBytes(route.request_body_bytes + route.response_body_bytes)}
+                    </td>
+                  </tr>
+                ))}
+              </DataTable>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }

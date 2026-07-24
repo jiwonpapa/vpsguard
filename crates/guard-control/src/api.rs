@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::Instant;
@@ -285,6 +286,7 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/traffic/summary", get(traffic_summary))
         .route("/api/v1/traffic/series", get(traffic_series))
         .route("/api/v1/clients", get(clients))
+        .route("/api/v1/clients/{client_ip}", get(client_detail))
         .route("/api/v1/routes", get(routes))
         .route("/api/v1/bots", get(bots))
         .route("/api/v1/incidents", get(incidents))
@@ -853,6 +855,45 @@ async fn traffic_series(
 async fn clients(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
     let result = app.storage.clients(bounded_limit(query.limit));
     storage_list::<ClientRow>(result)
+}
+
+async fn client_detail(
+    State(app): State<Arc<AppState>>,
+    Path(client_ip): Path<String>,
+) -> Response {
+    let Ok(client_ip) = client_ip.parse::<IpAddr>() else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "CLIENT_IP_INVALID",
+            "클라이언트 주소 형식이 올바르지 않습니다.",
+            "클라이언트 상세 데이터를 조회하지 않았습니다.",
+            "목록에서 보존 중인 IPv4 또는 IPv6 주소를 다시 선택하십시오.",
+        );
+    };
+    match app.storage.client_detail(&client_ip.to_string(), 32) {
+        Ok(Some(detail)) => Json(detail).into_response(),
+        Ok(None) => api_error(
+            StatusCode::NOT_FOUND,
+            "CLIENT_DETAIL_NOT_FOUND",
+            "보존 중인 클라이언트 상세 기록을 찾지 못했습니다.",
+            "집계 목록은 남아 있어도 상세 retention이 끝난 route·판정은 표시하지 않습니다.",
+            "최근 요청이 수집된 뒤 다시 조회하거나 상세 보존기간을 확인하십시오.",
+        ),
+        Err(error) => {
+            api_warn!(
+                error_code = "STORAGE_QUERY_FAILED",
+                error = %error,
+                "client detail query failed"
+            );
+            api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STORAGE_QUERY_FAILED",
+                "클라이언트 상세 데이터를 읽지 못했습니다.",
+                "방어 동작은 계속되지만 상세 화면 데이터가 지연됩니다.",
+                "SQLite 상태와 disk 여유 공간을 확인하십시오.",
+            )
+        }
+    }
 }
 
 async fn routes(State(app): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
@@ -1678,6 +1719,10 @@ fn api_error_cause(code: &str) -> &'static str {
         }
         "CORRELATION_ID_INVALID" => "식별자가 허용 길이 또는 문자 규칙을 위반했습니다.",
         "CORRELATION_NOT_FOUND" => "현재 detail·incident·audit 보존 계층에 일치값이 없습니다.",
+        "CLIENT_IP_INVALID" => "path 값이 IPv4 또는 IPv6 주소로 해석되지 않습니다.",
+        "CLIENT_DETAIL_NOT_FOUND" => {
+            "현재 detail retention 계층에 exact client 주소와 일치하는 요청이 없습니다."
+        }
         _ => "요청 처리 전제조건 또는 내부 작업이 안정적 오류 code와 함께 실패했습니다.",
     }
 }

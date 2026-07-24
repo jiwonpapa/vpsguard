@@ -48,6 +48,38 @@ pub(crate) struct ClientRow {
     pub(crate) last_seen_unix_ms: u64,
 }
 
+/// 상세 보존 구간의 client별 판정·비용·route drill-down입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ClientDetailRow {
+    pub(crate) client_ip: String,
+    pub(crate) requests: u64,
+    pub(crate) errors: u64,
+    pub(crate) throttled: u64,
+    pub(crate) challenged: u64,
+    pub(crate) denied: u64,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
+    pub(crate) max_route_cost: u8,
+    pub(crate) last_decision: String,
+    pub(crate) last_seen_unix_ms: u64,
+    pub(crate) routes: Vec<ClientRouteRow>,
+}
+
+/// client 상세에서 반환하는 bounded route aggregate입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ClientRouteRow {
+    pub(crate) normalized_route: String,
+    pub(crate) route_class: String,
+    pub(crate) requests: u64,
+    pub(crate) errors: u64,
+    pub(crate) throttled: u64,
+    pub(crate) challenged: u64,
+    pub(crate) denied: u64,
+    pub(crate) max_route_cost: u8,
+    pub(crate) request_body_bytes: u64,
+    pub(crate) response_body_bytes: u64,
+}
+
 /// route별 bounded aggregate row입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct RouteRow {
@@ -713,6 +745,104 @@ impl SqliteStore {
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// 상세 retention에 남은 exact client의 판정·비용과 bounded route 분해를 반환합니다.
+    pub(crate) fn client_detail(
+        &self,
+        client_ip: &str,
+        route_limit: usize,
+    ) -> Result<Option<ClientDetailRow>, StorageError> {
+        let connection = self.lock();
+        let summary = connection.query_row(
+            "SELECT COUNT(*),
+                        SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN decision = 'throttle' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN decision = 'challenge' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN decision = 'deny' THEN 1 ELSE 0 END),
+                        SUM(request_body_bytes), SUM(response_body_bytes),
+                        MAX(route_cost), MAX(occurred_at_ms)
+                 FROM traffic_samples WHERE client_ip = ?1",
+            [client_ip],
+            |row| {
+                let requests = from_i64(row.get(0)?);
+                if requests == 0 {
+                    return Ok(None);
+                }
+                Ok(Some((
+                    requests,
+                    from_i64(row.get(1)?),
+                    from_i64(row.get(2)?),
+                    from_i64(row.get(3)?),
+                    from_i64(row.get(4)?),
+                    from_i64(row.get(5)?),
+                    from_i64(row.get(6)?),
+                    from_i64(row.get(7)?).try_into().unwrap_or(u8::MAX),
+                    from_i64(row.get(8)?),
+                )))
+            },
+        )?;
+        let Some((
+            requests,
+            errors,
+            throttled,
+            challenged,
+            denied,
+            request_body_bytes,
+            response_body_bytes,
+            max_route_cost,
+            last_seen_unix_ms,
+        )) = summary
+        else {
+            return Ok(None);
+        };
+        let last_decision = connection.query_row(
+            "SELECT decision FROM traffic_samples
+             WHERE client_ip = ?1 ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
+            [client_ip],
+            |row| row.get(0),
+        )?;
+        let mut statement = connection.prepare(
+            "SELECT normalized_route, route_class, COUNT(*),
+                    SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN decision = 'throttle' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN decision = 'challenge' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN decision = 'deny' THEN 1 ELSE 0 END),
+                    MAX(route_cost), SUM(request_body_bytes), SUM(response_body_bytes)
+             FROM traffic_samples WHERE client_ip = ?1
+             GROUP BY normalized_route, route_class
+             ORDER BY COUNT(*) DESC, normalized_route ASC LIMIT ?2",
+        )?;
+        let routes = statement
+            .query_map(params![client_ip, to_i64(route_limit as u64)], |row| {
+                Ok(ClientRouteRow {
+                    normalized_route: row.get(0)?,
+                    route_class: row.get(1)?,
+                    requests: from_i64(row.get(2)?),
+                    errors: from_i64(row.get(3)?),
+                    throttled: from_i64(row.get(4)?),
+                    challenged: from_i64(row.get(5)?),
+                    denied: from_i64(row.get(6)?),
+                    max_route_cost: from_i64(row.get(7)?).try_into().unwrap_or(u8::MAX),
+                    request_body_bytes: from_i64(row.get(8)?),
+                    response_body_bytes: from_i64(row.get(9)?),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(ClientDetailRow {
+            client_ip: client_ip.to_owned(),
+            requests,
+            errors,
+            throttled,
+            challenged,
+            denied,
+            request_body_bytes,
+            response_body_bytes,
+            max_route_cost,
+            last_decision,
+            last_seen_unix_ms,
+            routes,
+        }))
     }
 
     /// Edge telemetry에서 마지막으로 관측한 policy version입니다.
@@ -1931,6 +2061,48 @@ mod tests {
         let events = store.events_for_correlation("operation-42", 10)?;
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_id, "provider-failed-random");
+        Ok(())
+    }
+
+    #[test]
+    fn client_detail_reports_bounded_routes_scores_errors_and_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = SqliteStore::in_memory()?;
+        let client = Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 8)));
+        let mut throttled = telemetry(1_000, client, "throttle");
+        throttled.status = 429;
+        throttled.request_body_bytes = 10;
+        throttled.response_body_bytes = 20;
+        let mut denied = telemetry(2_000, client, "deny");
+        denied.normalized_route = "/api/login".to_owned();
+        denied.route_cost = 9;
+        denied.status = 503;
+        denied.request_body_bytes = 30;
+        denied.response_body_bytes = 40;
+        let other = telemetry(
+            3_000,
+            Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9))),
+            "allow",
+        );
+        store.record_traffic_batch(&[throttled, denied, other])?;
+
+        let detail = store
+            .client_detail("203.0.113.8", 8)?
+            .ok_or("client detail missing")?;
+        assert_eq!(detail.requests, 2);
+        assert_eq!(detail.errors, 1);
+        assert_eq!(detail.throttled, 1);
+        assert_eq!(detail.denied, 1);
+        assert_eq!(detail.max_route_cost, 9);
+        assert_eq!(detail.last_decision, "deny");
+        assert_eq!(detail.last_seen_unix_ms, 2_000);
+        assert_eq!(detail.request_body_bytes, 40);
+        assert_eq!(detail.response_body_bytes, 60);
+        assert_eq!(detail.routes.len(), 2);
+        assert_eq!(detail.routes[0].normalized_route, "/api/login");
+        assert_eq!(detail.routes[0].errors, 1);
+        assert_eq!(detail.routes[0].denied, 1);
+        assert!(store.client_detail("192.0.2.44", 8)?.is_none());
         Ok(())
     }
 

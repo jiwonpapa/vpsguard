@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// UI-002, UI-004: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
+// UI-002, UI-004, UI-005: 브라우저 전용 시나리오는 Bun unit discovery와 분리합니다.
 
 const status = {
   schema_version: 1,
@@ -268,6 +268,31 @@ async function mockApi(page: Page) {
         },
       },
       "/api/v1/clients": { items: [{ client_ip: "203.0.113.8", requests: 77, throttled: 2, denied: 0, request_body_bytes: 2048, response_body_bytes: 16384, last_seen_unix_ms: 1784000000000 }] },
+      "/api/v1/clients/203.0.113.8": {
+        client_ip: "203.0.113.8",
+        requests: 77,
+        errors: 3,
+        throttled: 2,
+        challenged: 1,
+        denied: 0,
+        request_body_bytes: 2048,
+        response_body_bytes: 16384,
+        max_route_cost: 9,
+        last_decision: "throttle",
+        last_seen_unix_ms: 1784000000000,
+        routes: [{
+          normalized_route: "/api/login",
+          route_class: "strict",
+          requests: 21,
+          errors: 3,
+          throttled: 2,
+          challenged: 1,
+          denied: 0,
+          max_route_cost: 9,
+          request_body_bytes: 1024,
+          response_body_bytes: 4096,
+        }],
+      },
       "/api/v1/routes": { items: [] },
       "/api/v1/bots": { items: [{
         bot_class: "spoofed_crawler",
@@ -359,6 +384,13 @@ test("renders protection posture and client drill-down", async ({ page }) => {
     await page.getByRole("link", { name: "클라이언트" }).click();
   }
   await expect(page.getByText("203.0.113.8")).toBeVisible();
+  await page.getByRole("button", { name: "203.0.113.8 상세 보기" }).click();
+  const detail = page.getByRole("dialog", { name: "클라이언트 상세" });
+  await expect(detail).toContainText("경로 비용 점수");
+  await expect(detail).toContainText("throttle");
+  await expect(detail).toContainText("/api/login");
+  await expect(detail).toContainText("5xx 오류");
+  await detail.getByRole("button", { name: "닫기" }).click();
   await page.getByLabel("Client 검색").fill("198.51");
   await expect(page.getByText("아직 수집된 항목이 없습니다.")).toBeVisible();
   await page.getByLabel("Client 검색").fill("203.0");
