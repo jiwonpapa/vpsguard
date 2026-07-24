@@ -33,10 +33,10 @@ last_reviewed: 2026-07-24
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
 | `EDGE-001`, `EDGE-002` | `tests/e2e/tls_listeners.rs` | [`g7devops` 80 redirect, 443 SNI smoke](evidence/g7devops-direct-tls-20260715.md) |
-| `EDGE-003`, `EDGE-005` | `tests/e2e/proxy_protocols.rs` | [`g7devops` HTTP/1.1, HTTP/2, WebSocket report](evidence/g7devops-direct-tls-20260715.md) |
+| `EDGE-003`, `EDGE-005` | `tools/vpsguard_harness/edge_probe.py`, `tools/tests/test_edge_probe.py`, `scripts/integration-gate.sh` | byte-exact 2MiB·HTTP/1.1 chunked loopback streaming과 [`g7devops` HTTP/1.1, HTTP/2, WebSocket report](evidence/g7devops-direct-tls-20260715.md) |
 | `EDGE-004` | `crates/guard-edge/tests/forwarded_headers.rs` | spoofed header access log |
-| `EDGE-006`, `EDGE-008` | `crates/guard-edge/tests/request_policy.rs` | 일반·upload·search k6 결과 |
-| `EDGE-007` | `tests/fault/control_down.rs` | control stop 중 HTTP success count |
+| `EDGE-006`, `EDGE-008` | `tools/vpsguard_harness/edge_probe.py`, `tools/tests/test_edge_probe.py`, `scripts/integration-gate.sh` | 일반 1KiB·upload 4KiB body 경계와 250ms·1초 upstream timeout 분리, profile auth 보호 결과 |
+| `EDGE-007` | `scripts/integration-gate.sh` | Control 종료 뒤 앱 proxy 200·ready 200, 관리 upstream만 502 |
 | `EDGE-009` | `crates/guard-core/tests/policy_snapshot.rs` | corrupt policy rejection event |
 | `EDGE-010` | `tests/integration/health_contract.rs` | origin down 상태 live/ready 비교 |
 | `EDGE-011` | `crates/guard-edge/src/telemetry/tests.rs`, `scripts/integration-gate.sh` | 배포 로그 secret scan |
@@ -82,9 +82,9 @@ last_reviewed: 2026-07-24
 
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
-| `ACT-001`, `ACT-002` | `crates/guard-edge/tests/rate_limit.rs` | 429·Retry-After curl report |
+| `ACT-001`, `ACT-002` | `crates/guard-edge/src/rate_limit/tests.rs`, `crates/guard-edge/src/response/tests.rs`, `tools/vpsguard_harness/edge_probe.py`, `scripts/integration-gate.sh` | 공통·인증 route의 429·`Retry-After: 60` loopback report |
 | `ACT-003` | `crates/guard-edge/tests/clearance.rs` | browser challenge E2E |
-| `ACT-004` | `tests/e2e/degraded_features.rs` | search 보호 중 정적·상세 정상 |
+| `ACT-004` | `crates/guard-edge/src/runtime/tests.rs`, `scripts/integration-gate.sh` | G7 인증 route 제한 중 search·일반 정상, upload body·timeout 별도 보호 |
 | `ACT-005` | `crates/guard-core/tests/temporary_block.rs` | nftables set·TTL read-back |
 | `ACT-006`, `ACT-007` | `crates/guard-provider/src/tests.rs`, `crates/guard-provider/src/cloudflare.rs`, `crates/guard-cli/src/provider.rs` | 변경 능력이 없는 exact-hostname·금지목록·DNS-only·TTL preflight 통과 후 실제 test zone 전환·복구 artifact |
 | `ACT-008` | `crates/guard-core/src/state/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 실제 test zone에서 `RECOVERY_READY` 유지·관리자 승인·DNS only read-back artifact |

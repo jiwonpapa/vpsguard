@@ -1,8 +1,9 @@
-"""Loopback EDGE-013/EDGE-015 concurrency and common-rate probes."""
+"""Loopback streaming, route-budget, concurrency and common-rate probes."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.client
 import json
 import ssl
@@ -11,6 +12,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
+CHUNKED_RESPONSE_BODY = b"alpha\nbeta\ngamma\n"
+LARGE_RESPONSE_BYTES = 2 * 1024 * 1024
+LARGE_RESPONSE_PATTERN = b"vpsguard-stream\n"
+LARGE_RESPONSE_SHA256 = hashlib.sha256(
+    LARGE_RESPONSE_PATTERN * (LARGE_RESPONSE_BYTES // len(LARGE_RESPONSE_PATTERN))
+).hexdigest()
+MAX_PROBE_RESPONSE_BYTES = LARGE_RESPONSE_BYTES + 1024
+
 
 @dataclass(frozen=True)
 class ProbeResponse:
@@ -18,6 +27,56 @@ class ProbeResponse:
 
     status: int
     retry_after: str | None
+    body_length: int = 0
+    body_sha256: str = ""
+
+    @classmethod
+    def from_body(
+        cls,
+        status: int,
+        retry_after: str | None,
+        body: bytes,
+    ) -> ProbeResponse:
+        """Build bounded body metadata without retaining response content."""
+
+        return cls(
+            status=status,
+            retry_after=retry_after,
+            body_length=len(body),
+            body_sha256=hashlib.sha256(body).hexdigest(),
+        )
+
+
+def assert_streaming_responses(
+    large: ProbeResponse,
+    chunked: ProbeResponse,
+) -> None:
+    """Require byte-exact large and chunked responses through Edge."""
+
+    assert (
+        large.status == 200
+        and large.body_length == LARGE_RESPONSE_BYTES
+        and large.body_sha256 == LARGE_RESPONSE_SHA256
+    ), "large response was truncated or changed"
+    assert (
+        chunked.status == 200
+        and chunked.body_length == len(CHUNKED_RESPONSE_BODY)
+        and chunked.body_sha256 == hashlib.sha256(CHUNKED_RESPONSE_BODY).hexdigest()
+    ), "chunked response was truncated or changed"
+
+
+def assert_body_policy(regular: ProbeResponse, upload: ProbeResponse) -> None:
+    """Require a larger upload allowance without weakening regular routes."""
+
+    assert regular.status == 413, "regular route did not enforce its body limit"
+    assert upload.status == 200, "upload route did not preserve its larger body limit"
+
+
+def assert_timeout_policy(regular: ProbeResponse, upload: ProbeResponse) -> None:
+    """Require the upload timeout window to exceed the regular window."""
+
+    assert regular.status == 502, "regular route did not enforce its upstream timeout"
+    assert upload.status == 200, "upload route did not preserve its longer timeout"
 
 
 def assert_capacity_responses(responses: list[ProbeResponse]) -> None:
@@ -49,6 +108,7 @@ def probe_common_rate_limit(
     for attempt in range(1, max_attempts + 1):
         response = request("/common-rate-limit")
         if response.status == 429:
+            assert response.retry_after == "60", "common 429 omitted Retry-After: 60"
             return attempt
         assert response.status == 200, (
             f"common rate probe returned unexpected status {response.status}"
@@ -67,8 +127,14 @@ class HttpsProbeClient:
         self.context.check_hostname = False
         self.context.verify_mode = ssl.CERT_NONE
 
-    def request(self, path: str) -> ProbeResponse:
-        """Return only status and Retry-After without retaining a body."""
+    def request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: bytes | None = None,
+    ) -> ProbeResponse:
+        """Return status and bounded body metadata without retaining content."""
 
         connection = http.client.HTTPSConnection(
             self.address,
@@ -78,24 +144,38 @@ class HttpsProbeClient:
         )
         try:
             connection.request(
-                "GET",
+                method,
                 path,
+                body=body,
                 headers={"Host": self.host, "Connection": "close"},
             )
             response = connection.getresponse()
-            result = ProbeResponse(
-                status=response.status,
-                retry_after=response.getheader("Retry-After"),
+            payload = response.read(MAX_PROBE_RESPONSE_BYTES + 1)
+            assert len(payload) <= MAX_PROBE_RESPONSE_BYTES, (
+                "edge probe response exceeded the bounded capture limit"
             )
-            response.read()
-            return result
+            return ProbeResponse.from_body(
+                response.status,
+                response.getheader("Retry-After"),
+                payload,
+            )
         finally:
             connection.close()
 
 
 def run_probe(client: HttpsProbeClient, evidence: Path) -> None:
-    """Run concurrent capacity first, then exhaust the common request limit."""
+    """Run byte integrity, route budgets, capacity and common-rate probes."""
 
+    large = client.request("/__vpsguard_test__/large")
+    chunked = client.request("/__vpsguard_test__/chunked")
+    assert_streaming_responses(large, chunked)
+    request_body = b"x" * 2048
+    regular_body = client.request("/regular", method="POST", body=request_body)
+    upload_body = client.request("/upload", method="POST", body=request_body)
+    assert_body_policy(regular_body, upload_body)
+    regular_timeout = client.request("/__vpsguard_test__/timeout")
+    upload_timeout = client.request("/upload/__vpsguard_test__/timeout")
+    assert_timeout_policy(regular_timeout, upload_timeout)
     paths = [f"/__vpsguard_test__/slow?id={index}" for index in range(1, 7)]
     with ThreadPoolExecutor(max_workers=len(paths)) as executor:
         capacity = list(executor.map(client.request, paths))
@@ -104,6 +184,18 @@ def run_probe(client: HttpsProbeClient, evidence: Path) -> None:
     evidence.write_text(
         json.dumps(
             {
+                "streaming": {
+                    "large": asdict(large),
+                    "chunked": asdict(chunked),
+                },
+                "route_body_policy": {
+                    "regular": asdict(regular_body),
+                    "upload": asdict(upload_body),
+                },
+                "route_timeout_policy": {
+                    "regular": asdict(regular_timeout),
+                    "upload": asdict(upload_timeout),
+                },
                 "capacity": [asdict(response) for response in capacity],
                 "common_rate_limit_attempt": rate_limit_attempt,
             },

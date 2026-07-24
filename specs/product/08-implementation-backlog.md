@@ -18,6 +18,17 @@ last_reviewed: 2026-07-24
 - 실제 public 80/443 전환은 shadow와 별도 TLS listener 검증 후 수행합니다.
 - 각 단계의 exit gate가 실패하면 다음 단계로 진행하지 않습니다.
 
+### 최근 완료 배치: 범용 데이터 플레인 자동 증명
+
+- 요구사항: `EDGE-003`, `EDGE-006`, `EDGE-007`, `ACT-002`, `ACT-004`
+- [x] 2MiB 응답의 byte length·SHA-256 exact streaming
+- [x] 실제 HTTP/1.1 chunked 응답의 byte length·SHA-256 exact 전달
+- [x] 일반 1KiB·upload 4KiB request body 경계의 413·200 분리
+- [x] 일반 250ms·upload 1초 upstream read timeout의 502·200 분리
+- [x] 공통·인증 route의 429와 `Retry-After` 계약
+- [x] Control 종료 뒤 앱 proxy·ready 유지와 관리 upstream 실패 격리
+- [x] 원문 request body를 evidence에 남기지 않고 상태·길이·digest만 보존
+
 ### 최근 완료 배치: 관리자 역할별 최소 권한
 
 - 요구사항: `UI-012`

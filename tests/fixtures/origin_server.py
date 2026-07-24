@@ -7,7 +7,11 @@ import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-SLOW_RESPONSE_SECONDS = 0.3
+SLOW_RESPONSE_SECONDS = 0.1
+TIMEOUT_RESPONSE_SECONDS = 0.5
+LARGE_RESPONSE_BYTES = 2 * 1024 * 1024
+LARGE_RESPONSE_PATTERN = b"vpsguard-stream\n"
+CHUNKED_RESPONSE_PARTS = (b"alpha\n", b"beta\n", b"gamma\n")
 
 
 class NoDelayThreadingHTTPServer(ThreadingHTTPServer):
@@ -28,6 +32,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         if self.path.startswith("/__vpsguard_test__/slow"):
             time.sleep(SLOW_RESPONSE_SECONDS)
+        if self.path.endswith("/__vpsguard_test__/timeout"):
+            time.sleep(TIMEOUT_RESPONSE_SECONDS)
+        if self.path == "/__vpsguard_test__/large":
+            self._send_large_response()
+            return
+        if self.path == "/__vpsguard_test__/chunked":
+            self._send_chunked_response()
+            return
         payload = json.dumps(
             {
                 "path": self.path,
@@ -42,6 +54,31 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def _send_large_response(self):
+        """Stream a deterministic two-MiB response without one large write."""
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(LARGE_RESPONSE_BYTES))
+        self.end_headers()
+        repeats = LARGE_RESPONSE_BYTES // len(LARGE_RESPONSE_PATTERN)
+        for offset in range(0, repeats, 1024):
+            count = min(1024, repeats - offset)
+            self.wfile.write(LARGE_RESPONSE_PATTERN * count)
+
+    def _send_chunked_response(self):
+        """Emit a real HTTP/1.1 chunked response for proxy streaming checks."""
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        for part in CHUNKED_RESPONSE_PARTS:
+            self.wfile.write(f"{len(part):x}\r\n".encode())
+            self.wfile.write(part)
+            self.wfile.write(b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
 
     def do_POST(self):  # noqa: N802
         """Consume the bounded integration body before returning the same echo."""
