@@ -699,11 +699,13 @@ feat(web): report provider progress failures and recovery
 
 ### Exit gate
 
-- test zone 실제 전환·복구
-- 401·403·429·5xx·timeout 장애 주입
-- proxy verify 전 origin lock 0건
-- SSH rule 변경 0건
-- 새로고침 후 transaction 진행 상태 복원
+- [x] User token·exact record read-only preflight와 비밀 없는 typed report
+- [x] 운영 금지 hostname·`vpsguard-` test prefix·초기 DNS-only·TTL 상한 fail-closed gate
+- [ ] 격리 public origin과 test zone 실제 전환·복구
+- [x] 401·403·429·5xx·timeout 장애 주입
+- [x] proxy verify 전 origin lock 0건
+- [x] SSH rule 변경 0건 자동 검증
+- [x] 새로고침 후 transaction 진행 상태 복원
 
 ## 15. 배치 12: 파일럿과 릴리스
 

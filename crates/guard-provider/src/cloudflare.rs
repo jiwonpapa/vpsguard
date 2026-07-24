@@ -13,13 +13,47 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::{StatusCode, redirect::Policy};
 use secrecy::zeroize::Zeroize;
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{ProviderBackend, ProviderError, ProviderRecordSnapshot, ProviderSnapshot};
 
 const DEFAULT_API_BASE: &str = "https://api.cloudflare.com/client/v4";
+
+/// 변경 없는 Cloudflare token·record 사전 점검 결과입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CloudflarePreflightReport {
+    /// 증거 JSON 계약 version입니다.
+    pub schema_version: u8,
+    /// 점검한 단일 DNS hostname입니다.
+    pub hostname: String,
+    /// 명시적 allowlist와 일치한 record 수입니다.
+    pub record_count: usize,
+    /// 모든 record가 현재 DNS only 상태인지 나타냅니다.
+    pub all_dns_only: bool,
+    /// Cloudflare automatic TTL을 300초로 정규화한 최대 TTL입니다.
+    pub max_effective_ttl_seconds: u32,
+    /// record ID·type·상태 read-back입니다.
+    pub records: Vec<CloudflarePreflightRecord>,
+}
+
+/// 사전 점검에서 read-back한 단일 Cloudflare DNS record입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CloudflarePreflightRecord {
+    /// Cloudflare DNS record ID입니다.
+    pub id: String,
+    /// 완전한 DNS hostname입니다.
+    pub name: String,
+    /// DNS record type입니다.
+    pub record_type: DnsRecordType,
+    /// 현재 Cloudflare proxy 상태입니다.
+    pub proxied: bool,
+    /// Cloudflare API가 반환한 원본 TTL입니다.
+    pub ttl_seconds: u32,
+    /// automatic TTL 1을 300초로 정규화한 transaction TTL입니다.
+    pub effective_ttl_seconds: u32,
+}
 
 /// 원본 80/443 보호의 적용·read-back·복구 계약입니다.
 pub trait OriginProtection {
@@ -153,6 +187,15 @@ where
     ///
     /// token 인증·권한·상태 또는 record allowlist read-back 불일치를 반환합니다.
     pub fn preflight(&self) -> Result<(), ProviderError> {
+        self.preflight_report().map(|_report| ())
+    }
+
+    /// DNS나 firewall을 변경하지 않고 token과 정확한 record 상태를 반환합니다.
+    ///
+    /// # Errors
+    ///
+    /// token 인증·권한·상태 또는 record allowlist read-back 불일치를 반환합니다.
+    pub fn preflight_report(&self) -> Result<CloudflarePreflightReport, ProviderError> {
         let response = self
             .client
             .get(format!("{}/user/tokens/verify", self.api_base))
@@ -168,8 +211,31 @@ where
             .first()
             .map(|record| record.name.as_str())
             .ok_or(ProviderError::Configuration("RECORD_ALLOWLIST_EMPTY"))?;
-        self.read_records(record_name)?;
-        Ok(())
+        let records = self.read_records(record_name)?;
+        let all_dns_only = records.iter().all(|record| !record.proxied);
+        let max_effective_ttl_seconds = records
+            .iter()
+            .map(|record| effective_dns_ttl_seconds(record.ttl))
+            .max()
+            .unwrap_or(300);
+        Ok(CloudflarePreflightReport {
+            schema_version: 1,
+            hostname: record_name.to_owned(),
+            record_count: records.len(),
+            all_dns_only,
+            max_effective_ttl_seconds,
+            records: records
+                .into_iter()
+                .map(|record| CloudflarePreflightRecord {
+                    id: record.id,
+                    name: record.name,
+                    record_type: record.record_type,
+                    proxied: record.proxied,
+                    ttl_seconds: record.ttl,
+                    effective_ttl_seconds: effective_dns_ttl_seconds(record.ttl),
+                })
+                .collect(),
+        })
     }
 
     fn targets_for_name(
@@ -484,6 +550,10 @@ fn validate_configuration(
     Ok(())
 }
 
+const fn effective_dns_ttl_seconds(ttl_seconds: u32) -> u32 {
+    if ttl_seconds == 1 { 300 } else { ttl_seconds }
+}
+
 fn is_cloudflare_identifier(value: &str) -> bool {
     value.len() == 32
         && value
@@ -635,9 +705,57 @@ mod tests {
             FakeOrigin,
             &server.url(),
         )?;
-        backend.preflight()?;
+        let report = backend.preflight_report()?;
+        assert_eq!(report.schema_version, 1);
+        assert_eq!(report.hostname, "example.com");
+        assert_eq!(report.record_count, 1);
+        assert!(report.all_dns_only);
+        assert_eq!(report.max_effective_ttl_seconds, 300);
+        assert_eq!(report.records[0].id, RECORD_ID);
+        assert_eq!(report.records[0].effective_ttl_seconds, 300);
         token_mock.assert();
         record_mock.assert();
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_report_normalizes_cloudflare_automatic_ttl()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut server = mockito::Server::new();
+        let _token_mock = server
+            .mock("GET", "/user/tokens/verify")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"result":{"status":"active"}}"#)
+            .create();
+        let _record_mock = server
+            .mock(
+                "GET",
+                format!("/zones/{ZONE_ID}/dns_records/{RECORD_ID}").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                format!(
+                    r#"{{"success":true,"result":{{"id":"{RECORD_ID}","name":"example.com","type":"A","proxied":true,"proxiable":true,"ttl":1}}}}"#
+                ),
+            )
+            .create();
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("token");
+        fs::write(&path, TEST_TOKEN)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        let backend = CloudflareBackend::from_token_file_with_api_base(
+            ZONE_ID,
+            vec![target()],
+            &path,
+            FakeOrigin,
+            &server.url(),
+        )?;
+        let report = backend.preflight_report()?;
+        assert!(!report.all_dns_only);
+        assert_eq!(report.records[0].ttl_seconds, 1);
+        assert_eq!(report.max_effective_ttl_seconds, 300);
         Ok(())
     }
 

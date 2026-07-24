@@ -14,6 +14,7 @@ use guard_core::{
     ADMIN_PROTOCOL_VERSION, AdminCommand, AdminRequest, AdminResponse, GuardConfig, GuardState,
     PolicySnapshot,
 };
+use guard_provider::ProviderError;
 use guard_system::{
     ApacheIngressConfig, ApacheIngressDirection, ApacheIngressDriver, AtomicJsonStore,
     DeploymentRestoreDriver, DeploymentStateConfig, DeploymentStateStore, IngressApplyDriver,
@@ -25,6 +26,10 @@ use guard_system::{
 };
 use thiserror::Error;
 use time::OffsetDateTime;
+
+mod provider;
+
+use provider::ProviderCommand;
 
 #[derive(Debug, Parser)]
 #[command(name = "vps-guard", version, about = "VPSGuard 운영 CLI")]
@@ -85,6 +90,12 @@ enum Command {
         /// 로그인 코드 유효시간입니다.
         #[arg(long, default_value_t = 300)]
         ttl_seconds: u64,
+    },
+    /// 외부 provider를 변경 없이 사전 점검합니다.
+    Provider {
+        /// provider별 점검 명령입니다.
+        #[command(subcommand)]
+        command: ProviderCommand,
     },
     /// 짧은 순단 apply·restore transaction plan과 상태를 관리합니다.
     Ops {
@@ -356,6 +367,34 @@ enum CliError {
     OperationContract(#[from] guard_system::OperationContractError),
     #[error(transparent)]
     State(#[from] guard_core::StateError),
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
+    #[error("Cloudflare provider가 config에서 비활성입니다")]
+    CloudflareDisabled,
+    #[error("Cloudflare test 점검에는 하나 이상의 운영 금지 hostname이 필요합니다")]
+    CloudflareIsolationContractInvalid,
+    #[error(
+        "Cloudflare test hostname 확인값이 다릅니다: configured={configured}, expected={expected}"
+    )]
+    CloudflareHostnameMismatch {
+        /// config가 가리키는 hostname입니다.
+        configured: String,
+        /// 운영자가 명시한 test hostname입니다.
+        expected: String,
+    },
+    #[error("Cloudflare test hostname이 금지 목록에 있습니다: {0}")]
+    CloudflareHostnameForbidden(String),
+    #[error(
+        "Cloudflare test hostname에 필수 prefix가 없습니다: hostname={hostname}, prefix={prefix}"
+    )]
+    CloudflareHostnamePrefixMissing {
+        /// config가 가리키는 hostname입니다.
+        hostname: String,
+        /// 격리 test용으로 요구한 prefix입니다.
+        prefix: String,
+    },
+    #[error("Cloudflare record가 이미 proxied 상태라 첫 격리 전환에 사용할 수 없습니다")]
+    CloudflareDnsOnlyRequired,
     #[error("관리 socket 요청 실패: operation={operation}, path={path}, cause={source}")]
     AdminSocket {
         /// 실패한 socket 작업입니다.
@@ -473,6 +512,7 @@ fn execute(cli: Cli) -> Result<String, CliError> {
             socket,
             ttl_seconds,
         } => issue_login_code(&socket, ttl_seconds),
+        Command::Provider { command } => provider::execute(command),
         Command::Ops { command } => execute_ops(command),
     }
 }

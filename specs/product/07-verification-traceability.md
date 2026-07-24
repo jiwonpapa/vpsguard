@@ -86,7 +86,7 @@ last_reviewed: 2026-07-24
 | `ACT-003` | `crates/guard-edge/tests/clearance.rs` | browser challenge E2E |
 | `ACT-004` | `tests/e2e/degraded_features.rs` | search 보호 중 정적·상세 정상 |
 | `ACT-005` | `crates/guard-core/tests/temporary_block.rs` | nftables set·TTL read-back |
-| `ACT-006`, `ACT-007` | `crates/guard-provider/tests/cloudflare_transaction.rs` | 실제 test zone 전환·복구 artifact |
+| `ACT-006`, `ACT-007` | `crates/guard-provider/src/tests.rs`, `crates/guard-provider/src/cloudflare.rs`, `crates/guard-cli/src/provider.rs` | 변경 능력이 없는 exact-hostname·금지목록·DNS-only·TTL preflight 통과 후 실제 test zone 전환·복구 artifact |
 | `ACT-008` | `crates/guard-core/src/state/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 실제 test zone에서 `RECOVERY_READY` 유지·관리자 승인·DNS only read-back artifact |
 | `ACT-009` | `crates/guard-core/tests/manual_hold.rs` | UI hold 중 state timeline |
 | `ACT-010` | `crates/guard-provider/tests/firewall_invariants.rs` | 전후 SSH·non-web listener·firewall rule diff |
