@@ -48,11 +48,16 @@ class ProbeTimeline:
         manifest: ReleaseEnduranceManifest,
         evidence: Path,
         phase: EndurancePhase,
+        *,
+        interval_ms: int | None = None,
     ) -> None:
         self.root = root
         self.manifest = manifest
         self.evidence = evidence
         self.phase = phase
+        self.interval_ms = manifest.interval_ms if interval_ms is None else interval_ms
+        if not 100 <= self.interval_ms <= 5_000:
+            raise ValueError("probe interval_ms must be within 100..=5000")
         self.availability = ProbeAvailability(expected_status=manifest.expected_status)
         self.max_schedule_lag_ms = 0
         self._condition = threading.Condition()
@@ -119,7 +124,7 @@ class ProbeTimeline:
         completed_ms = (time.monotonic_ns() - self._started_ns) // 1_000_000
         return {
             **self.availability.finish(completed_ms),
-            "interval_ms": self.manifest.interval_ms,
+            "interval_ms": self.interval_ms,
             "expected_status": self.manifest.expected_status,
             "max_schedule_lag_ms": self.max_schedule_lag_ms,
         }
@@ -131,7 +136,7 @@ class ProbeTimeline:
         try:
             with self.evidence.open("w", encoding="utf-8") as stream:
                 while not self._stop.is_set():
-                    scheduled_ms = sequence * self.manifest.interval_ms
+                    scheduled_ms = sequence * self.interval_ms
                     scheduled_ns = self._started_ns + scheduled_ms * 1_000_000
                     remaining = (scheduled_ns - time.monotonic_ns()) / 1_000_000_000
                     if remaining > 0 and self._stop.wait(remaining):

@@ -23,6 +23,7 @@ from .policy import validate_language_policy
 from .protection_pilot import run_protection_pilot
 from .release_endurance import run_release_endurance
 from .release_lifecycle import run_release_lifecycle_harness
+from .tls_reload import run_tls_reload
 from .vm_lab import run_public_probe_timeline, run_vm_lab
 
 
@@ -92,6 +93,15 @@ def main(argv: list[str] | None = None) -> int:
     host_pressure.add_argument("--evidence", type=Path, required=True)
     host_pressure.add_argument("--run", action="store_true")
     host_pressure.add_argument("--confirm")
+    tls_reload = subcommands.add_parser(
+        "vm-tls-reload",
+        help="2GB graceful TLS certificate reload and connection-drain proof",
+    )
+    tls_reload.add_argument("--manifest", type=Path, required=True)
+    tls_reload.add_argument("--bundle", type=Path, required=True)
+    tls_reload.add_argument("--evidence", type=Path, required=True)
+    tls_reload.add_argument("--run", action="store_true")
+    tls_reload.add_argument("--confirm")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
 
@@ -220,6 +230,26 @@ def main(argv: list[str] | None = None) -> int:
                     f"max_cpu={pressure['max_direct_cpu_percent']} "
                     f"max_outage_ms={public['max_outage_ms']} "
                     f"elapsed_ms={summary['elapsed_ms']}"
+                )
+        elif arguments.command == "vm-tls-reload":
+            summary = run_tls_reload(
+                root,
+                arguments.manifest,
+                arguments.bundle,
+                arguments.evidence,
+                execute=arguments.run,
+                confirmation=arguments.confirm,
+            )
+            if summary is None:
+                print("vm TLS reload: PLAN")
+            else:
+                print(
+                    "vm TLS reload: PASS "
+                    f"source_commit={summary.source_commit} "
+                    f"tls_samples={summary.tls_probe['samples']} "
+                    f"public_samples={summary.public_probe['samples']} "
+                    f"worker_drain_ms={summary.worker_drain_ms} "
+                    f"elapsed_ms={summary.elapsed_ms}"
                 )
     except HarnessError as error:
         print(error, file=sys.stderr)

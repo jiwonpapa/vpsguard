@@ -17,6 +17,10 @@ from tools.vpsguard_harness.release_endurance import (
     public_probe_command,
     run_release_endurance,
 )
+from tools.vpsguard_harness.release_endurance_probe import (
+    EndurancePhase,
+    ProbeTimeline,
+)
 
 
 class ReleaseEnduranceTest(unittest.TestCase):
@@ -201,6 +205,25 @@ class ReleaseEnduranceTest(unittest.TestCase):
             )
         with self.assertRaises(ProtectionPilotError):
             Bundle.verify(self.bundle)
+
+    def test_shared_probe_allows_bounded_preservation_cadence_override(self) -> None:
+        manifest = ReleaseEnduranceManifest.load(self.root, self.endurance_manifest)
+        timeline = ProbeTimeline(
+            self.root,
+            manifest,
+            self.root / "public.jsonl",
+            EndurancePhase(),
+            interval_ms=1_000,
+        )
+        self.assertEqual(timeline.interval_ms, 1_000)
+        with self.assertRaises(ValueError):
+            ProbeTimeline(
+                self.root,
+                manifest,
+                self.root / "invalid.jsonl",
+                EndurancePhase(),
+                interval_ms=5_001,
+            )
 
 
 if __name__ == "__main__":

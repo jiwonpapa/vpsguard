@@ -1,0 +1,33 @@
+[Unit]
+Description=VPSGuard isolated TLS reload probe
+After=network-online.target apache2.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vps-guard
+Group=vps-guard
+ExecStart=/opt/vps-guard-tls-probe/vps-guard-edge --supervisor
+ExecReload=/bin/kill -HUP $MAINPID
+Environment=VPS_GUARD_CONFIG=/opt/vps-guard-tls-probe/config.toml
+Environment=RUST_LOG=vps_guard_edge=info,guard_edge=info,pingora=off
+Restart=on-failure
+RestartSec=1s
+KillSignal=SIGINT
+TimeoutStopSec=4s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadOnlyPaths=/run/vps-guard-tls /opt/vps-guard-tls-probe
+ReadWritePaths=/run/vps-guard /run/vps-guard-tls-probe
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0027
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

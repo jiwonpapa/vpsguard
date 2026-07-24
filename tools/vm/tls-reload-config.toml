@@ -1,0 +1,93 @@
+schema_version = 1
+
+[edge]
+http_bind = "127.0.0.1:19080"
+https_bind = "127.0.0.1:19443"
+allowed_hosts = ["gnuboard5.local"]
+canonical_host = "gnuboard5.local"
+trusted_proxy_cidrs = ["127.0.0.1/32", "::1/128"]
+max_body_bytes = 8388608
+upload_max_body_bytes = 67108864
+upload_path_prefixes = ["/bbs/write_update.php", "/bbs/ajax.file_upload.php", "/data/file"]
+strict_path_prefixes = ["/bbs/login.php", "/bbs/register_form.php", "/bbs/password.php", "/bbs/search.php", "/adm"]
+upstream_connect_timeout_ms = 3000
+upstream_read_timeout_ms = 30000
+upload_upstream_read_timeout_ms = 60000
+max_tracked_clients = 10000
+rate_limit_rpm = 120
+strict_rate_limit_rpm = 30
+upload_rate_limit_rpm = 10
+telemetry_socket = "/run/vps-guard-tls-probe/telemetry.sock"
+policy_path = "/run/vps-guard-tls-probe/policy.json"
+policy_reload_interval_ms = 1000
+clearance_ttl_seconds = 600
+
+[origin]
+address = "127.0.0.1:18081"
+protocol = "http"
+
+[tls]
+management = "manual"
+
+[[tls.certificates]]
+domains = ["gnuboard5.local"]
+cert_file = "/opt/vps-guard-tls-probe/initial/fullchain.pem"
+key_file = "/opt/vps-guard-tls-probe/initial/privkey.pem"
+
+[ui]
+bind = "127.0.0.1:17727"
+auth_provider = "pam"
+pam_service = "vps-guard"
+pam_allowed_group = "vpsguard-admin"
+admin_socket = "/run/vps-guard-tls-probe/admin.sock"
+privileged_socket = "/run/vps-guard-privileged/control.sock"
+login_rate_limit_rpm = 10
+language = "ko"
+
+[firewall]
+mode = "disabled"
+ssh_port = 22
+
+[detection]
+profile = "gnuboard5"
+inspection = "profiled"
+mode = "observe"
+
+[bot_policy]
+block_unapproved_declared_bots = false
+allowed_crawlers = []
+
+[security]
+baseline_response_headers = true
+strip_origin_headers = true
+csp_mode = "report_only"
+hsts_max_age_seconds = 0
+auth_rate_limit_rpm = 6
+
+[waf]
+mode = "detection"
+adapter = "mod_security_owasp_crs"
+
+[cloudflare]
+enabled = false
+zone_id = ""
+records = []
+token_file = "cloudflare-token"
+ip_networks = []
+
+[retention]
+live_seconds = 900
+detail_hours = 24
+aggregate_days = 30
+incident_days = 90
+audit_days = 365
+raw_ip_days = 7
+
+[storage]
+database_path = "/var/lib/vps-guard/control.sqlite3"
+events_directory = "/var/lib/vps-guard/events"
+max_database_bytes = 536870912
+min_disk_free_bytes = 268435456
+
+[collectors]
+timeout_ms = 500

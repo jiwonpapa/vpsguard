@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from tools.vpsguard_harness.runner import (
+    BackgroundCommandSpec,
     CommandRunner,
     CommandScope,
     CommandSpec,
@@ -100,6 +101,45 @@ class CommandRunnerTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.code, "HARNESS_COMMAND_TIMEOUT")
+
+    def test_background_process_is_owned_terminated_and_reaped(self) -> None:
+        command = CommandRunner().start(
+            BackgroundCommandSpec(
+                label="background-fixture",
+                argv=(
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(30)",
+                ),
+                cwd=Path.cwd(),
+                startup_seconds=0.1,
+                scope=CommandScope.TEST,
+            )
+        )
+        self.assertTrue(command.is_running)
+        self.assertGreater(command.pid, 1)
+        command.stop()
+        self.assertFalse(command.is_running)
+        command.stop()
+
+    def test_background_early_exit_is_structured_and_redacted(self) -> None:
+        secret = "background-fixture-secret"
+        with self.assertRaises(HarnessCommandError) as raised:
+            CommandRunner(secrets=(secret,)).start(
+                BackgroundCommandSpec(
+                    label="background-failure",
+                    argv=(
+                        sys.executable,
+                        "-c",
+                        f"import sys; print('{secret}'); raise SystemExit(9)",
+                    ),
+                    cwd=Path.cwd(),
+                    startup_seconds=0.2,
+                    scope=CommandScope.TEST,
+                )
+            )
+        self.assertEqual(raised.exception.code, "HARNESS_BACKGROUND_EXITED")
+        self.assertNotIn(secret, str(raised.exception))
 
 
 if __name__ == "__main__":

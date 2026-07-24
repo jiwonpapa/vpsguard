@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "protection_manifest": "gnuboard5-protection-pilot.json",
+  "probe": {
+    "url": "https://gnuboard5.local:19443/",
+    "host": "gnuboard5.local",
+    "ip": "192.168.0.143",
+    "port": 19443,
+    "interval_ms": 100,
+    "max_outage_ms": 0,
+    "drain_wait_seconds": 7
+  }
+}

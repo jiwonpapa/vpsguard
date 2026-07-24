@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import BinaryIO
 
 from .errors import HarnessError
 
@@ -72,6 +73,34 @@ class CommandResult:
     stderr: str
 
 
+@dataclass(frozen=True)
+class BackgroundCommandSpec:
+    """One long-running argv process with bounded startup confirmation."""
+
+    label: str
+    argv: tuple[str, ...]
+    cwd: Path
+    startup_seconds: float
+    scope: CommandScope
+    max_output_bytes: int = 65_536
+
+    def __post_init__(self) -> None:
+        if isinstance(self.argv, str) or not isinstance(self.argv, tuple):
+            raise TypeError("argv must be a tuple of strings")
+        if not self.argv or any(not isinstance(argument, str) for argument in self.argv):
+            raise TypeError("argv must contain at least one string")
+        if any("\x00" in argument or "\n" in argument or "\r" in argument for argument in self.argv):
+            raise ValueError("argv must not contain control separators")
+        if not self.label or len(self.label) > 96:
+            raise ValueError("label must contain 1..=96 characters")
+        if not 0 < self.startup_seconds <= 30:
+            raise ValueError("startup_seconds must be within 0..=30")
+        if not 64 <= self.max_output_bytes <= 16_777_216:
+            raise ValueError("max_output_bytes must be within 64..=16777216")
+        if not self.cwd.is_absolute() or not self.cwd.is_dir():
+            raise ValueError("cwd must be an existing absolute directory")
+
+
 class HarnessCommandError(HarnessError):
     """A command failed, timed out or could not be started."""
 
@@ -87,6 +116,52 @@ class _BoundedCapture:
             self.data.extend(chunk[:remaining])
         if len(chunk) > remaining:
             self.truncated = True
+
+
+class RunningCommand:
+    """Owned background process that terminates its complete process group."""
+
+    def __init__(
+        self,
+        process: subprocess.Popen[bytes],
+        output: BinaryIO,
+    ) -> None:
+        self._process = process
+        self._output = output
+        self._closed = False
+
+    @property
+    def pid(self) -> int:
+        """Return the directly owned process PID."""
+
+        return self._process.pid
+
+    @property
+    def is_running(self) -> bool:
+        """Return whether the owned process has not exited."""
+
+        return not self._closed and self._process.poll() is None
+
+    def stop(self, *, timeout_seconds: float = 5) -> None:
+        """Terminate and reap the process group exactly once."""
+
+        if self._closed:
+            return
+        if self._process.poll() is None:
+            try:
+                os.killpg(self._process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                self._process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(self._process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self._process.wait(timeout=timeout_seconds)
+        self._output.close()
+        self._closed = True
 
 
 class CommandRunner:
@@ -177,6 +252,50 @@ class CommandRunner:
             stdout=stdout,
             stderr=stderr,
         )
+
+    def start(self, spec: BackgroundCommandSpec) -> RunningCommand:
+        """Start one owned background process and reject early exit."""
+
+        output = tempfile.TemporaryFile(mode="w+b")
+        try:
+            process = subprocess.Popen(
+                list(spec.argv),
+                cwd=spec.cwd,
+                stdout=output,
+                stderr=output,
+                start_new_session=True,
+            )
+        except OSError as error:
+            output.close()
+            raise HarnessCommandError(
+                code="HARNESS_BACKGROUND_START_FAILED",
+                problem=f"{spec.label} background 명령을 시작하지 못했습니다.",
+                cause=self._redact(str(error)),
+                impact="background 자원을 만들지 않았고 현재 단계를 중단했습니다.",
+                next_action="실행 파일, argv와 작업 directory를 확인하십시오.",
+            ) from error
+        deadline = time.monotonic() + spec.startup_seconds
+        while time.monotonic() < deadline:
+            exit_code = process.poll()
+            if exit_code is not None:
+                output.seek(0)
+                captured = output.read(spec.max_output_bytes + 1)
+                output.close()
+                text = captured[: spec.max_output_bytes].decode(
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                if len(captured) > spec.max_output_bytes:
+                    text += "\n<output truncated>"
+                raise HarnessCommandError(
+                    code="HARNESS_BACKGROUND_EXITED",
+                    problem=f"{spec.label} background 명령이 준비 전에 종료됐습니다.",
+                    cause=self._redact(text.strip()) or f"exit={exit_code}",
+                    impact="background 자원이 준비되지 않아 현재 단계를 중단했습니다.",
+                    next_action="마스킹된 시작 출력을 확인하고 원인을 해결하십시오.",
+                )
+            time.sleep(0.05)
+        return RunningCommand(process, output)
 
     def _redact(self, value: str) -> str:
         redacted = value
