@@ -11,6 +11,8 @@
   "execution": {
     "cycles": 20,
     "interval_ms": 100,
-    "max_outage_ms": 5000
+    "max_outage_ms": 5000,
+    "max_update_ms": 60000,
+    "max_restore_ms": 10000
   }
 }

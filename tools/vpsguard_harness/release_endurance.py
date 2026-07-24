@@ -277,6 +277,12 @@ def _run_cycle(
             timeout_seconds=60,
         )
         update_ms = (time.monotonic_ns() - started) // 1_000_000
+        if update_ms > manifest.max_update_ms:
+            fail(
+                "ENDURANCE_UPDATE_BUDGET_EXCEEDED",
+                "release update 시간 예산을 초과했습니다.",
+                f"cycle={cycle}, update_ms={update_ms}",
+            )
         snapshot = snapshot_path(update.stdout)
         phase.set(cycle, "candidate_readback")
         candidate_release = guest_text(
@@ -311,6 +317,12 @@ def _run_cycle(
                     timeout_seconds=30,
                 )
                 restore_ms = (time.monotonic_ns() - started) // 1_000_000
+                if restore_ms > manifest.max_restore_ms:
+                    fail(
+                        "ENDURANCE_RESTORE_BUDGET_EXCEEDED",
+                        "deployment restore 시간 예산을 초과했습니다.",
+                        f"cycle={cycle}, restore_ms={restore_ms}",
+                    )
             except Exception as error:
                 failure = error
         phase.set(cycle, "restore_readback")
@@ -441,6 +453,8 @@ def _plan(
             "cycles": manifest.cycles,
             "interval_ms": manifest.interval_ms,
             "max_outage_ms": manifest.max_outage_ms,
+            "max_update_ms": manifest.max_update_ms,
+            "max_restore_ms": manifest.max_restore_ms,
         },
         "steps": [
             "verify_bundle",

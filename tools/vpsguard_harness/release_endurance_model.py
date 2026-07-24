@@ -95,6 +95,8 @@ class ReleaseEnduranceManifest:
     cycles: int
     interval_ms: int
     max_outage_ms: int
+    max_update_ms: int
+    max_restore_ms: int
 
     @classmethod
     def load(cls, root: Path, path: Path) -> "ReleaseEnduranceManifest":
@@ -122,7 +124,13 @@ class ReleaseEnduranceManifest:
         )
         execution = _exact_dict(
             raw["execution"],
-            {"cycles", "interval_ms", "max_outage_ms"},
+            {
+                "cycles",
+                "interval_ms",
+                "max_outage_ms",
+                "max_update_ms",
+                "max_restore_ms",
+            },
             "execution",
         )
         parsed = urlsplit(probe["url"]) if isinstance(probe["url"], str) else None
@@ -169,10 +177,16 @@ class ReleaseEnduranceManifest:
             or not isinstance(execution["max_outage_ms"], int)
             or isinstance(execution["max_outage_ms"], bool)
             or not 100 <= execution["max_outage_ms"] <= 5_000
+            or not isinstance(execution["max_update_ms"], int)
+            or isinstance(execution["max_update_ms"], bool)
+            or not 100 <= execution["max_update_ms"] <= 60_000
+            or not isinstance(execution["max_restore_ms"], int)
+            or isinstance(execution["max_restore_ms"], bool)
+            or not 100 <= execution["max_restore_ms"] <= 10_000
         ):
             fail(
                 "ENDURANCE_EXECUTION_BOUNDS_INVALID",
-                "cycle, 100ms interval 또는 outage budget이 허용 범위 밖입니다.",
+                "cycle, 100ms interval 또는 실행 budget이 허용 범위 밖입니다.",
                 repr(execution),
             )
         return cls(
@@ -186,6 +200,8 @@ class ReleaseEnduranceManifest:
             cycles=execution["cycles"],
             interval_ms=execution["interval_ms"],
             max_outage_ms=execution["max_outage_ms"],
+            max_update_ms=execution["max_update_ms"],
+            max_restore_ms=execution["max_restore_ms"],
         )
 
     @property

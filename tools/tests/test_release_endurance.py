@@ -84,6 +84,8 @@ class ReleaseEnduranceTest(unittest.TestCase):
                 "cycles": 20,
                 "interval_ms": 100,
                 "max_outage_ms": 5_000,
+                "max_update_ms": 60_000,
+                "max_restore_ms": 10_000,
             },
         }
         raw.update(changes)
@@ -119,6 +121,8 @@ class ReleaseEnduranceTest(unittest.TestCase):
         self.assertEqual(plan["execution"]["cycles"], 20)
         self.assertEqual(plan["execution"]["interval_ms"], 100)
         self.assertEqual(plan["execution"]["max_outage_ms"], 5_000)
+        self.assertEqual(plan["execution"]["max_update_ms"], 60_000)
+        self.assertEqual(plan["execution"]["max_restore_ms"], 10_000)
         self.assertIn("restore_each_deployment_snapshot", plan["steps"])
         self.assertIn("SSH", plan["preserves"])
         self.assertFalse(plan["stores_credentials"])
@@ -146,7 +150,13 @@ class ReleaseEnduranceTest(unittest.TestCase):
             ReleaseEnduranceManifest.load(self.root, self.endurance_manifest)
 
         self.write_endurance_manifest(
-            execution={"cycles": 21, "interval_ms": 99, "max_outage_ms": 5_001}
+            execution={
+                "cycles": 21,
+                "interval_ms": 99,
+                "max_outage_ms": 5_001,
+                "max_update_ms": 60_001,
+                "max_restore_ms": 10_001,
+            }
         )
         with self.assertRaises(ReleaseEnduranceError):
             ReleaseEnduranceManifest.load(self.root, self.endurance_manifest)
