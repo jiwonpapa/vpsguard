@@ -53,7 +53,7 @@ ACT-010|CODE_ONLY|crates/guard-system/src/nftables.rs|-|-
 ACT-011|CODE_ONLY|crates/guard-control/src/runtime.rs|-|-
 ACT-012|AUTO_PASS|crates/guard-control/src/api.rs|crates/guard-control/src/api/tests.rs|-
 TLS-001|AUTO_PASS|crates/guard-edge/src/tls.rs|crates/guard-edge/src/tls/tests.rs|-
-TLS-002|CODE_ONLY|crates/guard-edge/src/supervisor.rs|crates/guard-edge/src/supervisor/tests.rs|-
+TLS-002|VPS_PASS|crates/guard-edge/src/supervisor.rs|tools/tests/test_tls_reload.py|specs/product/evidence/gnuboard5-tls-reload-20260724.md
 TLS-003|VPS_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
 TLS-004|AUTO_PASS|crates/guard-system/src/tls/served.rs|crates/guard-system/src/tls/served/tests.rs|-
 TLS-005|VPS_PASS|scripts/update-release.sh|scripts/tests/ingress-transaction-harness.sh|specs/product/evidence/g7devops-direct-tls-20260715.md

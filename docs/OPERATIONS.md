@@ -312,7 +312,7 @@ sudo vps-guard verify-served-certificate \
   --address 127.0.0.1:443
 ```
 
-일치하면 bounded JSON report를 출력하고, 다른 leaf·잘못된 SAN·key 불일치·handshake 실패는 non-zero로 종료합니다. hook의 restart는 제거됐고 supervisor·worker 분리와 Pingora FD handoff 자동 회귀까지 구현됐습니다. 실제 Linux VPS에서 동시 keep-alive·신규 handshake를 건 무순단 renewal timeline은 `TLS-002`의 남은 release gate입니다.
+일치하면 bounded JSON report를 출력하고, 다른 leaf·잘못된 SAN·key 불일치·handshake 실패는 non-zero로 종료합니다. hook의 restart는 제거됐고 supervisor·worker 분리와 Pingora FD handoff 자동 회귀까지 구현됐습니다. [격리 Ubuntu 24.04 2GB VM](../specs/product/evidence/gnuboard5-tls-reload-20260724.md)에서 supervisor PID 보존, 갱신 전부터 열린 동일 TLS socket의 응답 완료, 신규 handshake `439/439`와 listener leaf exact 일치를 검증했습니다. 실제 ACME staging 발급·`certbot.timer` renew·deploy hook 전체 timeline은 `TLS-006`의 남은 release gate입니다.
 
 Certbot private key 원본을 `vps-guard` 계정에 직접 공개하지 않습니다. 설정에는 `cert_file = "tls-cert.pem"`, `key_file = "tls-key.pem"`처럼 service credential 이름을 사용하고, 설치 도구는 다음 template의 placeholder를 검증된 절대 경로로 치환합니다.
 

@@ -99,8 +99,9 @@ last_reviewed: 2026-07-24
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
 | `TLS-001` | `crates/guard-edge/tests/certificate_validation.rs` | invalid cert start rejection |
-| `TLS-002`, `TLS-003`, `TLS-006` | `crates/guard-edge/src/supervisor/tests.rs`, `crates/guard-system/src/tls/reload/tests.rs`, `scripts/tests/repository-contracts.sh`, `tests/e2e/certbot_renew.rs` | [`g7devops` staging webroot renew·timer report](evidence/g7devops-direct-tls-20260715.md); 격리 VPS의 새 supervisor 기반 FD 인계·connection drain·renew 직후 증거는 미수집 |
-| `TLS-004` | `crates/guard-system/src/tls/served/tests.rs`, `crates/guard-cli/src/main.rs`, `tools/tests/test_packaging_security.py` | staging renewal 직후 hook·listener fingerprint comparison |
+| `TLS-002` | `crates/guard-edge/src/supervisor/tests.rs`, `crates/guard-system/src/tls/reload/tests.rs`, `tools/tests/test_tls_reload.py` | [격리 2GB VM의 root-owned PEM stage, supervisor PID 보존, Pingora FD 인계, 같은 TLS socket의 in-flight 완료, 439/439 신규 handshake](evidence/gnuboard5-tls-reload-20260724.md) |
+| `TLS-003`, `TLS-006` | `scripts/tests/repository-contracts.sh`, `tests/e2e/certbot_renew.rs`, `tools/tests/test_tls_reload.py` | [`g7devops` 기존 staging webroot renew·timer report](evidence/g7devops-direct-tls-20260715.md); 새 supervisor 경로의 실제 ACME staging 발급·Certbot timer renew는 미수집 |
+| `TLS-004` | `crates/guard-system/src/tls/served/tests.rs`, `crates/guard-cli/src/main.rs`, `tools/tests/test_packaging_security.py`, `tools/tests/test_tls_reload.py` | [격리 2GB VM에서 stage leaf와 reload 뒤 listener leaf exact 일치](evidence/gnuboard5-tls-reload-20260724.md); 실제 Certbot hook 경로는 미수집 |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | [`g7devops` 전환 전후 fingerprint](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
 | `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |
