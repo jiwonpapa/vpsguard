@@ -175,6 +175,7 @@ def run(repo_root: Path) -> LoadBudgetResult:
             "same_host": True,
             "vus": os.environ.get("VUS", DEFAULT_VUS),
             "duration": os.environ.get("DURATION", DEFAULT_DURATION),
+            "think_time_ms": 100,
             "platform": platform.platform(),
             "kernel": platform.release(),
             "machine": platform.machine(),

@@ -1,5 +1,5 @@
 import http from "k6/http";
-import { check } from "k6";
+import { check, sleep } from "k6";
 
 export const options = {
   vus: Number(__ENV.VUS || 10),
@@ -15,4 +15,5 @@ export default function () {
     headers: { Host: __ENV.TARGET_HOST || "example.test" },
   });
   check(response, { "proxy returned success": (value) => value.status === 200 });
+  sleep(Number(__ENV.THINK_TIME_SECONDS || 0.1));
 }

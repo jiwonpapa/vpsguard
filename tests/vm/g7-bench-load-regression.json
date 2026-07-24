@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "target": {
+    "host_alias": "gnuboard7",
+    "domain": "g7-test",
+    "guest_target": "neojins@192.168.122.153",
+    "private_ip": "192.168.122.153",
+    "stage_base": "/home/neojins/vpsguard-nfr001",
+    "host_stage_base": "/home/gnuboard7/vpsguard-nfr001",
+    "target_memory_kib": 2097152
+  },
+  "runtime": {
+    "nginx_config": "/etc/nginx/conf.d/vpsguard-nfr001-origin.conf",
+    "nginx_service": "nginx",
+    "site_root": "/home/g7bench/public_html/public",
+    "php_fpm_socket": "/run/php/php8.5-fpm-g7bench.sock",
+    "request_host": "g7-bench.local",
+    "request_path": "/__vpsguard_nfr001",
+    "direct_port": 18081,
+    "edge_port": 18080,
+    "worker_threads": 2
+  },
+  "load": {
+    "k6_version": "0.55.2",
+    "k6_sha256": "df3ede493661504b11f5ae34fdb38f8517e511c35587d36e55ba7d45ce4dc2a1",
+    "vus": 50,
+    "duration_seconds": 15,
+    "think_time_ms": 100,
+    "rounds": 3
+  }
+}

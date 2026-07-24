@@ -138,7 +138,7 @@ last_reviewed: 2026-07-24
 | `SEC-015` | `crates/guard-control/src/pam_auth.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/auth/tests.rs`, `tools/vm/pam-login-probe.sh` | Ubuntu PAM group·root/locked denial, 실제 사용자 QR 등록과 사용자 입력 TOTP session report. 2026-07-22 자동 생성 test seed 증거는 사용자 등록 증거에서 제외 |
 | `SEC-016` | `crates/guard-edge/src/security/tests.rs`, `scripts/integration-gate.sh` | [중복 Host·Content-Length·CL+TE raw VM 거부와 정상 HTTP/1.1 report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `SEC-017` | `tools/tests/test_vm_lab.py`, `tests/vm/gnuboard5-toolkit.json`, `configs/apache/waf-tuned-enforce.conf` | [ModSecurity·CRS detection/tuned enforce SQLi·XSS와 anonymous 정상 GET report](evidence/gnuboard5-standalone-security-20260722.md) |
-| `NFR-001` | `crates/guard-core/src/config/tests.rs`, `crates/guard-core/src/correlation.rs`, `crates/guard-edge/src/startup/tests.rs`, `crates/guard-edge/src/telemetry/tests.rs`, `tools/vpsguard_harness/load_regression.py`, `tools/tests/test_load_regression.py`, `scripts/load-regression-gate.sh` | bounded CPU-aware worker·연결 없는 telemetry lazy drop·request ID 고정 nonce 사전 계산 회귀와 동일 2GB 서버·release artifact·direct Nginx 대비 50 VU p95·처리량 report. direct-origin 개발 gate 통과만으로 대체하지 않음 |
+| `NFR-001` | `crates/guard-core/src/config/tests.rs`, `crates/guard-core/src/correlation.rs`, `crates/guard-edge/src/startup/tests.rs`, `crates/guard-edge/src/telemetry/tests.rs`, `tools/vpsguard_harness/load_regression.py`, `tools/vpsguard_harness/load_regression_vm.py`, `tools/vpsguard_harness/load_regression_vm_remote.py`, `tools/tests/test_load_regression.py`, `tools/tests/test_load_regression_vm.py`, `scripts/load-regression-gate.sh` | bounded CPU-aware worker·연결 없는 telemetry lazy drop·request ID 고정 nonce 사전 계산 회귀와 [동일 2GB Ubuntu VM의 verified release·direct Nginx 대비 50 VU·100ms think time 3회 교차 측정: p95 `+1.188ms`, 처리량 `-0.47%`, 실패율 0, Nginx·memory·stage 자동 원복](evidence/g7-bench-nfr001-20260724.md). direct-origin 개발 gate는 parser 회귀용 |
 | `NFR-002` | `crates/guard-edge/src/rate_limit/tests.rs`, `tests/vm/gnuboard5-toolkit.json` | [실제 2GB 정상·burst·AI bot 응답과 service memory peak·OOM report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `NFR-003` | process kill fault test | zero-error request counter |
 | `NFR-004`, `NFR-006` | state crash/migration tests | kill -9 recovery artifact |
@@ -208,7 +208,7 @@ bun run test:e2e
 
 측정 환경, kernel, CPU, artifact hash와 Nginx 설정을 함께 보존합니다. 예산 변경은 실제 데이터와 ADR 없이 허용하지 않습니다.
 
-로컬·CI의 direct-origin 비교는 parser·계산·fail-closed release gate 회귀용입니다. `NFR-001` 수용에는 동일 2GB Ubuntu 서버의 direct Nginx 비교가 별도로 필요합니다.
+로컬·CI의 direct-origin 비교는 parser·계산·fail-closed release gate 회귀용입니다. `NFR-001` 운영 수용은 동일 2GB Ubuntu 서버, direct Nginx, verified release artifact, `50 VU·15초·100ms think time`의 3회 교차 비교와 exact 원복 증거를 사용합니다.
 
 ## 7. 탐지 효과 게이트
 

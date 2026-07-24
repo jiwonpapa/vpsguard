@@ -18,6 +18,7 @@ from .dev_check import run_dev_check
 from .errors import HarnessError
 from .governance import validate_requirements, validate_rustdoc
 from .host_pressure import run_host_pressure
+from .load_regression_vm import run_vm_load_regression
 from .ops import run_ops_harness
 from .policy import validate_language_policy
 from .protection_pilot import run_protection_pilot
@@ -94,6 +95,16 @@ def main(argv: list[str] | None = None) -> int:
     host_pressure.add_argument("--evidence", type=Path, required=True)
     host_pressure.add_argument("--run", action="store_true")
     host_pressure.add_argument("--confirm")
+    load_regression = subcommands.add_parser(
+        "vm-load-regression",
+        help="2GB direct Nginx versus release guard-edge load proof with exact restore",
+    )
+    load_regression.add_argument("--manifest", type=Path, required=True)
+    load_regression.add_argument("--bundle", type=Path, required=True)
+    load_regression.add_argument("--k6-binary", type=Path, required=True)
+    load_regression.add_argument("--evidence", type=Path, required=True)
+    load_regression.add_argument("--run", action="store_true")
+    load_regression.add_argument("--confirm")
     tls_reload = subcommands.add_parser(
         "vm-tls-reload",
         help="2GB graceful TLS certificate reload and connection-drain proof",
@@ -239,6 +250,26 @@ def main(argv: list[str] | None = None) -> int:
                     f"samples={pressure['samples']} "
                     f"max_cpu={pressure['max_direct_cpu_percent']} "
                     f"max_outage_ms={public['max_outage_ms']} "
+                    f"elapsed_ms={summary['elapsed_ms']}"
+                )
+        elif arguments.command == "vm-load-regression":
+            summary = run_vm_load_regression(
+                root,
+                arguments.manifest,
+                arguments.bundle,
+                arguments.k6_binary,
+                arguments.evidence,
+                execute=arguments.run,
+                confirmation=arguments.confirm,
+            )
+            if summary is None:
+                print("vm load regression: PLAN")
+            else:
+                budget = summary["budget"]
+                print(
+                    "vm load regression: PASS "
+                    f"p95-overhead={budget['p95_overhead_ms']:.3f}ms "
+                    f"throughput-reduction={budget['throughput_reduction_percent']:.2f}% "
                     f"elapsed_ms={summary['elapsed_ms']}"
                 )
         elif arguments.command == "vm-tls-reload":
