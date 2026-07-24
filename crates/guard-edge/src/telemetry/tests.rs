@@ -58,7 +58,12 @@ fn emits_bounded_privacy_safe_datagram() -> Result<(), Box<dyn std::error::Error
 #[test]
 fn disconnected_sink_only_increments_drop_counter() {
     let sink = TelemetrySink::connect(std::path::Path::new("/run/vps-guard/nonexistent-test.sock"));
-    sink.emit(&fixture());
+    let mut constructed = false;
+    sink.emit_lazy(|| {
+        constructed = true;
+        fixture()
+    });
+    assert!(!constructed);
     assert_eq!(sink.dropped(), 1);
 }
 

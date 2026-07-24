@@ -20,7 +20,7 @@ pub const LOG_SCHEMA_VERSION: u32 = 1;
 /// bounded 문자열 formatting만 수행합니다. 생성된 ID에는 client 정보나 비밀값이 없습니다.
 #[derive(Debug)]
 pub struct RequestIdGenerator {
-    process_nonce: [u8; 16],
+    process_nonce_hex: String,
     sequence: AtomicU64,
 }
 
@@ -32,8 +32,12 @@ impl RequestIdGenerator {
     }
 
     fn with_process_nonce(process_nonce: [u8; 16]) -> Self {
+        let mut process_nonce_hex = String::with_capacity(PROCESS_NONCE_HEX_LEN);
+        for byte in process_nonce {
+            let _format_result = write!(process_nonce_hex, "{byte:02x}");
+        }
         Self {
-            process_nonce,
+            process_nonce_hex,
             sequence: AtomicU64::new(1),
         }
     }
@@ -44,9 +48,7 @@ impl RequestIdGenerator {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let mut request_id = String::with_capacity(REQUEST_ID_LEN);
         request_id.push_str(REQUEST_ID_PREFIX);
-        for byte in self.process_nonce {
-            let _format_result = write!(request_id, "{byte:02x}");
-        }
+        request_id.push_str(&self.process_nonce_hex);
         request_id.push('-');
         let _format_result = write!(request_id, "{sequence:016x}");
         request_id

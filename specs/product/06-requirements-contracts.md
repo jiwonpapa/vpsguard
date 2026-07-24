@@ -255,6 +255,7 @@ schema_version = 1
 [edge]
 http_bind = "0.0.0.0:80"
 https_bind = "0.0.0.0:443"
+worker_threads = 2
 trusted_proxy_cidrs = []
 max_in_flight_requests = 1024
 downstream_io_timeout_ms = 30000
@@ -331,6 +332,7 @@ min_disk_free_bytes = 268435456
 
 - unknown key는 warning이 아니라 오류로 처리합니다.
 - port, path, CIDR, duration과 threshold 범위를 검증합니다.
+- `edge.worker_threads` 생략 시 가용 CPU 기준 1~4개를 자동 선택하고 명시값은 1~8만 허용합니다.
 - active request·downstream I/O·최소 전송률·keepalive 상한은 2GB 기본값을 가지며 0 또는 과도한 값을 거부합니다.
 - token 본문을 TOML에 직접 넣는 것을 금지합니다.
 - `tls.management`은 기존 manager 자동 감지, 명시적 외부 관리, VPSGuard 보조와 수동 교체를 구분합니다. startup은 어떤 mode에서도 발급·timer 변경을 실행하지 않습니다.

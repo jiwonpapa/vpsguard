@@ -20,6 +20,7 @@ use crate::tls::{TlsPreflightError, preflight};
 const UPGRADE_SOCKET: &str = "/run/vps-guard/pingora-upgrade.sock";
 const GRACE_PERIOD_SECONDS: u64 = 30;
 const GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS: u64 = 5;
+const MAX_AUTO_WORKER_THREADS: usize = 4;
 
 #[cfg(test)]
 #[path = "startup/tests.rs"]
@@ -123,7 +124,8 @@ fn run_server(
         test: worker_options.test,
         conf: None,
     };
-    let configuration = server_configuration();
+    let configuration = server_configuration(runtime.worker_threads);
+    let worker_threads = configuration.threads;
     let mut server = Server::new_with_opt_and_conf(Some(options), configuration);
     server.bootstrap();
     let app = GuardEdge::new(runtime.clone());
@@ -150,18 +152,28 @@ fn run_server(
         tls_listener = ?runtime.tls.as_ref().map(|tls| tls.listen_addr.as_str()),
         origin_host = %runtime.origin_host,
         origin_port = runtime.origin_port,
+        worker_threads,
         "starting guard edge"
     );
     server.add_service(service);
     server.run_forever();
 }
 
-fn server_configuration() -> ServerConf {
+fn server_configuration(configured_worker_threads: Option<usize>) -> ServerConf {
     ServerConf {
+        threads: effective_worker_threads(configured_worker_threads),
         upgrade_sock: UPGRADE_SOCKET.to_owned(),
         grace_period_seconds: Some(GRACE_PERIOD_SECONDS),
         graceful_shutdown_timeout_seconds: Some(GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS),
         upgrade_sock_connect_accept_max_retries: Some(10),
         ..ServerConf::default()
     }
+}
+
+fn effective_worker_threads(configured_worker_threads: Option<usize>) -> usize {
+    configured_worker_threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .clamp(1, MAX_AUTO_WORKER_THREADS)
+    })
 }

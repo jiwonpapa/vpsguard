@@ -127,7 +127,6 @@ impl GuardEdge {
         context.started_at = Instant::now();
         context.request_id = self.next_request_id();
         context.method = method;
-        context.path = path.clone();
         context.host = host.clone();
         context.direct_peer = direct_client_ip(session);
         context.forwarded_headers_trusted = context
@@ -758,7 +757,7 @@ impl GuardEdge {
         if context.upstream_kind == UpstreamKind::Management {
             return;
         }
-        self.telemetry.emit(&RequestTelemetry {
+        self.telemetry.emit_lazy(|| RequestTelemetry {
             schema_version: 1,
             request_id: context.request_id.clone(),
             method: context.method.clone(),

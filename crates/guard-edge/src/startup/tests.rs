@@ -3,8 +3,9 @@
 use std::fs;
 
 use super::{
-    EdgeStartupError, GRACE_PERIOD_SECONDS, GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS, UPGRADE_SOCKET,
-    install_crypto_provider, load_runtime, server_configuration,
+    EdgeStartupError, GRACE_PERIOD_SECONDS, GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
+    MAX_AUTO_WORKER_THREADS, UPGRADE_SOCKET, effective_worker_threads, install_crypto_provider,
+    load_runtime, server_configuration,
 };
 
 #[test]
@@ -34,8 +35,9 @@ fn crypto_provider_installation_is_idempotent() -> Result<(), Box<dyn std::error
 
 #[test]
 fn pingora_upgrade_uses_private_runtime_socket_and_bounded_drain() {
-    let configuration = server_configuration();
+    let configuration = server_configuration(Some(2));
 
+    assert_eq!(configuration.threads, 2);
     assert_eq!(configuration.upgrade_sock, UPGRADE_SOCKET);
     assert!(configuration.upgrade_sock.starts_with("/run/vps-guard/"));
     assert_eq!(
@@ -50,4 +52,11 @@ fn pingora_upgrade_uses_private_runtime_socket_and_bounded_drain() {
         configuration.upgrade_sock_connect_accept_max_retries,
         Some(10)
     );
+}
+
+#[test]
+fn automatic_worker_count_is_cpu_aware_and_bounded() {
+    let workers = effective_worker_threads(None);
+
+    assert!((1..=MAX_AUTO_WORKER_THREADS).contains(&workers));
 }

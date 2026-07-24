@@ -73,6 +73,7 @@ pub(crate) struct EffectiveRouteProfile {
 #[derive(Debug, Clone)]
 pub(crate) struct EdgeRuntimeConfig {
     pub(crate) listen_addr: String,
+    pub(crate) worker_threads: Option<usize>,
     pub(crate) tls: Option<RuntimeTlsConfig>,
     pub(crate) management: Option<RuntimeManagementConfig>,
     pub(crate) origin_host: String,
@@ -206,6 +207,7 @@ impl EdgeRuntimeConfig {
         }
         Ok(Self {
             listen_addr: config.edge.http_bind.to_string(),
+            worker_threads: config.edge.worker_threads,
             tls,
             management,
             origin_host: config.origin.address.ip().to_string(),

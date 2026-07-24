@@ -12,6 +12,8 @@ use crate::crawler::{CrawlerNetwork, CrawlerProvider};
 
 /// 현재 지원하는 설정 schema 버전입니다.
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+/// 운영자가 명시할 수 있는 Pingora worker 상한입니다.
+pub const MAX_EDGE_WORKER_THREADS: usize = 8;
 
 /// VPSGuard 전체 설정입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -67,6 +69,9 @@ pub struct EdgeConfig {
     /// HTTPS listener 주소입니다. `None`이면 TLS listener를 열지 않습니다.
     #[serde(default)]
     pub https_bind: Option<SocketAddr>,
+    /// Pingora worker 수입니다. `None`이면 가용 CPU 기준 bounded 자동값을 사용합니다.
+    #[serde(default)]
+    pub worker_threads: Option<usize>,
     /// 요청 Host allowlist입니다.
     pub allowed_hosts: Vec<String>,
     /// 다른 허용 Host를 이 Host로 redirect합니다.
@@ -856,6 +861,16 @@ impl GuardConfig {
         }
         if self.edge.max_tracked_clients == 0 {
             return invalid("edge.max_tracked_clients", "0보다 커야 합니다");
+        }
+        if self
+            .edge
+            .worker_threads
+            .is_some_and(|workers| !(1..=MAX_EDGE_WORKER_THREADS).contains(&workers))
+        {
+            return invalid(
+                "edge.worker_threads",
+                format!("1 이상 {MAX_EDGE_WORKER_THREADS} 이하여야 합니다"),
+            );
         }
         if !(1..=65_535).contains(&self.edge.max_in_flight_requests) {
             return invalid(

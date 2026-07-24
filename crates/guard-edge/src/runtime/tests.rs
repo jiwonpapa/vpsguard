@@ -16,6 +16,7 @@ fn observe_mode_never_enables_common_rate_limits() -> Result<(), Box<dyn std::er
     assert_eq!(runtime.rate_limit(RouteClass::Strict), None);
     assert_eq!(runtime.rate_limit(RouteClass::Upload), None);
     assert_eq!(runtime.authentication_rate_limit(), None);
+    assert_eq!(runtime.worker_threads, None);
     assert_eq!(runtime.max_in_flight_requests, 1_024);
     assert_eq!(runtime.downstream_io_timeout.as_millis(), 30_000);
     assert_eq!(runtime.downstream_min_send_rate_bps, 1_024);

@@ -2,6 +2,8 @@ schema_version = 1
 
 [edge]
 http_bind = "127.0.0.1:18080"
+# 생략하면 가용 CPU 기준 1~4개로 자동 선택합니다. 명시값은 1~8만 허용합니다.
+# worker_threads = 2
 allowed_hosts = ["example.com", "www.example.com"]
 canonical_host = "example.com"
 trusted_proxy_cidrs = []

@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -94,6 +94,7 @@ pub struct TelemetrySink {
 struct TelemetryInner {
     path: PathBuf,
     socket: Mutex<Option<UnixDatagram>>,
+    available: AtomicBool,
     dropped: AtomicU64,
     emitted: AtomicU64,
     reconnected: AtomicU64,
@@ -110,9 +111,12 @@ impl TelemetrySink {
     }
 
     fn connect_with_interval(path: &Path, reconnect_interval: Duration) -> Self {
+        let socket = connect_socket(path);
+        let available = socket.is_some();
         let inner = Arc::new(TelemetryInner {
             path: path.to_path_buf(),
-            socket: Mutex::new(connect_socket(path)),
+            socket: Mutex::new(socket),
+            available: AtomicBool::new(available),
             dropped: AtomicU64::new(0),
             emitted: AtomicU64::new(0),
             reconnected: AtomicU64::new(0),
@@ -120,6 +124,15 @@ impl TelemetrySink {
         });
         spawn_reconnector(&inner);
         Self { inner }
+    }
+
+    /// receiver가 없으면 payload와 문자열 clone을 만들지 않고 drop만 계측합니다.
+    pub fn emit_lazy(&self, telemetry: impl FnOnce() -> RequestTelemetry) {
+        if !self.inner.available.load(Ordering::Acquire) {
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        self.emit(&telemetry());
     }
 
     /// 요청을 blocking 없이 전송하며 실패는 drop counter로만 기록합니다.
@@ -157,6 +170,7 @@ impl TelemetrySink {
                         | ErrorKind::BrokenPipe
                 ) {
                     *socket_guard = None;
+                    self.inner.available.store(false, Ordering::Release);
                 }
             }
         }
@@ -187,6 +201,7 @@ impl TelemetrySink {
             inner: Arc::new(TelemetryInner {
                 path: PathBuf::new(),
                 socket: Mutex::new(Some(socket)),
+                available: AtomicBool::new(true),
                 dropped: AtomicU64::new(0),
                 emitted: AtomicU64::new(0),
                 reconnected: AtomicU64::new(0),
@@ -223,6 +238,7 @@ fn spawn_reconnector(inner: &Arc<TelemetryInner>) {
                     && let Some(socket) = connect_socket(&inner.path)
                 {
                     *socket_guard = Some(socket);
+                    inner.available.store(true, Ordering::Release);
                     inner.reconnected.fetch_add(1, Ordering::Relaxed);
                 }
             }

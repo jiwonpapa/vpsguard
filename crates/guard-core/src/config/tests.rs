@@ -73,6 +73,7 @@ fn parses_valid_observe_only_config() {
     assert_eq!(config.edge.prefix_rate_limit_multiplier, 32);
     assert_eq!(config.edge.route_rate_limit_multiplier, 128);
     assert_eq!(config.edge.global_rate_limit_multiplier, 256);
+    assert_eq!(config.edge.worker_threads, None);
     assert_eq!(config.edge.max_in_flight_requests, 1_024);
     assert_eq!(config.edge.downstream_io_timeout_ms, 30_000);
     assert_eq!(config.edge.downstream_min_send_rate_bps, 1_024);
@@ -131,6 +132,8 @@ fn validates_bounded_https_notification_settings() {
 #[test]
 fn rejects_unbounded_downstream_resource_settings() {
     for (field, setting) in [
+        ("edge.worker_threads", "worker_threads = 0"),
+        ("edge.worker_threads", "worker_threads = 9"),
         ("edge.max_in_flight_requests", "max_in_flight_requests = 0"),
         (
             "edge.downstream_io_timeout_ms",
@@ -157,6 +160,17 @@ fn rejects_unbounded_downstream_resource_settings() {
             }) if actual == field
         ));
     }
+}
+
+#[test]
+fn accepts_bounded_explicit_edge_worker_count() {
+    let input = VALID_CONFIG.replace(
+        "max_tracked_clients = 10000",
+        "max_tracked_clients = 10000\nworker_threads = 2",
+    );
+    let config = GuardConfig::from_toml(&input).expect("bounded worker count should parse");
+
+    assert_eq!(config.edge.worker_threads, Some(2));
 }
 
 #[test]
