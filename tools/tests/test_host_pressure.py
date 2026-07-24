@@ -103,7 +103,7 @@ class HostPressureTest(unittest.TestCase):
                 "sample_interval_ms": 1_000,
                 "request_interval_ms": 2_000,
                 "cpu_workers": 4,
-                "probe_interval_ms": 100,
+                "probe_interval_ms": 1_000,
                 "max_outage_ms": 5_000,
             },
         }
@@ -149,7 +149,7 @@ class HostPressureTest(unittest.TestCase):
                 "/0123456789abcdef0123456789abcdef01234567"
             )
         )
-        self.assertEqual(plan["public_probe"]["interval_ms"], 100)
+        self.assertEqual(plan["public_probe"]["interval_ms"], 1_000)
         self.assertIn("restore_original_memory_and_balloon", plan["steps"])
         self.assertFalse(plan["stores_response_bodies"])
 

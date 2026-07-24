@@ -114,7 +114,7 @@ class HostPressureManifest:
             or execution["sample_interval_ms"] != 1_000
             or not _integer_between(execution["request_interval_ms"], 1_000, 5_000)
             or not _integer_between(execution["cpu_workers"], 1, 64)
-            or execution["probe_interval_ms"] != 100
+            or execution["probe_interval_ms"] != 1_000
             or not _integer_between(execution["max_outage_ms"], 100, 5_000)
         ):
             fail(
