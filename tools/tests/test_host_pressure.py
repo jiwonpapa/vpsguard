@@ -118,6 +118,7 @@ class HostPressureTest(unittest.TestCase):
         plan = json.loads(self.evidence.with_suffix(".plan.json").read_text(encoding="utf-8"))
         self.assertEqual(plan["execution"]["pressure_seconds"], 40)
         self.assertEqual(plan["execution"]["cpu_workers"], 4)
+        self.assertTrue(plan["target"]["stage"].endswith("/det014-host-pressure"))
         self.assertEqual(plan["public_probe"]["interval_ms"], 100)
         self.assertIn("restore_original_memory_and_balloon", plan["steps"])
         self.assertFalse(plan["stores_response_bodies"])

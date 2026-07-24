@@ -51,7 +51,7 @@ def run_host_pressure(
             "pressure evidence는 repository 아래여야 합니다.",
             str(evidence_path),
         )
-    stage_path = manifest.protection.stage_base
+    stage_path = manifest.protection.stage_base / "det014-host-pressure"
     atomic_json(evidence_path.with_suffix(".plan.json"), _plan(manifest, stage_path))
     if not execute:
         return None
