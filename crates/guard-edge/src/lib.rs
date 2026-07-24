@@ -12,10 +12,12 @@ mod response;
 mod runtime;
 mod security;
 mod startup;
+pub mod supervisor;
 pub mod telemetry;
 pub mod tls;
 
-pub use startup::{EdgeStartupError, run_from_path};
+pub use startup::{EdgeStartupError, EdgeWorkerOptions, run_from_path, run_worker_from_path};
+pub use supervisor::{EdgeSupervisorError, run_supervisor};
 
 /// 현재 연결된 core 계약 버전을 반환합니다.
 #[must_use]

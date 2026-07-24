@@ -82,6 +82,18 @@ enum Command {
         #[arg(long, default_value_t = 5)]
         timeout_seconds: u64,
     },
+    /// 갱신 TLS PEM을 edge runtime reload bundle로 원자 준비합니다.
+    StageTlsReload {
+        /// 갱신된 PEM certificate chain입니다.
+        #[arg(long)]
+        certificate: PathBuf,
+        /// certificate와 일치하는 PEM private key입니다.
+        #[arg(long)]
+        key: PathBuf,
+        /// certificate SAN에 반드시 포함될 exact DNS 이름입니다.
+        #[arg(long)]
+        server_name: String,
+    },
     /// local peer credential로 짧은 단회 웹 로그인 코드를 발급합니다.
     IssueLoginCode {
         /// Control local 관리자 socket입니다.
@@ -352,6 +364,9 @@ enum CliError {
     Policy(#[from] guard_core::PolicyError),
     #[error(transparent)]
     ServedCertificate(#[from] guard_system::ServedCertificateProbeError),
+    /// TLS reload bundle 준비 실패입니다.
+    #[error(transparent)]
+    TlsReloadStage(#[from] guard_system::TlsReloadStageError),
     #[error(
         "실제 제공 certificate가 설정 파일과 다릅니다: expected_sha256={expected_sha256}, served_sha256={served_sha256}"
     )]
@@ -507,6 +522,23 @@ fn execute(cli: Cli) -> Result<String, CliError> {
                 Duration::from_secs(timeout_seconds),
             )?;
             format_served_certificate_report(report)
+        }
+        Command::StageTlsReload {
+            certificate,
+            key,
+            server_name,
+        } => {
+            let certificate = guard_core::config::CertificateConfig {
+                domains: vec![server_name],
+                cert_file: certificate,
+                key_file: key,
+                certbot_lineage: None,
+            };
+            let report = guard_system::stage_tls_reload_bundle(
+                &certificate,
+                std::path::Path::new("/run/vps-guard-tls"),
+            )?;
+            Ok(serde_json::to_string_pretty(&report)?)
         }
         Command::IssueLoginCode {
             socket,

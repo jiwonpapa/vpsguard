@@ -8,7 +8,7 @@ use guard_core::{ConfigError, GuardConfig};
 use pingora_core::apps::HttpServerOptions;
 use pingora_core::listeners::tls::TlsSettings;
 use pingora_core::server::Server;
-use pingora_core::server::configuration::Opt;
+use pingora_core::server::configuration::{Opt, ServerConf};
 use pingora_proxy::ProxyServiceBuilder;
 use thiserror::Error;
 use tracing::info;
@@ -17,9 +17,24 @@ use crate::proxy::GuardEdge;
 use crate::runtime::{EdgeRuntimeConfig, RuntimeConfigError};
 use crate::tls::{TlsPreflightError, preflight};
 
+const UPGRADE_SOCKET: &str = "/run/vps-guard/pingora-upgrade.sock";
+const GRACE_PERIOD_SECONDS: u64 = 30;
+const GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS: u64 = 5;
+
 #[cfg(test)]
 #[path = "startup/tests.rs"]
 mod tests;
+
+/// 내부 Pingora worker의 실행 모드입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EdgeWorkerOptions {
+    /// 실행 중 worker에서 listener FD를 인계받습니다.
+    pub upgrade: bool,
+    /// 설정과 TLS credential만 검증하고 listener를 열지 않습니다.
+    pub test: bool,
+    /// Certbot hook이 준비한 runtime TLS bundle을 사용합니다.
+    pub tls_reload: bool,
+}
 
 /// Edge가 listener를 열기 전 발생할 수 있는 startup 실패입니다.
 #[derive(Debug, Error)]
@@ -36,15 +51,15 @@ pub enum EdgeStartupError {
     /// rustls provider를 설치하지 못했습니다.
     #[error("rustls crypto provider를 설치하지 못했습니다")]
     CryptoProvider,
-    /// Pingora server를 만들지 못했습니다.
-    #[error("Pingora server 초기화 실패: {0}")]
-    Server(String),
     /// TLS listener를 추가하지 못했습니다.
     #[error("TLS listener 초기화 실패: {0}")]
     TlsListener(String),
     /// 인증서, key, domain 또는 유효기간 사전 검증 실패입니다.
     #[error(transparent)]
     TlsPreflight(#[from] TlsPreflightError),
+    /// TLS listener 없이 reload bundle 사용이 요청됐습니다.
+    #[error("TLS listener가 없으므로 reload bundle을 사용할 수 없습니다")]
+    TlsReloadWithoutListener,
 }
 
 /// TOML 설정을 읽고 검증한 뒤 edge server를 실행합니다.
@@ -53,12 +68,33 @@ pub enum EdgeStartupError {
 ///
 /// 파일, 설정, crypto provider 또는 listener 초기화가 실패하면 반환합니다.
 pub fn run_from_path(path: &Path) -> Result<(), EdgeStartupError> {
-    let runtime = load_runtime(path)?;
+    run_worker_from_path(path, EdgeWorkerOptions::default())
+}
+
+/// TOML 설정을 읽고 내부 worker 옵션에 따라 edge server를 실행합니다.
+///
+/// # Errors
+///
+/// 파일, 설정, crypto provider, TLS reload bundle 또는 listener 초기화가 실패하면
+/// 반환합니다.
+pub fn run_worker_from_path(
+    path: &Path,
+    options: EdgeWorkerOptions,
+) -> Result<(), EdgeStartupError> {
+    let mut runtime = load_runtime(path)?;
+    if options.tls_reload {
+        let tls = runtime
+            .tls
+            .as_mut()
+            .ok_or(EdgeStartupError::TlsReloadWithoutListener)?;
+        tls.cert_file = guard_system::VPS_GUARD_TLS_RELOAD_CERTIFICATE.into();
+        tls.key_file = guard_system::VPS_GUARD_TLS_RELOAD_KEY.into();
+    }
     install_crypto_provider()?;
     if let Some(tls) = &runtime.tls {
         preflight(tls)?;
     }
-    run_server(runtime)
+    run_server(runtime, options)
 }
 
 fn load_runtime(path: &Path) -> Result<EdgeRuntimeConfig, EdgeStartupError> {
@@ -76,10 +112,19 @@ fn install_crypto_provider() -> Result<(), EdgeStartupError> {
         .map_err(|_| EdgeStartupError::CryptoProvider)
 }
 
-fn run_server(runtime: EdgeRuntimeConfig) -> Result<(), EdgeStartupError> {
-    let options = Opt::parse_args();
-    let mut server = Server::new(Some(options))
-        .map_err(|error| EdgeStartupError::Server(format!("{error:?}")))?;
+fn run_server(
+    runtime: EdgeRuntimeConfig,
+    worker_options: EdgeWorkerOptions,
+) -> Result<(), EdgeStartupError> {
+    let options = Opt {
+        upgrade: worker_options.upgrade,
+        daemon: false,
+        nocapture: false,
+        test: worker_options.test,
+        conf: None,
+    };
+    let configuration = server_configuration();
+    let mut server = Server::new_with_opt_and_conf(Some(options), configuration);
     server.bootstrap();
     let app = GuardEdge::new(runtime.clone());
     let mut server_options = HttpServerOptions::default();
@@ -109,4 +154,14 @@ fn run_server(runtime: EdgeRuntimeConfig) -> Result<(), EdgeStartupError> {
     );
     server.add_service(service);
     server.run_forever();
+}
+
+fn server_configuration() -> ServerConf {
+    ServerConf {
+        upgrade_sock: UPGRADE_SOCKET.to_owned(),
+        grace_period_seconds: Some(GRACE_PERIOD_SECONDS),
+        graceful_shutdown_timeout_seconds: Some(GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS),
+        upgrade_sock_connect_accept_max_retries: Some(10),
+        ..ServerConf::default()
+    }
 }

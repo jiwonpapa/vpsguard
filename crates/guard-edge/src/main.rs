@@ -10,10 +10,26 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "vps-guard-edge", version, about = "VPSGuard Pingora edge")]
-struct Cli {}
+struct Cli {
+    /// systemd main process로 worker를 관리합니다.
+    #[arg(long, hide = true, conflicts_with = "worker")]
+    supervisor: bool,
+    /// supervisor가 실행하는 내부 Pingora worker입니다.
+    #[arg(long, hide = true, conflicts_with = "supervisor")]
+    worker: bool,
+    /// 실행 중 worker에서 listener FD를 인계받습니다.
+    #[arg(long, hide = true, requires = "worker")]
+    upgrade: bool,
+    /// 설정과 TLS credential만 검증합니다.
+    #[arg(long, hide = true, requires = "worker")]
+    test: bool,
+    /// Certbot hook이 원자 준비한 runtime TLS bundle을 사용합니다.
+    #[arg(long, hide = true, requires = "worker")]
+    tls_reload: bool,
+}
 
 fn main() -> ExitCode {
-    Cli::parse();
+    let cli = Cli::parse();
     if let Err(initialization_error) = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .json()
@@ -34,7 +50,22 @@ fn main() -> ExitCode {
         build_commit = option_env!("VPS_GUARD_BUILD_COMMIT").unwrap_or("unknown"),
         "edge starting"
     );
-    match guard_edge::run_from_path(&config_path) {
+    let result = if cli.supervisor {
+        guard_edge::run_supervisor(&config_path).map_err(|error| error.to_string())
+    } else if cli.worker {
+        guard_edge::run_worker_from_path(
+            &config_path,
+            guard_edge::EdgeWorkerOptions {
+                upgrade: cli.upgrade,
+                test: cli.test,
+                tls_reload: cli.tls_reload,
+            },
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        guard_edge::run_from_path(&config_path).map_err(|error| error.to_string())
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(startup_error) => {
             error!(

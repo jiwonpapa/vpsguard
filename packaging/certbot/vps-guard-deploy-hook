@@ -19,7 +19,13 @@ key_pub="$(openssl pkey -in "${key}" -pubout -outform DER | sha256sum | cut -d' 
 [[ "${cert_pub}" == "${key_pub}" ]] || { echo "certificate/private key mismatch" >&2; exit 1; }
 openssl x509 -checkend 86400 -noout -in "${cert}"
 /usr/local/bin/vps-guard check-config --config "${config}"
-systemctl restart vps-guard-edge.service
+/usr/local/bin/vps-guard stage-tls-reload \
+  --certificate "${cert}" \
+  --key "${key}" \
+  --server-name "${tls_server_name}" >/dev/null
+systemctl reload vps-guard-edge.service
+# Pingora old worker keeps accepting for five seconds while listener FDs move.
+sleep 6
 curl_args=(--fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0)
 if [[ -n "${health_host}" ]]; then
   curl_args+=(-H "Host: ${health_host}")

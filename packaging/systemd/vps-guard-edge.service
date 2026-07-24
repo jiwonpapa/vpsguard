@@ -10,7 +10,8 @@ StartLimitBurst=30
 Type=simple
 User=vps-guard
 Group=vps-guard
-ExecStart=/usr/local/bin/vps-guard-edge
+ExecStart=/usr/local/bin/vps-guard-edge --supervisor
+ExecReload=/bin/kill -HUP $MAINPID
 Environment=VPS_GUARD_CONFIG=/etc/vps-guard/config.toml
 Environment=RUST_LOG=vps_guard_edge=info,guard_edge=info,pingora=off
 StandardOutput=journal
@@ -20,7 +21,7 @@ LogRateLimitIntervalSec=30s
 LogRateLimitBurst=2000
 Restart=always
 RestartSec=2s
-# OPS-011: Pingora treats SIGINT as bounded fast shutdown for ingress rollback.
+# OPS-011: supervisor forwards SIGINT for bounded fast ingress rollback.
 KillSignal=SIGINT
 TimeoutStopSec=4s
 RuntimeDirectory=vps-guard
@@ -32,6 +33,7 @@ PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
 ReadOnlyPaths=/etc/letsencrypt
+ReadOnlyPaths=/run/vps-guard-tls
 ReadWritePaths=/run/vps-guard
 RestrictSUIDSGID=yes
 LockPersonality=yes

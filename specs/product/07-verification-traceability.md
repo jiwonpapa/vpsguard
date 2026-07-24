@@ -99,7 +99,7 @@ last_reviewed: 2026-07-24
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
 | `TLS-001` | `crates/guard-edge/tests/certificate_validation.rs` | invalid cert start rejection |
-| `TLS-002`, `TLS-003`, `TLS-006` | `tests/e2e/certbot_renew.rs` | [`g7devops` staging webroot renew·timer·deploy hook report](evidence/g7devops-direct-tls-20260715.md) |
+| `TLS-002`, `TLS-003`, `TLS-006` | `crates/guard-edge/src/supervisor/tests.rs`, `crates/guard-system/src/tls/reload/tests.rs`, `scripts/tests/repository-contracts.sh`, `tests/e2e/certbot_renew.rs` | [`g7devops` staging webroot renew·timer report](evidence/g7devops-direct-tls-20260715.md); 격리 VPS의 새 supervisor 기반 FD 인계·connection drain·renew 직후 증거는 미수집 |
 | `TLS-004` | `crates/guard-system/src/tls/served/tests.rs`, `crates/guard-cli/src/main.rs`, `tools/tests/test_packaging_security.py` | staging renewal 직후 hook·listener fingerprint comparison |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | [`g7devops` 전환 전후 fingerprint](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |

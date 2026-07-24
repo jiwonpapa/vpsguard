@@ -17,8 +17,13 @@ use x509_parser::parse_x509_certificate;
 
 use crate::{OwnedProgram, SystemCommandRunner};
 
+mod reload;
 mod served;
 
+pub use reload::{
+    TlsReloadBundle, TlsReloadStageError, VPS_GUARD_TLS_RELOAD_CERTIFICATE,
+    VPS_GUARD_TLS_RELOAD_DIRECTORY, VPS_GUARD_TLS_RELOAD_KEY, stage_tls_reload_bundle,
+};
 pub use served::{
     ServedCertificateProbeError, ServedCertificateReport, ServedCertificateState,
     inspect_served_certificate,

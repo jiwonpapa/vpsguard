@@ -37,9 +37,10 @@ pub use secret::{SecretFileError, SecretFilePolicy, load_secret_file, resolve_cr
 pub use tls::{
     CertbotAssistedPlan, CertbotPlanError, CertbotPlanStep, CertificateInspection,
     ServedCertificateProbeError, ServedCertificateReport, ServedCertificateState, TlsHealth,
-    TlsManagementSnapshot, TlsOwnership, TlsRenewalState, build_certbot_assisted_plan,
-    inspect_served_certificate, inspect_tls_management, resolve_tls_credential_path,
-    validate_certificate,
+    TlsManagementSnapshot, TlsOwnership, TlsReloadBundle, TlsReloadStageError, TlsRenewalState,
+    VPS_GUARD_TLS_RELOAD_CERTIFICATE, VPS_GUARD_TLS_RELOAD_DIRECTORY, VPS_GUARD_TLS_RELOAD_KEY,
+    build_certbot_assisted_plan, inspect_served_certificate, inspect_tls_management,
+    resolve_tls_credential_path, stage_tls_reload_bundle, validate_certificate,
 };
 pub use ufw::{
     SystemUfwExecutor, UfwAction, UfwController, UfwError, UfwExecutor, UfwMutation,

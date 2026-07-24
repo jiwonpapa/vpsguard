@@ -77,6 +77,12 @@ class PrivilegedPackagingTests(unittest.TestCase):
         hook = (self.root / "packaging/certbot/vps-guard-deploy-hook").read_text(
             encoding="utf-8"
         )
+        edge_unit = (
+            self.root / "packaging/systemd/vps-guard-edge.service"
+        ).read_text(encoding="utf-8")
+        tmpfiles = (self.root / "packaging/tmpfiles/vps-guard.conf").read_text(
+            encoding="utf-8"
+        )
         site_hook = (self.root / "configs/certbot/g7devops-deploy-hook").read_text(
             encoding="utf-8"
         )
@@ -85,6 +91,16 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("verify-served-certificate", hook)
         self.assertIn('--certificate "${cert}"', hook)
         self.assertIn('--key "${key}"', hook)
+        self.assertIn("vps-guard stage-tls-reload", hook)
+        self.assertIn("systemctl reload vps-guard-edge.service", hook)
+        self.assertNotIn("systemctl restart vps-guard-edge.service", hook)
+        self.assertIn(
+            "ExecStart=/usr/local/bin/vps-guard-edge --supervisor", edge_unit
+        )
+        self.assertIn("ExecReload=/bin/kill -HUP $MAINPID", edge_unit)
+        self.assertIn(
+            "d /run/vps-guard-tls 0750 root vps-guard -", tmpfiles
+        )
         self.assertIn("VPS_GUARD_TLS_SERVER_NAME=www.g7devops.com", site_hook)
         self.assertIn("VPS_GUARD_TLS_ADDRESS=127.0.0.1:443", site_hook)
 
