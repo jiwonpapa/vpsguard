@@ -12,7 +12,7 @@ from pathlib import Path
 from .errors import HarnessError
 from .runner import CommandRunner, CommandScope, CommandSpec
 
-_GUEST_TIMEOUT_PATH = "/usr/bin/timeout"
+_GUEST_TIMEOUT_PATH = "/bin/timeout"
 _GUEST_TIMEOUT_GRACE_SECONDS = 15
 
 

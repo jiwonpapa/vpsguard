@@ -18,17 +18,9 @@ release_id=""
 release_dir=""
 release_created=false
 operation_started=0
-health_timeout_seconds=15
 wait_for_http() {
-  local deadline=$((SECONDS + health_timeout_seconds))
-  while (( SECONDS < deadline )); do
-    if curl --disable --fail --silent --connect-timeout 1 --max-time 2 "$@"; then
-      return 0
-    fi
-    sleep 0.25
-  done
-  echo "health check timeout after ${health_timeout_seconds}s: $*" >&2
-  return 1
+  curl --disable --fail --silent --show-error --retry 40 --retry-connrefused --retry-delay 0 \
+    --retry-max-time 13 --connect-timeout 1 --max-time 2 "$@"
 }
 atomic_symlink() {
   local target="$1"

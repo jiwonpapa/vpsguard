@@ -59,12 +59,7 @@ grep -Fq '/usr/local/lib/vps-guard/current' packaging/ownership-manifest.txt
 grep -Fq '/usr/local/lib/vps-guard/releases' packaging/ownership-manifest.txt
 grep -Fq 'deployment restore harness: PASS' scripts/tests/deployment-restore-harness.sh
 grep -Fq 'VPS_GUARD_EDGE_HEALTH_URL' scripts/update-release.sh
-grep -Fq 'health_timeout_seconds=15' scripts/update-release.sh
-grep -Fq -- '--connect-timeout 1 --max-time 2' scripts/update-release.sh
-if grep -Fq -- '--retry 40' scripts/update-release.sh; then
-  echo "update health wait must remain inside its 15-second hard limit" >&2
-  exit 1
-fi
+grep -Fq -- '--retry-max-time 13 --connect-timeout 1 --max-time 2' scripts/update-release.sh
 grep -Fq 'for binary in vps-guard vps-guard-control vps-guard-privileged vps-guard-edge' scripts/update-release.sh
 grep -Fq 'systemd/vps-guard-privileged.service' scripts/update-release.sh
 grep -Fq 'systemd/vps-guard-privileged.socket' scripts/update-release.sh

@@ -63,7 +63,7 @@ class GuestAgentTest(unittest.TestCase):
         self.assertEqual(command.argv[:4], ("ssh", "-o", "BatchMode=yes", "gnuboard7"))
         self.assertIn("qemu-agent-command", command.argv[4])
         self.assertIn("guest-exec", command.argv[4])
-        self.assertIn("/usr/bin/timeout", command.argv[4])
+        self.assertIn("/bin/timeout", command.argv[4])
         self.assertIn("--kill-after=15s", command.argv[4])
         self.assertIn("/bin/systemctl", command.argv[4])
         self.assertNotIn("\n", command.argv[4])
