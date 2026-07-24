@@ -32,7 +32,7 @@ last_reviewed: 2026-07-24
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
 | `DET-002`, `DET-011`, `DET-012` | 범용 PHP·GnuBoard 5·GnuBoard 7·WordPress route 분리, app 분류와 site override 합성, generic 보안 core와 G7 CSP·auth overlay 분리 | profile·edge runtime·security tests |
 | `DET-013` | 공식 CIDR feed의 Google·Naver·Bing 판정, 위조 crawler와 미허용 declared AI bot 분리 | crawler/config/updater unit와 VM GPTBot·Meta·위조 Googlebot 403; 실제 공식 crawler source allow는 미완료 |
-| `DET-014` | traffic latency·5xx와 실제 CPU·core-normalized load·memory·swap host pressure를 합성하고 `protocol_only + enforce` 자동 전이를 유지 | `/proc` fixture, host pressure reason code, 단일 WATCH·연속 LOCAL/EMERGENCY 회귀; 실제 2GB pressure timeline은 미완료 |
+| `DET-014` | traffic latency·5xx와 실제 CPU·core-normalized load·memory·swap host pressure를 합성하고 `protocol_only + enforce` 자동 전이를 유지 | `/proc` fixture와 [격리 2GB VM의 100% CPU·API exact 대조, `NORMAL→WATCH→LOCAL_GUARD→RECOVERING→NORMAL`, 75/75 public 200·무순단·자동 원복](evidence/gnuboard5-host-pressure-20260724.md); provider가 없는 VM이라 실제 `EMERGENCY_PROXY`는 미완료 |
 | `ACT-001`~`ACT-005` | client·route 제한, 429, signed clearance, 기능별 정책, TTL client rule | edge limiter·challenge·policy tests |
 | `ACT-006`~`ACT-012` 코드 | User token preflight, 동일 hostname의 명시적 A·AAAA/CNAME record ID별 checkpoint·TTL snapshot·즉시 rollback, Cloudflare read-back·외부 `cf-ray`·DNS cache drain, dual-stack nftables 원자 교체·정확 read-back, 재시작 재개·idempotency | fake API/provider/system/control tests; 실제 test zone 변경 증거 없음 |
 | `ACT-008` 자동 검증 | 안정 뒤 `RECOVERY_READY`에서 Cloudflare와 origin lock 유지, 관리자 인증·CSRF·재확인·idempotency 이후에만 snapshot 복구 | state·API·Playwright 회귀; 실제 test zone 승인 전후 read-back은 미완료 |
@@ -61,6 +61,7 @@ last_reviewed: 2026-07-24
 ## release gate 미완료
 
 - `EDGE-001`, `EDGE-002`, `EDGE-005`: `g7devops` public 80/443, 인증서별 multi-SNI 선택, WebSocket 실제 VPS E2E
+- `DET-014`: 2GB 로컬 압력·회복은 통과했으나 격리 Cloudflare test zone의 실제 `EMERGENCY_PROXY`·provider read-back·승인 복구가 남음
 - `OBS-003`~`OBS-006`, `OBS-010`, `OBS-011`: semantic·cgroup 수집 코드는 구현됐으나 실제 MySQL/Redis 최소 권한 smoke, cgroup/systemd 값 대조, busy·disk-full 장애와 2GB VPS 정확도·route-resource 상관 검증이 남음
 - `UI-001`: 실제 public 443 관리 Host의 인증서·접속·복구와 앱 origin 비혼선 VPS 증거
 - `UI-005`, `UI-006`, `UI-008`, `UI-010`, `UI-012`: client 상세 score/action, 동일축 상관 그래프, TLS 실제 read-back, 용어집, read/export 세부 역할 분리

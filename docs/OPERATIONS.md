@@ -267,6 +267,33 @@ python3 -m tools.vpsguard_harness vm-protection-pilot \
 완료되지 않으면 stage를 지우지 않아 같은 bundle과 snapshot으로 수동 복구할 수
 있습니다. g7devops public 서버에는 이 pilot을 사용하지 않습니다.
 
+## 격리 2GB host pressure pilot
+
+`DET-014`의 실제 host pressure는 `gnuboard5` private VM에서만 실행합니다.
+verified x86_64 bundle로 후보 release를 적용하고 VM을 2GiB로 축소한 뒤 고정된
+CPU worker, `/proc` 직접값, Control resource API와 상태 전이를 같은 timeline에
+기록합니다. public HTTPS probe는 enforce profile의 `120 rpm`보다 낮은
+`1,000 ms` 간격으로 고정하며 body와 credential을 저장하지 않습니다.
+
+```bash
+python3 -m tools.vpsguard_harness vm-host-pressure \
+  --manifest tests/vm/gnuboard5-host-pressure.json \
+  --bundle /absolute/path/to/vpsguard-x86_64-unknown-linux-gnu \
+  --evidence target-evidence/vm-lab/det014-host-pressure.json
+
+python3 -m tools.vpsguard_harness vm-host-pressure \
+  --manifest tests/vm/gnuboard5-host-pressure.json \
+  --bundle /absolute/path/to/vpsguard-x86_64-unknown-linux-gnu \
+  --evidence target-evidence/vm-lab/det014-host-pressure.json \
+  --run --confirm isolated-vm:gnuboard5
+```
+
+실행은 `NORMAL`, `WATCH`, `LOCAL_GUARD`, `RECOVERING`, `NORMAL` 순서와
+`/proc`·API 정합성, public 순단 예산을 강제합니다. 종료 시 원래 deployment
+snapshot, memory, balloon module, service와 SSH를 대조합니다. provider가 없는
+VM에서 `EMERGENCY_PROXY`를 성공으로 간주하지 않으며 Cloudflare test zone
+폐쇄루프 증거를 별도로 요구합니다.
+
 ## TLS 갱신
 
 `packaging/certbot/vps-guard-deploy-hook`를 Certbot deploy hook으로 설치합니다. hook은 certificate/key public key 일치, 24시간 이상 유효기간, VPSGuard config를 검사한 뒤 edge를 재시작하고 health를 read-back합니다. 이어서 `VPS_GUARD_TLS_SERVER_NAME`을 SNI로, `VPS_GUARD_TLS_ADDRESS`의 명시적 IP·port로 TLS handshake를 수행해 갱신 파일과 실제 listener leaf의 SHA-256이 정확히 같을 때만 성공합니다. DNS·CDN 경로와 origin listener 검증을 혼합하지 않습니다.

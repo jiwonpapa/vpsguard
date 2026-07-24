@@ -39,7 +39,7 @@ DET-009|PLANNED|-|-|-
 DET-010|AUTO_PASS|crates/guard-core/src/detection.rs|crates/guard-core/src/detection/tests.rs|-
 DET-011|AUTO_PASS|crates/guard-edge/src/runtime.rs|crates/guard-edge/src/runtime/tests.rs|-
 DET-012|AUTO_PASS|crates/guard-profiles/src/lib.rs|crates/guard-profiles/src/tests.rs|-
-DET-014|AUTO_PASS|crates/guard-control/src/runtime.rs|crates/guard-control/src/runtime/tests.rs|-
+DET-014|AUTO_PASS|crates/guard-control/src/runtime.rs|crates/guard-control/src/runtime/tests.rs|specs/product/evidence/gnuboard5-host-pressure-20260724.md
 ACT-001|AUTO_PASS|crates/guard-edge/src/rate_limit.rs|crates/guard-edge/src/rate_limit/tests.rs|-
 ACT-002|CODE_ONLY|crates/guard-edge/src/response.rs|-|-
 ACT-003|AUTO_PASS|crates/guard-edge/src/challenge.rs|crates/guard-edge/src/challenge.rs|-
