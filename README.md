@@ -49,17 +49,38 @@ HTTP/3은 초기 공개 지원 protocol이 아닙니다. 다만 배포·ingress 
 
 VPSGuard는 G7 Installer와 독립된 유지보수·방어 제품입니다. 설치기는 VPSGuard의 런타임 정책, 사건 상태와 업데이트를 소유하지 않습니다.
 
-## 서버 설치
+## 기존 사이트 설치와 적용
 
 > 요구사항: `OPS-001`, `OPS-002`, `OPS-005`~`OPS-011`, `SEC-001`, `SEC-015`
 
 현재 공개 설치 기준은 **Ubuntu 24.04 + systemd + Nginx**입니다. 기존 운영 사이트에는 먼저 `observe` shadow로 설치하고, 공개 요청 편입은 origin·edge·관리자 HTTPS를 모두 검증한 뒤 수행합니다. 운영 서버에는 Rust·Bun·Python package를 설치하지 않고 외부 Linux builder 또는 CI가 만든 checksum 포함 release bundle만 배포합니다.
 
-현재는 v0.1.0-alpha이므로 범용 `curl | sh` 설치기를 제공하지 않습니다. 저장소의 자동 배포 하네스는 `g7devops`와 `gnuboard5` 파일럿 환경에 묶여 있습니다. 다른 서버에서는 아래 수동 절차로 후보를 준비하고 staging에서 전환·복구를 먼저 검증해야 합니다.
+현재는 v0.1.0-alpha이므로 범용 `curl | sh` 설치기를 제공하지 않습니다. `scripts/deploy-g7devops.sh` 같은 원격 자동화는 파일럿 서버 전용이지만, release bundle 안의 `update-release.sh`는 일반 서버에서도 checksum 검증, 설치 전 snapshot, versioned binary 교체, health read-back과 실패 자동 복구를 담당합니다.
+
+### 기존 사이트에서 선택할 경로
+
+| 환경 | 적용 경로 | 현재 권장 |
+|---|---|---|
+| 기존 Nginx+Certbot 사이트 | `Internet -> Nginx TLS -> VPSGuard loopback -> Nginx loopback origin -> Application` | 알파 첫 적용 권장. 기존 TLS·Certbot과 public port를 유지해 즉시 원복 가능 |
+| VPSGuard 직접 TLS | `Internet -> VPSGuard :80/:443 -> Nginx loopback origin -> Application` | 전체 edge 보호 경로. 인증서 credential·renew hook·5초 cutover 하네스 검증 후 사용 |
+| 기존 Apache 사이트 | `Apache public TLS -> VPSGuard loopback -> Apache loopback origin` | 현재 GnuBoard 5 격리 VM 파일럿 범위 |
+| 웹서버 없는 PHP-FPM | 지원하지 않음 | VPSGuard는 PHP FastCGI·정적 파일 웹서버가 아니므로 Nginx 또는 검증된 Apache origin 필요 |
+
+기존 사이트 첫 적용에서는 애플리케이션 소스, PHP-FPM socket, DB와 Redis 설정을 바꾸지 않습니다. Nginx의 기존 애플리케이션 처리 block을 loopback origin으로 옮기고 public virtual host의 애플리케이션 요청만 VPSGuard로 전달합니다.
+
+```text
+1. 기존 상태 기록·direct bypass 보관
+2. loopback origin 생성·직접 probe
+3. VPSGuard observe shadow 설치·probe
+4. public Nginx location만 VPSGuard로 전환
+5. 공개 HTTPS·관리 UI·WebSocket·로그인·업로드 smoke
+```
+
+어느 단계든 실패하면 다음 단계로 넘어가지 않습니다. 공개 장애 시에는 Nginx를 먼저 direct bypass로 돌려 사이트를 살린 뒤 VPSGuard deployment snapshot을 복구합니다.
 
 ### 1. 설치 전 확인
 
-- 기존 Nginx 설정, 인증서, SSH port와 UFW 상태를 백업·기록합니다.
+- 기존 Nginx 전체 설정, 인증서 lineage, SSH port, TCP·UDP listener와 UFW 상태를 백업·기록합니다.
 - 애플리케이션 Host, 관리자 전용 Host, origin port와 실제 PHP-FPM·upstream 경로를 확정합니다.
 - `7727`, `18080`, `18081`은 loopback 전용이며 UFW에 공개하지 않습니다.
 - 첫 설치는 `detection.mode = "observe"`, `cloudflare.enabled = false`, CSP report-only로 시작합니다.
@@ -71,16 +92,20 @@ VPSGuard는 G7 Installer와 독립된 유지보수·방어 제품입니다. 설�
 uname -m
 grep -E '^(ID|VERSION_ID)=' /etc/os-release
 sudo -n true
-sudo ss -ltnp
+sudo ss -ltnup
 sudo nginx -t
 sudo systemctl is-active nginx.service
+sudo nginx -T > /tmp/nginx-before-vpsguard.txt
+sudo certbot certificates
 ```
 
-필수 운영 package를 설치합니다. Nginx가 없는 새 서버라면 `nginx`를 함께 설치합니다.
+필수 운영 package만 설치합니다. 기존 Nginx·Certbot은 재설치하지 않습니다. UFW를 VPSGuard에서 관리할 서버만 `ufw`를 별도로 설치합니다.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl ufw
+sudo apt-get install -y ca-certificates curl libpam0g
+# standalone_ufw를 사용할 때만:
+sudo apt-get install -y ufw
 ```
 
 ### 2. 검증된 release bundle 생성·전송
@@ -106,16 +131,16 @@ rsync -a "$BUNDLE/" operator@example.com:/tmp/vpsguard-bundle/
 GitHub Release 자동 첨부는 release gate이므로 Actions artifact 또는 직접 검증한
 bundle을 사용합니다.
 
-### 3. 서버 계정·설정·systemd 설치
+### 3. 서버 계정과 observe 설정 준비
 
-이하 명령은 대상 서버에서 실행합니다. 먼저 bundle checksum과 target을 확인하고, 설치 전 VPSGuard 소유 경로를 snapshot합니다. 출력된 `snapshot=/var/backups/vps-guard/deployments/...` 경로를 반드시 보관합니다.
+이하 명령은 대상 서버에서 실행합니다. 먼저 bundle checksum·target과 VPSGuard가 소유할 경계를 변경 없이 확인합니다.
 
 ```bash
 BUNDLE=/tmp/vpsguard-bundle
 cd "$BUNDLE"
 sha256sum --check SHA256SUMS
 cat BUILD-INFO.txt
-sudo "$BUNDLE/bin/vps-guard" ops deployment-state snapshot
+sudo "$BUNDLE/bin/vps-guard" ops deployment-state plan
 ```
 
 전용 서비스 계정과 관리자 group을 한 번만 생성합니다. `<관리자계정>`에는 실제로 로그인할 기존 non-root Linux 계정을 넣고, group 반영을 위해 새 SSH session으로 다시 접속합니다.
@@ -127,20 +152,14 @@ getent group vpsguard-admin >/dev/null || sudo groupadd --system vpsguard-admin
 sudo usermod -aG vpsguard-admin <관리자계정>
 ```
 
-기본 파일을 설치합니다.
+설정·비밀값 directory와 observe 설정만 먼저 준비합니다. binary·systemd·PAM·tmpfiles 설치는 다음 단계의 rollback 하네스가 담당합니다.
 
 ```bash
 sudo install -d -m 0750 -o root -g vps-guard /etc/vps-guard
 sudo install -d -m 0700 -o root -g root /etc/vps-guard/secrets /var/lib/vps-guard/pam
 sudo install -d -m 0750 -o vps-guard -g vps-guard /var/lib/vps-guard /var/lib/vps-guard/events
 
-sudo install -m 0755 "$BUNDLE"/bin/vps-guard{,-control,-privileged,-edge} /usr/local/bin/
-sudo install -m 0644 "$BUNDLE"/systemd/*.service "$BUNDLE"/systemd/*.socket /etc/systemd/system/
-sudo install -m 0644 "$BUNDLE/tmpfiles/vps-guard.conf" /usr/lib/tmpfiles.d/vps-guard.conf
-sudo install -m 0644 "$BUNDLE/pam/vps-guard" /etc/pam.d/vps-guard
 sudo install -m 0640 -o root -g vps-guard "$BUNDLE/vps-guard.example.toml" /etc/vps-guard/config.toml
-sudo install -m 0644 "$BUNDLE/ownership-manifest.txt" /var/lib/vps-guard/ownership-manifest.txt
-sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/vps-guard.conf
 ```
 
 `sudoedit /etc/vps-guard/config.toml`로 최소 다음 값을 실제 서버에 맞춥니다.
@@ -182,11 +201,11 @@ mode = "disabled" # SSH·HTTPS 확인 뒤 standalone_ufw로 변경
 ssh_port = 22
 ```
 
-설정은 service 시작 전에 검증합니다.
+설정은 설치 하네스를 실행하기 전에 bundle의 검증된 CLI로 확인합니다.
 
 ```bash
-sudo /usr/local/bin/vps-guard check-config --config /etc/vps-guard/config.toml
-sudo systemctl daemon-reload
+sudo "$BUNDLE/bin/vps-guard" check-config --config /etc/vps-guard/config.toml
+sudo "$BUNDLE/bin/vps-guard" plan --config /etc/vps-guard/config.toml
 ```
 
 ### 4. Nginx 웹서버 설정
@@ -199,7 +218,7 @@ Internet -> Nginx public TLS :443 -> VPSGuard 127.0.0.1:18080
 Admin    -> guard.example.com:443 -> Control 127.0.0.1:7727
 ```
 
-먼저 기존 public virtual host는 그대로 둔 채, 기존 애플리케이션 처리 block을 복사해 loopback origin을 추가합니다. PHP 서비스명·root·location은 현재 사이트 값을 유지해야 합니다.
+먼저 기존 public virtual host는 그대로 둔 채, 기존 애플리케이션 처리 block을 복사해 loopback origin을 추가합니다. PHP 서비스명·root·`try_files`·FastCGI·WebSocket·upload location은 현재 사이트 값을 유지해야 합니다.
 
 ```bash
 sudo cp --preserve=all /etc/nginx/sites-available/example.conf \
@@ -242,26 +261,38 @@ server {
 }
 ```
 
-origin을 먼저 검사·reload하고 직접 응답을 확인합니다.
+origin을 먼저 검사·reload하고 HTTPS로 전달된 요청과 같은 header로 직접 응답을 확인합니다.
 
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx.service
-curl --fail --header 'Host: example.com' http://127.0.0.1:18081/
+curl --fail \
+  --header 'Host: example.com' \
+  --header 'X-Forwarded-Proto: https' \
+  http://127.0.0.1:18081/
 ```
 
-이제 VPSGuard를 loopback shadow로 시작합니다.
+이제 rollback 하네스로 VPSGuard를 설치하고 loopback shadow로 시작합니다. `--apply`는 release를 versioned directory에 설치하고 `/usr/local/bin`을 원자 symlink로 전환합니다. 중간 실패 시 설치 전 snapshot으로 자동 복구합니다.
 
 ```bash
-sudo systemctl enable --now vps-guard-privileged.socket vps-guard-privileged.service
-sudo systemctl enable --now vps-guard-control.service vps-guard-edge.service
+sudo bash "$BUNDLE/scripts/update-release.sh" --plan "$BUNDLE"
+sudo env \
+  VPS_GUARD_UPDATE_CONFIRM=update-with-rollback \
+  VPS_GUARD_EDGE_HOST=example.com \
+  bash "$BUNDLE/scripts/update-release.sh" --apply "$BUNDLE"
+
+sudo systemctl enable \
+  vps-guard-privileged.socket vps-guard-privileged.service \
+  vps-guard-control.service vps-guard-edge.service
 
 curl --fail http://127.0.0.1:7727/health/live
 curl --fail --header 'Host: example.com' http://127.0.0.1:18080/health/live
 curl --fail --header 'Host: example.com' http://127.0.0.1:18080/
 ```
 
-세 probe가 통과하면 기존 public HTTPS virtual host의 애플리케이션 `location /`을 다음 proxy로 교체합니다. 외부 요청의 `X-Forwarded-*`를 이어 붙이지 않고 실제 Nginx peer 값으로 덮어써야 합니다.
+하네스가 출력한 `snapshot=/var/backups/vps-guard/deployments/...` 경로를 보관합니다. 세 probe가 통과하면 기존 public HTTPS virtual host의 애플리케이션 요청을 다음 proxy로 교체합니다. 외부 요청의 `X-Forwarded-*`를 이어 붙이지 않고 실제 Nginx peer 값으로 덮어써야 합니다.
+
+> public virtual host에 기존 `location ~ \.php$`, 별도 API·WebSocket `location`, 다른 `fastcgi_pass`·애플리케이션 `proxy_pass`가 남아 있으면 해당 요청이 VPSGuard를 우회할 수 있습니다. ACME challenge와 의도적으로 직접 제공할 정적 파일을 제외한 애플리케이션 처리 location은 loopback origin으로 옮기고 public 쪽은 VPSGuard proxy로 통합하십시오.
 
 ```nginx
 location / {
@@ -378,13 +409,34 @@ sudo vps-guard check-config --config /etc/vps-guard/config.toml
 sudo systemctl restart vps-guard-privileged.service vps-guard-control.service
 ```
 
-### 6. Apache 설치 범위
+### 6. 설치 후 사용법
+
+관리 UI는 `https://guard.example.com`으로 접속합니다. SSH tunnel이나 Control의 `7727` 공개 개방은 필요하지 않습니다.
+
+- **Overview**: 현재 방어 mode, Cloudflare 정책, TLS·방화벽 read-back, 서버 압력과 알림 상태
+- **트래픽·클라이언트**: route 비용, 오류, 실제 조치와 관리자 권한의 5분~24시간 TTL 임시 차단·즉시 해제
+- **보호 정책**: WATCH·LOCAL_GUARD·EMERGENCY_PROXY 단계별 제한을 plan·재확인 후 hot reload
+- **사건·상관 조회**: request ID·operation ID·event ID로 오류와 자동 조치 추적
+- **서버 자원**: 설정에서 allowlist한 Nginx/PHP-FPM/MySQL/Redis unit만 관측
+
+첫 운영 순서는 `observe`로 정상 로그인·검색·글쓰기·업로드·WebSocket과 CSP report를 확인한 뒤 로컬 `enforce`를 선택하는 것입니다. Cloudflare, CSP enforce, HSTS와 WAF tuned-enforce는 각각 별도 정상 트래픽 증거와 복구 절차를 확보하기 전에는 켜지 않습니다.
+
+터미널에서는 상태·health·최근 구조화 로그만 확인합니다.
+
+```bash
+sudo vps-guard status
+curl --fail http://127.0.0.1:7727/health/live
+curl --fail --header 'Host: example.com' http://127.0.0.1:18080/health/ready
+sudo journalctl -u vps-guard-control -u vps-guard-edge --since '-10 minutes'
+```
+
+### 7. Apache 설치 범위
 
 Apache는 현재 **범용 공개 지원이 아니라 `gnuboard5` 격리 VM 파일럿**입니다. 검증 topology는 `Apache public TLS -> VPSGuard loopback -> Apache loopback origin`이며, 고정 Host·문서 root·인증서 경로가 포함된 [`configs/apache`](configs/apache) 파일을 다른 서버에 그대로 복사하면 안 됩니다.
 
 Apache 서버는 `proxy`, `proxy_http`, `headers`, `remoteip`, `ssl` module과 별도 origin vhost가 필요합니다. ModSecurity·OWASP CRS도 자동 기본값이 아니며 `off -> detection -> app별 exclusion -> tuned_enforce` 순서로 정상 로그인·글쓰기·업로드 오탐을 검증합니다. 현재 파일럿의 exact 전환·bypass 명령은 [Apache 운영 절차](docs/OPERATIONS.md#단독-설치-관리자ufwwaf)와 [검증 증거](specs/product/evidence/gnuboard5-apache-vm-20260722.md)를 따릅니다.
 
-### 7. 설치 확인·복구
+### 8. 설치 확인·즉시 원복
 
 ```bash
 sudo systemctl --no-pager --full status \
@@ -397,12 +449,21 @@ sudo ss -ltnp
 문제가 생기면 먼저 준비한 Nginx direct bypass 설정으로 공개 요청을 원래 웹서버에 돌립니다. 그 뒤 설치 전 snapshot을 검증·복원합니다.
 
 ```bash
+sudo cp --preserve=all \
+  /etc/nginx/sites-available/example.conf.pre-vpsguard \
+  /etc/nginx/sites-available/example.conf
+sudo nginx -t
+sudo systemctl reload nginx.service
+curl --fail --silent --show-error --output /dev/null https://example.com/
+
 sudo vps-guard ops deployment-state verify \
   /var/backups/vps-guard/deployments/deploy-<timestamp>-<id>
 sudo env VPS_GUARD_RESTORE_CONFIRM=restore-deployment-snapshot \
   vps-guard ops deployment-state restore \
   /var/backups/vps-guard/deployments/deploy-<timestamp>-<id>
 ```
+
+deployment snapshot은 VPSGuard 소유 binary·unit·config·service 상태만 복구합니다. Nginx·인증서·사이트 데이터는 건드리지 않으므로 위 direct bypass 복원이 항상 먼저입니다.
 
 업데이트·제거·Cloudflare·직접 TLS 전환은 [운영 하네스](docs/OPERATIONS.md)에서 plan, snapshot, apply, read-back, rollback 순서로 수행합니다.
 
