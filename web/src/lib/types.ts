@@ -19,6 +19,7 @@ export interface StatusResponse {
   edge: string;
   origin: string;
   agent: string;
+  provider_policy: "automatic" | "paused" | "forced_on";
   provider: string;
   provider_drain_deadline_unix_seconds: number | null;
   tls: string;
@@ -242,6 +243,13 @@ export interface ClientDetailRow {
   last_decision: string;
   last_seen_unix_ms: number;
   routes: ClientRouteRow[];
+}
+
+export interface TemporaryBlockResponse {
+  applied: boolean;
+  operation_id: string;
+  client_ip: string;
+  policy_version: number;
 }
 
 export interface ClientRouteRow {

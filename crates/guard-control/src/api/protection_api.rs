@@ -2,6 +2,7 @@
 
 use guard_core::policy::ProtectionSettings;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::protection::{ProtectionApplyOutcome, ProtectionPlan, ProtectionSnapshot};
@@ -42,6 +43,20 @@ struct ApplyResponse {
     fingerprint: String,
     edge_observed_policy_version: Option<u64>,
     edge_readback: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TemporaryBlockRequest {
+    ttl_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TemporaryBlockResponse {
+    applied: bool,
+    operation_id: String,
+    client_ip: IpAddr,
+    policy_version: u64,
 }
 
 /// 현재 보호 제한과 Control·Edge version 상태를 반환합니다.
@@ -173,6 +188,134 @@ pub(super) async fn apply(
         Err(response) => return response,
     };
     Json(protection_apply_response(outcome, operation_id, observed)).into_response()
+}
+
+/// 인증된 운영자가 IP에 TTL 거부 규칙을 적용합니다.
+pub(super) async fn block_client(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(client_ip): Path<String>,
+    Json(request): Json<TemporaryBlockRequest>,
+) -> Response {
+    mutate_client_rule(&app, &headers, &client_ip, Some(request.ttl_seconds)).await
+}
+
+/// 인증된 운영자가 IP의 TTL 거부 규칙을 즉시 해제합니다.
+pub(super) async fn unblock_client(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(client_ip): Path<String>,
+) -> Response {
+    mutate_client_rule(&app, &headers, &client_ip, None).await
+}
+
+async fn mutate_client_rule(
+    app: &Arc<AppState>,
+    headers: &HeaderMap,
+    client_ip: &str,
+    ttl_seconds: Option<u64>,
+) -> Response {
+    if let Some(error) = mutation_authorization_error(headers, app, AdminPermission::Operate).await
+    {
+        return error;
+    }
+    let Ok(client_ip) = client_ip.parse::<IpAddr>() else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "CLIENT_IP_INVALID",
+            "클라이언트 주소 형식이 올바르지 않습니다.",
+            "Edge client rule을 변경하지 않았습니다.",
+            "클라이언트 목록의 IPv4 또는 IPv6 주소를 다시 선택하십시오.",
+        );
+    };
+    let Some(operation_id) = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+        .map(ToOwned::to_owned)
+    else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Idempotency-Key가 필요합니다.",
+            "Edge client rule을 변경하지 않았습니다.",
+            "128자 이하의 고유 operation ID로 다시 요청하십시오.",
+        );
+    };
+    let _operation = app.policy_operation.lock().await;
+    let action = client_rule_action(client_ip, ttl_seconds);
+    if let Some((completed, _)) = completed_action(app, &operation_id) {
+        if completed != action {
+            return idempotency_conflict();
+        }
+        let snapshot = match app.protection.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => return protection_policy_error(error),
+        };
+        return Json(TemporaryBlockResponse {
+            applied: false,
+            operation_id,
+            client_ip,
+            policy_version: snapshot.policy_version,
+        })
+        .into_response();
+    }
+
+    let mode = app.state.read().await.current_mode;
+    let snapshot = match ttl_seconds {
+        Some(ttl_seconds) => {
+            app.protection
+                .block_client(client_ip, ttl_seconds, mode)
+                .await
+        }
+        None => app.protection.unblock_client(client_ip, mode).await,
+    };
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => return protection_policy_error(error),
+    };
+    let mut next = app.state.read().await.clone();
+    next.policy_version = next.policy_version.max(snapshot.policy_version);
+    persist_policy_version(app, &next, &operation_id).await;
+    *app.state.write().await = next.clone();
+    remember_action(app, operation_id.clone(), &action, next.current_mode);
+    let now = current_timestamp();
+    if let Err(error) = app.storage.record_action(
+        &operation_id,
+        &now,
+        &action,
+        mode_name(next.current_mode),
+        "applied",
+    ) {
+        api_warn!(
+            error_code = "CLIENT_RULE_AUDIT_FAILED",
+            error = %error,
+            operation_id,
+            "temporary client rule audit persistence failed"
+        );
+    }
+    publish_event(
+        app,
+        action_event(operation_id.clone(), now, &action, next.current_mode),
+    );
+    Json(TemporaryBlockResponse {
+        applied: true,
+        operation_id,
+        client_ip,
+        policy_version: snapshot.policy_version,
+    })
+    .into_response()
+}
+
+fn client_rule_action(client_ip: IpAddr, ttl_seconds: Option<u64>) -> String {
+    let action = if ttl_seconds.is_some() {
+        "client_block"
+    } else {
+        "client_unblock"
+    };
+    let digest = Sha256::digest(format!("{client_ip}:{ttl_seconds:?}").as_bytes());
+    let fingerprint = format!("{digest:x}");
+    format!("{action}:{}", &fingerprint[..16])
 }
 
 async fn persist_policy_version(app: &AppState, state: &GuardState, operation_id: &str) {

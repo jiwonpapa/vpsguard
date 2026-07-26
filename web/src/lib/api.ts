@@ -20,6 +20,7 @@ import type {
   SeriesPoint,
   StatusResponse,
   TrafficSummary,
+  TemporaryBlockResponse,
   UfwMutation,
 } from "./types";
 
@@ -338,6 +339,29 @@ export function applyProtectionPlan(plan: ProtectionPlan): Promise<ProtectionApp
   );
 }
 
+export function blockClient(clientIp: string, ttlSeconds: number): Promise<TemporaryBlockResponse> {
+  return authenticatedJson<TemporaryBlockResponse>(
+    `/api/v1/clients/${encodeURIComponent(clientIp)}/block`,
+    { ttl_seconds: ttlSeconds },
+    crypto.randomUUID(),
+  );
+}
+
+export async function unblockClient(clientIp: string): Promise<TemporaryBlockResponse> {
+  if (!csrfToken) {
+    throw new ApiError("운영 session 로그인이 필요합니다.", 401, "SESSION_REQUIRED");
+  }
+  const response = await fetch(`/api/v1/clients/${encodeURIComponent(clientIp)}/block`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+  });
+  return parseResponse<TemporaryBlockResponse>(response);
+}
+
 export const api = {
   status: () => getJson<StatusResponse>("/api/v1/status"),
   summary: () => getJson<TrafficSummary>("/api/v1/traffic/summary"),
@@ -352,6 +376,8 @@ export const api = {
   exportClients,
   clientDetail: (clientIp: string) =>
     getJson<ClientDetailRow>(`/api/v1/clients/${encodeURIComponent(clientIp)}`),
+  blockClient,
+  unblockClient,
   routes: () =>
     getJson<ListResponse<RouteRow>>("/api/v1/routes?limit=500").then(
       (value) => value.items,

@@ -108,6 +108,8 @@ VPS_GUARD_DEPLOY_CONFIRM=g7devops-shadow:<BUILD-INFO의-git-commit> \
 
 apply 직전에 root-only deployment snapshot을 만들고 binary·unit·drop-in·config·Cloudflare token·service enable/active와 first-install directory의 기존/부재 상태를 기록합니다. 실패하면 자동 복구하고, 성공 뒤에도 snapshot ID를 출력합니다. SSH·Nginx·인증서·G7 site source는 복구하거나 전체 hash하지 않으며 상위 directory identity만 확인합니다. non-VPSGuard listener와 핵심 service read-back은 유지합니다. 따라서 배포 사이에 사용자가 변경한 site·Nginx 파일 때문에 VPSGuard 제거가 막히지 않습니다.
 
+listener inventory는 기존 TCP snapshot 문자열과 호환하면서 UDP listener에 transport identity를 붙입니다. VPSGuard가 HTTP/3을 직접 처리하지 않는 현재 release에서도 기존 QUIC용 UDP/443은 protected listener로 snapshot·read-back하며 ingress 전환이 이를 제거하면 실패 처리합니다.
+
 Cloudflare token은 로컬 `secrets/cloudflare-token`에서 SSH stdin으로만 전달해 `/etc/vps-guard/secrets/cloudflare-token`의 `root:root 0600` 파일로 설치합니다. bundle, remote user staging file, argv, log와 evidence에는 넣지 않습니다. 기존 원격 token이나 `/etc/vps-guard/config.toml`이 후보와 byte 단위로 다르면 덮어쓰지 않고 배포 전체를 복구합니다.
 
 이 단계는 public Nginx와 80/443, Cloudflare DNS mode를 변경하지 않습니다. 원격 smoke는 loopback edge/control health, origin ready, Nginx config와 보호 경계를 확인합니다.

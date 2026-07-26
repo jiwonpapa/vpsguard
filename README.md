@@ -6,6 +6,8 @@
 
 현재는 **v0.1.0-alpha 파일럿**입니다. Pingora edge, 정책 hot reload, telemetry, SQLite/SSE control plane, Bun/React·Tailwind CSS·shadcn/ui 운영 SPA, Linux-PAM/TOTP, standalone UFW와 선택형 ModSecurity·OWASP CRS를 구현했습니다. `gnuboard5` VM의 public 80/443, 직접 웹 관리자, 공격 replay와 실제 2GB 검증, x86_64/aarch64 release artifact 실행은 통과했습니다. 다만 실제 운영자 PAM+TOTP 등록, Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 검증은 남아 있습니다. 따라서 기본값은 Cloudflare 비활성·CSP report-only·기존 인증서 관리자 보존이며 production release로 간주하지 않습니다. 현재 검증 단계는 [`verification-status.tsv`](specs/product/verification-status.tsv)가 정본입니다.
 
+HTTP/3은 초기 공개 지원 protocol이 아닙니다. 다만 배포·ingress 전환 snapshot은 기존 QUIC용 UDP/443 listener를 보존 대상으로 취급하므로, VPSGuard 설치가 이미 운영 중인 HTTP/3 서비스를 조용히 제거하지 않습니다.
+
 ## 제품 핵심
 
 ```text

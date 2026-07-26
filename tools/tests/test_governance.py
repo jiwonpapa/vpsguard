@@ -16,6 +16,23 @@ from tools.vpsguard_harness.governance import (
 class GovernanceTests(unittest.TestCase):
     """Governance parsing should be typed and independent from GNU text tools."""
 
+    def test_management_surface_does_not_collect_root_password(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        forbidden = ("root_password", "rootPassword", "root-password")
+        source_files = [
+            *sorted((root / "crates").rglob("*.rs")),
+            *sorted((root / "web/src").rglob("*.ts")),
+            *sorted((root / "web/src").rglob("*.tsx")),
+        ]
+
+        matches = [
+            str(path.relative_to(root))
+            for path in source_files
+            if any(token in path.read_text(encoding="utf-8") for token in forbidden)
+        ]
+
+        self.assertEqual(matches, [], "관리 화면이 OS root 비밀번호를 수집하면 안 됩니다.")
+
     def test_rustdoc_gate_detects_missing_module_docs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

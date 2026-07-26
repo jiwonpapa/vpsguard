@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: execution-plan
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-24
+last_reviewed: 2026-07-26
 ---
 
 # 구현 백로그
@@ -28,6 +28,17 @@ last_reviewed: 2026-07-24
 - [x] 공통·인증 route의 429와 `Retry-After` 계약
 - [x] Control 종료 뒤 앱 proxy·ready 유지와 관리 upstream 실패 격리
 - [x] 원문 request body를 evidence에 남기지 않고 상태·길이·digest만 보존
+
+### 최근 완료 배치: 상품화 핵심 방어·호환성 폐쇄루프
+
+- 요구사항: `DET-004`, `DET-006`, `DET-009`, `ACT-005`, `ACT-010`, `OPS-002`, `SEC-002`
+- [x] 검증된 crawler에도 고비용 경로 한도를 유지하는 자동 회귀
+- [x] 고정 cold-start 포화 한도와 건강한 window 중앙값 기반 사이트별 기준선 결합
+- [x] IP·만료에 결합된 signed clearance를 Control session continuity 신호로 전달
+- [x] 관리자 역할·CSRF·idempotency를 거친 5분~24시간 IP TTL 차단과 즉시 해제
+- [x] TCP 기존 snapshot 호환을 유지하면서 UDP listener와 기존 HTTP/3용 UDP/443 보존
+- [x] Cloudflare 실제 단계와 `자동 활성`·`자동 전환 중지`·`외부 보호 유지` 정책 표시
+- [x] 관리자 UI/API의 OS root password 입력 surface 금지 gate
 
 ### 최근 완료 배치: 관리자 역할별 최소 권한
 

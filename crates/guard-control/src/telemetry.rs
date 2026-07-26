@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 const LATENCY_WINDOW: usize = 2_048;
 const DEFAULT_LIVE_SECONDS: usize = 900;
+const BASELINE_WINDOWS: usize = 12;
+const BASELINE_MIN_WINDOWS: usize = 6;
 
 /// 1초·10초·1분 traffic 시계열 bucket입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -64,6 +66,9 @@ pub struct TelemetryEnvelope {
     /// 공식 source identity 검증 여부입니다.
     #[serde(default)]
     pub bot_verified: bool,
+    /// signed clearance가 현재 client IP와 만료 검증을 통과했는지 여부입니다.
+    #[serde(default)]
+    pub session_continuity: bool,
     /// bot 판정의 안정 reason code입니다.
     #[serde(default)]
     pub bot_reason: BotReason,
@@ -149,6 +154,7 @@ pub struct TrafficAggregator {
     latencies: VecDeque<(u64, u64)>,
     clients: HashMap<IpAddr, u64>,
     window: DetectionWindow,
+    baseline: TrafficBaseline,
     live_seconds: usize,
     live_buckets: VecDeque<LiveSecondBucket>,
 }
@@ -159,8 +165,53 @@ struct DetectionWindow {
     protective: u64,
     server_errors: u64,
     verified_crawler_requests: u64,
+    continuous_session_requests: u64,
     max_route_cost: u8,
     max_latency_micros: u64,
+}
+
+#[derive(Debug)]
+struct TrafficBaseline {
+    request_windows: VecDeque<u64>,
+}
+
+impl Default for TrafficBaseline {
+    fn default() -> Self {
+        Self {
+            request_windows: VecDeque::with_capacity(BASELINE_WINDOWS),
+        }
+    }
+}
+
+impl TrafficBaseline {
+    fn pressure(&self, requests: u64) -> u8 {
+        if self.request_windows.len() < BASELINE_MIN_WINDOWS {
+            return 0;
+        }
+        let mut samples = self.request_windows.iter().copied().collect::<Vec<_>>();
+        samples.sort_unstable();
+        let median = samples[samples.len() / 2].max(1);
+        if requests >= median.saturating_mul(4) {
+            80
+        } else if requests >= median.saturating_mul(2) {
+            50
+        } else {
+            0
+        }
+    }
+
+    fn observe(&mut self, window: &DetectionWindow) {
+        let healthy = window.protective.saturating_mul(10) < window.requests
+            && window.server_errors.saturating_mul(10) < window.requests
+            && window.max_latency_micros < 1_000_000;
+        if !healthy {
+            return;
+        }
+        if self.request_windows.len() == BASELINE_WINDOWS {
+            self.request_windows.pop_front();
+        }
+        self.request_windows.push_back(window.requests);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -272,6 +323,7 @@ impl TrafficAggregator {
             latencies: VecDeque::with_capacity(LATENCY_WINDOW),
             clients: HashMap::with_capacity(max_clients.min(10_000)),
             window: DetectionWindow::default(),
+            baseline: TrafficBaseline::default(),
             live_seconds,
             live_buckets: VecDeque::with_capacity(live_seconds),
         }
@@ -297,6 +349,10 @@ impl TrafficAggregator {
             .window
             .verified_crawler_requests
             .saturating_add(u64::from(telemetry.bot_verified));
+        self.window.continuous_session_requests = self
+            .window
+            .continuous_session_requests
+            .saturating_add(u64::from(telemetry.session_continuity));
         self.window.max_route_cost = self.window.max_route_cost.max(telemetry.route_cost);
         self.window.max_latency_micros =
             self.window.max_latency_micros.max(telemetry.latency_micros);
@@ -441,13 +497,14 @@ impl TrafficAggregator {
             .saturating_mul(100)
             .checked_div(window.requests)
             .unwrap_or_default();
-        let volume_pressure = if window.requests >= 500 {
+        let static_volume_pressure = if window.requests >= 500 {
             80
         } else if window.requests >= 100 {
             50
         } else {
             0
         };
+        let volume_pressure = static_volume_pressure.max(self.baseline.pressure(window.requests));
         let latency_pressure = if window.max_latency_micros >= 5_000_000 {
             90
         } else if window.max_latency_micros >= 1_000_000 {
@@ -457,6 +514,9 @@ impl TrafficAggregator {
         };
         let crawler_verified =
             window.verified_crawler_requests.saturating_mul(2) >= window.requests;
+        let session_continuity =
+            window.continuous_session_requests.saturating_mul(2) >= window.requests;
+        self.baseline.observe(&window);
         Some(DetectionInput {
             trust: if crawler_verified { 75 } else { 40 },
             automation: u8::try_from(protective_percent.min(100))
@@ -467,7 +527,7 @@ impl TrafficAggregator {
                 .unwrap_or(100)
                 .max(latency_pressure),
             host_pressure,
-            session_continuity: false,
+            session_continuity,
             crawler_verified,
         })
     }

@@ -4,7 +4,7 @@ status: active
 doc_type: implementation-status
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-24
+last_reviewed: 2026-07-26
 ---
 
 # v0.1.0-alpha 구현 현황
@@ -13,7 +13,7 @@ last_reviewed: 2026-07-24
 
 현재 상태는 **v0.1.0-alpha 파일럿**입니다. 기본 Rust·Web 회귀뿐 아니라 `gnuboard5` VM의 Apache public 80/443 편입·rollback, 직접 HTTPS 관리자, standalone UFW, AI bot·과다 요청·request framing·WAF, 보호 정책 hot reload와 실제 2GB 실행 증거가 있습니다. 알파 지원 범위는 Ubuntu 24.04·systemd, 기존 ingress·인증서 관리자 보존, Cloudflare 기본 비활성, CSP report-only입니다. PAM+TOTP 실제 운영자 등록, Cloudflare test zone, 공식 crawler source와 authenticated upload WAF 오탐 증거는 production release gate로 남깁니다. 코드가 존재하는 항목을 완료로 간주하지 않으며 현재 단계는 [`verification-status.tsv`](verification-status.tsv)의 `PLANNED`, `CODE_ONLY`, `AUTO_PASS`, `VPS_PASS`로 판정합니다.
 
-현재 요구사항 123개 중 `PLANNED` 0개, `CODE_ONLY` 15개, `AUTO_PASS` 88개, `VPS_PASS` 20개입니다. 즉 123개 모두 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 108개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
+현재 요구사항 123개 중 `PLANNED` 0개, `CODE_ONLY` 8개, `AUTO_PASS` 95개, `VPS_PASS` 20개입니다. 즉 123개 모두 코드 또는 계약이 존재하며 자동 수용 기준까지 통과한 것은 115개입니다. `VPS_PASS`는 보존된 운영 증거 수준이며 요구사항 전체의 release 완료를 뜻하지 않습니다.
 
 ## 코드 및 자동 검증 현황
 
@@ -31,12 +31,12 @@ last_reviewed: 2026-07-24
 | `OBS-007` 자동 검증 | 설정 상한이 적용된 1초 live ring, 전용 blocking batch writer, SQLite WAL 상세·client IP·10초·1분 rollup, 계층별 bounded retention, DB/WAL·disk·drop health | telemetry·storage·API·UI 회귀 테스트; busy·disk-full fault와 2GB VPS 부하 증거는 미완료 |
 | `DET-001`, `DET-005`, `DET-007`, `DET-010` | trust·bot·cost 분리, reason code, spike 히스테리시스, 결손 confidence | core detection·state tests |
 | `DET-003` | 검색 crawler UA에 허용 provider·공식 CIDR 일치를 강제하고, Control은 과반 verified 요청만 crawler trust로 합성 | crawler 판정·telemetry window unit tests; 실제 공식 crawler source allow는 미완료 |
-| `DET-009` 코드 | 정상 session trust 신호와 1분 만료 client limit으로 영구 shared-IP 차단을 금지 | detector·limiter unit test; signed/origin session의 aggregate wiring과 실제 NAT browser E2E는 미완료 |
+| `DET-006`, `DET-009` | 고정 cold-start 포화 한도와 건강한 window 중앙값 기준선을 함께 사용하고, IP·만료에 결합된 signed clearance를 과반 session continuity 신호로 합성해 shared IP 전체 영구 차단을 금지 | telemetry·detector·limiter unit test; 실제 NAT 다중 browser E2E는 미완료 |
 | `DET-002`, `DET-011`, `DET-012` | 범용 PHP·GnuBoard 5·GnuBoard 7·WordPress route 분리, app 분류와 site override 합성, generic 보안 core와 G7 CSP·auth overlay 분리 | profile·edge runtime·security tests |
 | `DET-013` | 공식 CIDR feed의 Google·Naver·Bing 판정, 위조 crawler와 미허용 declared AI bot 분리 | crawler/config/updater unit와 VM GPTBot·Meta·위조 Googlebot 403; 실제 공식 crawler source allow는 미완료 |
 | `DET-014` | traffic latency·5xx와 실제 CPU·core-normalized load·memory·swap host pressure를 합성하고 `protocol_only + enforce` 자동 전이를 유지 | `/proc` fixture와 [격리 2GB VM의 100% CPU·API exact 대조, `NORMAL→WATCH→LOCAL_GUARD→RECOVERING→NORMAL`, 75/75 public 200·무순단·자동 원복](evidence/gnuboard5-host-pressure-20260724.md); provider가 없는 VM이라 실제 `EMERGENCY_PROXY`는 미완료 |
-| `ACT-001`~`ACT-005` | client·route 제한, 429, signed clearance, 기능별 정책, TTL client rule | edge limiter·challenge·policy tests |
-| `ACT-006`~`ACT-012` | User token preflight, 동일 hostname의 명시적 A·AAAA/CNAME record ID별 checkpoint·TTL snapshot·즉시 rollback, Cloudflare read-back·외부 `cf-ray`·DNS cache drain, dual-stack nftables 원자 교체·정확 read-back, 재시작 재개·idempotency | 단계·부분 실패·복구 read-back, 401·403·429·5xx, provider 실패 중 local guard 지속의 fake API/provider/system/control tests; 실제 test zone 변경 증거 없음 |
+| `ACT-001`~`ACT-005` | client·route 제한, 429, signed clearance, 기능별 정책, 관리자 상세 화면의 5분~24시간 TTL 차단·즉시 해제 | edge limiter·challenge·policy, Control API와 UI build tests |
+| `ACT-006`~`ACT-012` | User token preflight, 동일 hostname의 명시적 A·AAAA/CNAME record ID별 checkpoint·TTL snapshot·즉시 rollback, Cloudflare read-back·외부 `cf-ray`·DNS cache drain, dual-stack nftables 원자 교체·정확 read-back, 재시작 재개·idempotency. UI는 실제 단계와 `자동 활성`·`자동 전환 중지`·`외부 보호 유지`를 분리 표시 | 단계·부분 실패·복구 read-back, 401·403·429·5xx, provider 실패 중 local guard 지속의 fake API/provider/system/control tests; 실제 test zone 변경 증거 없음 |
 | `ACT-008` 자동 검증 | 안정 뒤 `RECOVERY_READY`에서 Cloudflare와 origin lock 유지, 관리자 인증·CSRF·재확인·idempotency 이후에만 snapshot 복구 | state·API·Playwright 회귀; 실제 test zone 승인 전후 read-back은 미완료 |
 | `ACT-013`, `ACT-014` | standalone UFW, JW-agent delegated, disabled 소유권과 typed IP/CIDR·port rule transaction | 실제 VM UFW active, 외부 규칙 8개 보존, 임시 deny add/read-back/remove, SSH·관리 HTTPS 보존과 delegated mutation 거부 |
 | `TLS-001` 일부 | 단일 certificate chain의 key·유효기간·SAN 검사 | TLS unit tests |
@@ -51,7 +51,7 @@ last_reviewed: 2026-07-24
 | `UI-012` | PAM/TOTP actor의 typed 역할로 raw IP·민감 export·로컬 운영·provider 관리 권한을 API에서 분리하고 viewer 목록은 IPv4 `/24`·IPv6 `/64`로 집계 | config/API Rust 역할 매트릭스와 desktop/mobile Playwright 8개 |
 | `UI-016`~`UI-018` | trusted Apache TLS terminator의 직접 관리자, standalone/delegated 방화벽과 재시작 없는 단계별 보호정책 SPA | 실제 `:7443` PAM session·Control 비공개, typed UFW form/read-only delegation, 보호 설정 fingerprint·diff·stale/idempotency·hash sidecar·구버전 Edge schema 호환·원자 write·desktop/mobile Playwright와 [verified x86_64 bundle의 실제 2GB Edge version·설정 원복 read-back](evidence/gnuboard5-ui018-policy-20260724.md) |
 | `OPS-002`~`OPS-008` 하네스 | typed plan, checksum·architecture shadow preflight, release-bound g7devops Nginx TLS 후보, ingress 실패 rollback, control+edge update health, bypass 선검증 uninstall, arch matrix·SBOM·command audit | update 성공·health 실패 exact rollback·owned-only uninstall 자동 fixture, x86_64/aarch64 native artifact 실행·SBOM·attestation, [x86_64 격리 2GB VM 20회 update·restore](evidence/gnuboard5-release-endurance-20260724.md)와 [Apache direct bypass·실제 uninstall·exact restore·211/211 public 200](evidence/gnuboard5-uninstall-20260724.md) |
-| `OPS-009` | Rust `DeploymentRestoreDriver` 기반 first install·shadow 배포 전 checksum snapshot, legacy v1 호환, stdin root-only token 전달, 실패·수동 원상복귀와 protected directory identity·listener 경계 read-back | Rust fixture exact restore·corrupt snapshot·partial mutation 자동 rollback과 [`g7devops` 실패 자동 복구·수동 restore·재설치 운영 증거](evidence/g7devops-shadow-roundtrip-20260715.md); 사용자 site tree는 scan·복구하지 않음 |
+| `OPS-009`, `ACT-010` | Rust `DeploymentRestoreDriver` 기반 first install·shadow 배포 전 checksum snapshot, legacy v1 TCP snapshot 호환, TCP·UDP listener identity와 기존 HTTP/3용 UDP/443 보존, stdin root-only token 전달, 실패·수동 원상복귀 | Rust fixture exact restore·corrupt snapshot·partial mutation·UDP/443 자동 회귀와 [`g7devops` 실패 자동 복구·수동 restore·재설치 운영 증거](evidence/g7devops-shadow-roundtrip-20260715.md); 사용자 site tree는 scan·복구하지 않음 |
 | `OPS-010` | 단일 OS operation lock, plan hash, typed 단계 ledger·원자 rollback checkpoint 재개, deployment·direct ingress·edge/bypass 실제 driver, 5초 public 순단·60초 apply/update·30초 restore·10초 rollback 예산, 실패 자동 rollback | Rust engine·driver fault·process reconstruction·staged exact-file rollback tests, site tree 거부와 빠른 restore fixture; [격리 Ubuntu 2GB VM 20회·2,180개 100ms probe·최장 순단 1.842초](evidence/gnuboard5-release-endurance-20260724.md) |
 | 회귀 차단 코드 | nextest, rustdoc, audit/deny/machete, 영역별 coverage ratchet, loopback integration, k6 부하, Bun unit, desktop/mobile Playwright를 merge gate로 연결 | GitHub branch protection 적용 전에는 강제되지 않음 |
 | `SEC-003`, `SEC-006`, `SEC-007` | peer-credential local socket의 단회 code, client별 시도 제한·knockout 방지·재사용 거부, Host·Origin 고정, Secure·HttpOnly session, 인증된 읽기·SSE, CSRF·idempotency 변경 | admin socket·API auth tests, local TLS integration |

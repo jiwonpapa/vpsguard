@@ -1110,6 +1110,65 @@ async fn authenticated_correlation_lookup_returns_request_detail()
 }
 
 #[tokio::test]
+async fn act_005_operator_can_apply_and_release_temporary_client_block()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let state_path = directory.path().join("state.json");
+    let state = app(&state_path)?;
+    let issued = issue_session(&state)?;
+    let client_ip = "192.0.2.44";
+    let block_path = format!("/api/v1/clients/{client_ip}/block");
+    let (block, duplicate) = tokio::join!(
+        router(Arc::clone(&state)).oneshot(json_mutation_request(
+            &block_path,
+            &issued,
+            Some("client-block-1"),
+            serde_json::json!({ "ttl_seconds": 900 }),
+        )?),
+        router(Arc::clone(&state)).oneshot(json_mutation_request(
+            &block_path,
+            &issued,
+            Some("client-block-1"),
+            serde_json::json!({ "ttl_seconds": 900 }),
+        )?)
+    );
+    let block = block?;
+    let duplicate = duplicate?;
+    assert_eq!(block.status(), StatusCode::OK);
+    assert_eq!(duplicate.status(), StatusCode::OK);
+
+    let policy = AtomicJsonStore::<guard_core::PolicySnapshot>::new(
+        state_path.with_extension("policy.json"),
+    )
+    .read()?;
+    assert_eq!(policy.policy_version, 1);
+    assert_eq!(policy.client_rules.len(), 1);
+    assert_eq!(
+        policy.client_rules[0].client_ip,
+        client_ip.parse::<IpAddr>()?
+    );
+
+    let release = router(state)
+        .oneshot(
+            Request::delete(format!("/api/v1/clients/{client_ip}/block"))
+                .header("host", LOOPBACK_HOST)
+                .header("origin", LOOPBACK_ORIGIN)
+                .header("cookie", session_cookie(&issued))
+                .header("x-csrf-token", &issued.csrf_token)
+                .header("idempotency-key", "client-unblock-1")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(release.status(), StatusCode::OK);
+    let policy = AtomicJsonStore::<guard_core::PolicySnapshot>::new(
+        state_path.with_extension("policy.json"),
+    )
+    .read()?;
+    assert!(policy.client_rules.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn resources_exposes_bounded_storage_health_to_authenticated_session()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;

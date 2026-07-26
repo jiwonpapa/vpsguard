@@ -162,6 +162,7 @@ export function ClientsPage() {
       </div>
       <ClientDetailDialog
         clientIp={selectedClient}
+        canOperate={capabilities.operate}
         detail={detailQuery.data}
         pending={detailQuery.isPending && selectedClient !== null}
         error={detailQuery.error}
@@ -175,17 +176,47 @@ export function ClientsPage() {
 
 function ClientDetailDialog({
   clientIp,
+  canOperate,
   detail,
   pending,
   error,
   onOpenChange,
 }: {
   clientIp: string | null;
+  canOperate: boolean;
   detail: Awaited<ReturnType<typeof api.clientDetail>> | undefined;
   pending: boolean;
   error: Error | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [ttlSeconds, setTtlSeconds] = useState("900");
+  const [mutationPending, setMutationPending] = useState(false);
+  const [mutationMessage, setMutationMessage] = useState("");
+  const mutateRule = async (block: boolean) => {
+    if (!clientIp || !canOperate) return;
+    const confirmed = window.confirm(
+      block
+        ? `${clientIp}를 선택한 시간 동안 임시 차단하시겠습니까?`
+        : `${clientIp}의 임시 차단을 즉시 해제하시겠습니까?`,
+    );
+    if (!confirmed) return;
+    setMutationPending(true);
+    setMutationMessage("");
+    try {
+      const result = block
+        ? await api.blockClient(clientIp, Number(ttlSeconds))
+        : await api.unblockClient(clientIp);
+      setMutationMessage(
+        `${block ? "임시 차단" : "차단 해제"} policy v${result.policy_version} 적용을 요청했습니다.`,
+      );
+    } catch (mutationError) {
+      setMutationMessage(
+        mutationError instanceof Error ? mutationError.message : "클라이언트 규칙 변경에 실패했습니다.",
+      );
+    } finally {
+      setMutationPending(false);
+    }
+  };
   return (
     <Dialog open={clientIp !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-4xl">
@@ -212,6 +243,50 @@ function ClientDetailDialog({
               <Badge variant="neutral">전송 {formatBytes(detail.request_body_bytes + detail.response_body_bytes)}</Badge>
               <Badge variant="neutral">최근 {formatTime(detail.last_seen_unix_ms)}</Badge>
             </div>
+            {canOperate ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                <div className="mb-3">
+                  <p className="text-sm font-medium">TTL 임시 차단</p>
+                  <p className="text-xs text-muted-foreground">
+                    Edge policy에만 적용하며 만료 뒤 자동 해제됩니다. 서버 방화벽과 영구 차단 목록은 변경하지 않습니다.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={ttlSeconds} onValueChange={setTtlSeconds}>
+                    <SelectTrigger className="h-9 w-36" aria-label="임시 차단 시간">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="300">5분</SelectItem>
+                      <SelectItem value="900">15분</SelectItem>
+                      <SelectItem value="3600">1시간</SelectItem>
+                      <SelectItem value="86400">24시간</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={mutationPending}
+                    onClick={() => void mutateRule(true)}
+                  >
+                    임시 차단
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={mutationPending}
+                    onClick={() => void mutateRule(false)}
+                  >
+                    차단 해제
+                  </Button>
+                </div>
+                {mutationMessage ? (
+                  <p className="mt-3 text-xs text-muted-foreground" aria-live="polite">
+                    {mutationMessage}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="overflow-hidden rounded-lg border">
               <DataTable headers={["정규화 경로", "등급", "요청", "5xx", "비용 점수", "실제 조치", "전송"]} empty={detail.routes.length === 0}>
                 {detail.routes.map((route) => (

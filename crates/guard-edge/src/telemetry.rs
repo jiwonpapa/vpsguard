@@ -68,6 +68,9 @@ pub struct RequestTelemetry {
     pub bot_provider: Option<CrawlerProvider>,
     /// 공식 source identity 검증 여부입니다.
     pub bot_verified: bool,
+    /// IP와 만료에 결합된 signed clearance가 유효한 요청인지 여부입니다.
+    #[serde(default)]
+    pub session_continuity: bool,
     /// bot 판정의 안정 reason code입니다.
     pub bot_reason: BotReason,
     /// 원문을 보존하지 않는 User-Agent family입니다.

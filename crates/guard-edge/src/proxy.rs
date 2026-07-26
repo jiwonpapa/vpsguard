@@ -139,6 +139,11 @@ impl GuardEdge {
                 &self.config.trusted_proxy_cidrs,
             )
         });
+        context.session_continuity = context.client_ip.is_some_and(|client_ip| {
+            self.clearance.as_ref().is_some_and(|signer| {
+                signer.verify_cookie(cookie.as_deref(), client_ip, unix_seconds())
+            })
+        });
         context.upstream_kind = self.config.upstream_kind(host.as_deref());
         let route_profile =
             self.config
@@ -347,10 +352,7 @@ impl GuardEdge {
                 }
                 Some(Decision::Challenge) => {
                     let now_unix = unix_seconds();
-                    let cleared = self.clearance.as_ref().is_some_and(|signer| {
-                        signer.verify_cookie(cookie.as_deref(), client_ip, now_unix)
-                    });
-                    if !cleared {
+                    if !context.session_continuity {
                         let headers = self.clearance.as_ref().map_or_else(Vec::new, |signer| {
                             vec![(
                                 "set-cookie",
@@ -780,6 +782,7 @@ impl GuardEdge {
             bot_class: context.bot_class,
             bot_provider: context.bot_provider,
             bot_verified: context.bot_verified,
+            session_continuity: context.session_continuity,
             bot_reason: context.bot_reason,
             user_agent_family: context.user_agent_family,
             in_flight_requests: context.in_flight_requests(),

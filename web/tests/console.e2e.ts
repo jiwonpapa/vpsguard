@@ -33,6 +33,7 @@ const status = {
   edge: "live",
   origin: "live",
   agent: "live",
+  provider_policy: "automatic",
   provider: "unavailable",
   provider_drain_deadline_unix_seconds: null,
   tls: "valid",
@@ -464,6 +465,9 @@ test("renders protection posture and client drill-down", async ({ page }) => {
   await expect(detail).toContainText("throttle");
   await expect(detail).toContainText("/api/login");
   await expect(detail).toContainText("5xx 오류");
+  await expect(detail.getByLabel("임시 차단 시간")).toBeVisible();
+  await expect(detail.getByRole("button", { name: "임시 차단" })).toBeVisible();
+  await expect(detail.getByRole("button", { name: "차단 해제" })).toBeVisible();
   await detail.getByRole("button", { name: "닫기" }).click();
   await page.getByLabel("Client 검색").fill("198.51");
   await expect(page.getByText("아직 수집된 항목이 없습니다.")).toBeVisible();

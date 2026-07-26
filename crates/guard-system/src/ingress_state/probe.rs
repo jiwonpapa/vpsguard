@@ -5,6 +5,7 @@ use std::fs;
 
 use super::host::{read_first_line, write_state};
 use super::{CERTIFICATE, IngressStateError, IngressStateStore};
+use crate::listener::{ListenerTransport, protected_listeners as parse_protected_listeners};
 use crate::{IngressTopology, OwnedProgram};
 
 impl IngressStateStore {
@@ -152,18 +153,27 @@ impl IngressStateStore {
                 .map(str::to_owned)
                 .collect());
         }
-        let output = self.runner.run(
+        let tcp = self.runner.run(
             OwnedProgram::Ss,
             &["-H".to_owned(), "-ltnp".to_owned()],
             None,
             &[],
         )?;
-        let listeners = output
-            .stdout
-            .lines()
-            .filter_map(protected_listener_endpoint)
+        let udp = self.runner.run(
+            OwnedProgram::Ss,
+            &["-H".to_owned(), "-lunp".to_owned()],
+            None,
+            &[],
+        )?;
+        let listeners = parse_protected_listeners(&tcp.stdout, ListenerTransport::Tcp)
+            .into_iter()
+            .chain(parse_protected_listeners(
+                &udp.stdout,
+                ListenerTransport::Udp,
+            ))
             .collect();
-        self.record_audit(output.audit);
+        self.record_audit(tcp.audit);
+        self.record_audit(udp.audit);
         Ok(listeners)
     }
 }
@@ -194,34 +204,36 @@ fn listener_port(line: &str) -> Option<u16> {
         .and_then(|(_, port)| port.parse().ok())
 }
 
-fn protected_listener_endpoint(line: &str) -> Option<String> {
-    let endpoint = line.split_whitespace().nth(3)?;
-    let port = listener_port(line)?;
-    if matches!(port, 80 | 443 | 7443 | 18080 | 18081) {
-        None
-    } else {
-        Some(endpoint.to_owned())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::protected_listener_endpoint;
+    use crate::listener::{ListenerTransport, protected_listeners};
 
     #[test]
     fn ops_011_listener_identity_ignores_process_pid_and_owned_web_ports() {
         let before = "LISTEN 0 511 *:22 *:* users:((\"sshd\",pid=101,fd=3))";
         let after = "LISTEN 0 511 *:22 *:* users:((\"sshd\",pid=202,fd=3))";
-        assert_eq!(protected_listener_endpoint(before), Some("*:22".to_owned()));
-        assert_eq!(protected_listener_endpoint(after), Some("*:22".to_owned()));
         assert_eq!(
-            protected_listener_endpoint("LISTEN 0 511 127.0.0.1:3306 0.0.0.0:*"),
-            Some("127.0.0.1:3306".to_owned())
+            protected_listeners(before, ListenerTransport::Tcp),
+            ["*:22".to_owned()].into()
+        );
+        assert_eq!(
+            protected_listeners(after, ListenerTransport::Tcp),
+            ["*:22".to_owned()].into()
+        );
+        assert_eq!(
+            protected_listeners(
+                "LISTEN 0 511 127.0.0.1:3306 0.0.0.0:*",
+                ListenerTransport::Tcp
+            ),
+            ["127.0.0.1:3306".to_owned()].into()
         );
         for port in [80, 443, 7443, 18080, 18081] {
-            assert_eq!(
-                protected_listener_endpoint(&format!("LISTEN 0 511 127.0.0.1:{port} 0.0.0.0:*")),
-                None
+            assert!(
+                protected_listeners(
+                    &format!("LISTEN 0 511 127.0.0.1:{port} 0.0.0.0:*"),
+                    ListenerTransport::Tcp
+                )
+                .is_empty()
             );
         }
     }

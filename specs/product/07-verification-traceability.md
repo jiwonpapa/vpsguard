@@ -68,10 +68,10 @@ last_reviewed: 2026-07-24
 |---|---|---|
 | `DET-001`, `DET-005` | `crates/guard-core/tests/scoring.rs` | score explanation snapshot |
 | `DET-002` | `crates/guard-profiles/src/tests.rs` | 범용 PHP·GnuBoard 5·7·WordPress route inventory |
-| `DET-003`, `DET-004` | `crates/guard-core/src/crawler.rs`, `crates/guard-control/src/telemetry/tests.rs` | verified·spoofed crawler replay |
-| `DET-006`, `DET-007` | `crates/guard-core/tests/baseline_windows.rs` | spike와 지속 부하 비교 |
+| `DET-003`, `DET-004` | `crates/guard-core/src/crawler.rs`, `crates/guard-core/src/detection/tests.rs`, `crates/guard-control/src/telemetry/tests.rs` | verified·spoofed crawler replay |
+| `DET-006`, `DET-007` | `crates/guard-control/src/telemetry/tests.rs`, `crates/guard-core/src/state/tests.rs` | 고정 포화 한도·사이트 중앙값 기준선·spike와 지속 부하 비교 |
 | `DET-008` | `crates/guard-core/tests/rule_expiry.rs` | TTL expiry event |
-| `DET-009` | `crates/guard-core/src/detection/tests.rs`, `crates/guard-edge/src/rate_limit/tests.rs` | signed session continuity wiring과 NAT browser scenario |
+| `DET-009` | `crates/guard-edge/src/challenge.rs`, `crates/guard-edge/src/proxy.rs`, `crates/guard-control/src/telemetry/tests.rs`, `crates/guard-edge/src/rate_limit/tests.rs` | signed session continuity wiring과 NAT browser scenario |
 | `DET-010` | `tests/fault/collector_missing.rs` | degraded-confidence incident |
 | `DET-011` | `crates/guard-edge/src/runtime/tests.rs` | app profile·site override·incident policy 합성 replay |
 | `DET-012` | `crates/guard-profiles/src/tests.rs` | generic core와 G7 auth·CSP overlay 교차 profile fixture |
@@ -85,11 +85,11 @@ last_reviewed: 2026-07-24
 | `ACT-001`, `ACT-002` | `crates/guard-edge/src/rate_limit/tests.rs`, `crates/guard-edge/src/response/tests.rs`, `tools/vpsguard_harness/edge_probe.py`, `scripts/integration-gate.sh` | 공통·인증 route의 429·`Retry-After: 60` loopback report |
 | `ACT-003` | `crates/guard-edge/tests/clearance.rs` | browser challenge E2E |
 | `ACT-004` | `crates/guard-edge/src/runtime/tests.rs`, `scripts/integration-gate.sh` | G7 인증 route 제한 중 search·일반 정상, upload body·timeout 별도 보호 |
-| `ACT-005` | `crates/guard-core/tests/temporary_block.rs` | nftables set·TTL read-back |
+| `ACT-005` | `crates/guard-control/src/protection/tests.rs`, `crates/guard-control/src/api/tests.rs`, `crates/guard-edge/src/policy_runtime/tests.rs`, `web/src/pages/clients.tsx` | Edge policy TTL 차단·수동 해제·만료 read-back |
 | `ACT-006`, `ACT-007` | `crates/guard-provider/src/tests.rs`, `crates/guard-provider/src/cloudflare.rs`, `crates/guard-cli/src/provider.rs` | 변경 능력이 없는 exact-hostname·금지목록·DNS-only·TTL preflight 통과 후 실제 test zone 전환·복구 artifact |
 | `ACT-008` | `crates/guard-core/src/state/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | 실제 test zone에서 `RECOVERY_READY` 유지·관리자 승인·DNS only read-back artifact |
 | `ACT-009` | `crates/guard-core/tests/manual_hold.rs` | UI hold 중 state timeline |
-| `ACT-010` | `crates/guard-provider/tests/firewall_invariants.rs` | 전후 SSH·non-web listener·firewall rule diff |
+| `ACT-010` | `crates/guard-system/src/listener.rs`, `crates/guard-system/src/nftables.rs`, `crates/guard-system/src/operation/tests.rs` | 전후 SSH·TCP/UDP non-web listener·기존 UDP/443·firewall rule diff |
 | `ACT-011` | `crates/guard-control/src/runtime/tests.rs`, `crates/guard-control/src/api/tests.rs`, `crates/guard-provider/src/cloudflare.rs` | 401·403·429·5xx provider 장애 중 local guard·public edge 지속 report |
 | `ACT-012` | `crates/guard-control/tests/idempotent_actions.rs` | 중복 요청 provider call count |
 | `ACT-013`, `ACT-014` | `crates/guard-system/src/ufw.rs`, `crates/guard-control/src/api/tests.rs`, `tools/vm/standalone-security-probe.sh` | [standalone UFW apply·read-back·remove, foreign rule·SSH 보존과 JW-agent delegated mutation 0](evidence/gnuboard5-standalone-security-20260722.md) |
@@ -103,7 +103,7 @@ last_reviewed: 2026-07-24
 | `TLS-003`, `TLS-006` | `scripts/tests/repository-contracts.sh`, `tests/e2e/certbot_renew.rs`, `tools/tests/test_tls_reload.py` | [`g7devops` 기존 staging webroot renew·timer report](evidence/g7devops-direct-tls-20260715.md); 새 supervisor 경로의 실제 ACME staging 발급·Certbot timer renew는 미수집 |
 | `TLS-004` | `crates/guard-system/src/tls/served/tests.rs`, `crates/guard-cli/src/main.rs`, `tools/tests/test_packaging_security.py`, `tools/tests/test_tls_reload.py` | [격리 2GB VM에서 stage leaf와 reload 뒤 listener leaf exact 일치](evidence/gnuboard5-tls-reload-20260724.md); 실제 Certbot hook 경로는 미수집 |
 | `TLS-005` | `tests/e2e/certificate_preservation.rs` | [`g7devops` 전환 전후 fingerprint](evidence/g7devops-direct-tls-20260715.md) |
-| `OPS-001`, `OPS-002` | `tests/e2e/shadow_cutover.rs` | public ingress 전환 timeline |
+| `OPS-001`, `OPS-002` | `crates/guard-system/src/plan/tests.rs`, `crates/guard-system/src/operation/tests.rs`, `scripts/tests/ingress-transaction-harness.sh` | plan·snapshot·public ingress 전환 timeline |
 | `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-004` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/ingress-transaction-harness.sh` | [`g7devops` edge -> Nginx -> direct edge smoke](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-005`, `OPS-006` | `tools/vpsguard_harness/release_lifecycle.py`, `tools/vpsguard_harness/uninstall_pilot.py`, `scripts/update-release.sh`, `scripts/uninstall.sh` | [`OPS-005` 2GB VM 20회 update·restore와 100ms public probe](evidence/gnuboard5-release-endurance-20260724.md); [`OPS-006` Apache direct bypass·owned-only uninstall·exact restore와 211회 무순단 probe](evidence/gnuboard5-uninstall-20260724.md) |
@@ -131,7 +131,7 @@ last_reviewed: 2026-07-24
 | `UI-016` | `crates/guard-core/src/config/tests.rs`, `crates/guard-edge/src/runtime.rs`, `web/tests/console.e2e.ts` | [Apache trusted TLS terminator의 직접 HTTPS 관리 Host·Secure PAM session과 Control public port scan](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-017` | `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts` | [standalone typed UFW 화면과 JW-agent 위임 read-only browser/API report](evidence/gnuboard5-standalone-security-20260722.md) |
 | `UI-018` | `crates/guard-core/src/policy/tests.rs`, `crates/guard-control/src/protection/tests.rs`, `crates/guard-control/src/api/tests.rs`, `web/tests/console.e2e.ts`, `tools/tests/test_protection_pilot.py` | 구버전 policy writer의 설정 일치 version 전진·불일치 거부와 [격리 VM의 verified bundle update·2GB guest MemTotal·정책 적용 전후 Edge telemetry version·정상/strict/upload 응답·원복 read-back](evidence/gnuboard5-ui018-policy-20260724.md) |
-| `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | `crates/guard-provider/src/cloudflare.rs`, admin socket·bootstrap·session authorization tests | 비인가 local UID·만료·재사용 login code denial과 provider error·debug token 비노출 report |
+| `SEC-001`, `SEC-002`, `SEC-003`, `SEC-006` | `crates/guard-provider/src/cloudflare.rs`, `tools/tests/test_governance.py`, admin socket·bootstrap·session authorization tests | root password schema 부재, 비인가 local UID·만료·재사용 login code denial과 provider error·debug token 비노출 report |
 | `SEC-004`, `SEC-005` | `crates/guard-provider/src/cloudflare.rs`, provider allowlist·secret scan tests | fake cross-zone·hostname·record denial report |
 | `SEC-008`, `SEC-009`, `SEC-010`, `SEC-011` | `scripts/integration-gate.sh`, edge security unit tests | method·header·auth limit·secret payload report와 G7 정상 브라우저 관찰 |
 | `SEC-012`, `SEC-013`, `SEC-014` | `crates/guard-control/src/auth/tests.rs`, `crates/guard-control/src/pam_mfa.rs`, `crates/guard-control/src/api/tests.rs` | 2GB VPS 재시작 session, root-only AEAD TOTP·hash-only 복구 코드와 auth 저장소 secret scan report |

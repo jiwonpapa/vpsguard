@@ -248,7 +248,11 @@ export function OverviewPage() {
         </ConsoleSection>
 
         {state.provider !== "unavailable" ? (
-          <ConsoleSection label="외부 보호 전환" title="Cloudflare transaction" description={`read-back stage: ${state.provider}${state.provider_drain_deadline_unix_seconds == null ? "" : ` · origin lock 예정 ${formatTime(state.provider_drain_deadline_unix_seconds * 1_000)}`}`}>
+          <ConsoleSection
+            label="외부 보호 전환"
+            title="Cloudflare transaction"
+            description={`관리 정책: ${providerPolicyLabel(state.provider_policy)} · read-back stage: ${state.provider}${state.provider_drain_deadline_unix_seconds == null ? "" : ` · origin lock 예정 ${formatTime(state.provider_drain_deadline_unix_seconds * 1_000)}`}`}
+          >
             <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
               <div className="h-2 max-w-2xl overflow-hidden rounded-full bg-muted" aria-label={`Provider 진행률 ${providerProgress(state.provider)}%`}>
                 <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${providerProgress(state.provider)}%` }} />
@@ -279,6 +283,12 @@ function serviceDot(state: string): string {
 
 function providerProgress(stage: string): number {
   return { ready: 0, pending: 5, snapshotted: 20, proxy_requested: 40, proxy_verified: 55, proxy_drain: 70, origin_lock_requested: 85, running: 90, complete: 100, restored: 100 }[stage] ?? 0;
+}
+
+function providerPolicyLabel(policy: "automatic" | "paused" | "forced_on"): string {
+  if (policy === "paused") return "자동 전환 중지";
+  if (policy === "forced_on") return "외부 보호 유지";
+  return "부하 시 자동 활성";
 }
 
 function CompactMetric({ label, value }: { label: string; value: string }) {

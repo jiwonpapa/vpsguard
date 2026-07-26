@@ -4,8 +4,8 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
-use guard_core::policy::{ProtectionSettings, ProtectionSettingsError, StaticLimits};
-use guard_core::{GuardMode, GuardState, PolicyError, PolicySnapshot};
+use guard_core::policy::{ClientRule, ProtectionSettings, ProtectionSettingsError, StaticLimits};
+use guard_core::{Decision, GuardMode, GuardState, PolicyError, PolicySnapshot, ReasonCode};
 use guard_system::{AtomicJsonStore, StoreError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,6 +16,8 @@ use tokio::sync::Mutex as AsyncMutex;
 
 const POLICY_TTL_MINUTES: i64 = 10;
 const COMPLETED_OPERATION_CAPACITY: usize = 1_024;
+const TEMPORARY_BLOCK_MIN_SECONDS: u64 = 60;
+const TEMPORARY_BLOCK_MAX_SECONDS: u64 = 86_400;
 
 /// 현재 관리자 보호 설정과 policy 적용 상태입니다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -180,6 +182,11 @@ pub enum ProtectionPolicyError {
     /// state가 가리키는 policy version에 대응하는 policy 파일이 없습니다.
     #[error("state policy version {0}에 대응하는 policy 파일이 없습니다")]
     MissingPolicy(u64),
+    /// 임시 차단 TTL이 지원 범위를 벗어났습니다.
+    #[error(
+        "임시 차단 TTL은 {TEMPORARY_BLOCK_MIN_SECONDS}..={TEMPORARY_BLOCK_MAX_SECONDS}초여야 합니다: {0}"
+    )]
+    InvalidTemporaryBlockTtl(u64),
     /// state version이 실제 policy 파일보다 앞서 있어 일관성을 증명할 수 없습니다.
     #[error("state policy version {state_version}이 파일 version {file_version}보다 앞섭니다")]
     StateVersionAhead {
@@ -197,6 +204,7 @@ pub(crate) struct ProtectionPolicyManager {
     metadata_store: AtomicJsonStore<PersistedProtection>,
     max_body_bytes: u64,
     max_tracked_clients: usize,
+    client_rules: Mutex<Vec<ClientRule>>,
     memory: Mutex<ProtectionMemory>,
     writer: AsyncMutex<()>,
 }
@@ -231,6 +239,13 @@ impl ProtectionPolicyManager {
         } else {
             None
         };
+        let client_rules = match (policy.as_ref(), metadata.as_ref()) {
+            (Some(policy), Some(metadata)) if policy.policy_version >= metadata.policy_version => {
+                policy.client_rules.clone()
+            }
+            (Some(policy), None) => policy.client_rules.clone(),
+            _ => Vec::new(),
+        };
         let current = recover_current(
             &store,
             &metadata_store,
@@ -248,6 +263,7 @@ impl ProtectionPolicyManager {
             metadata_store,
             max_body_bytes,
             max_tracked_clients,
+            client_rules: Mutex::new(client_rules),
             memory: Mutex::new(ProtectionMemory {
                 current,
                 completed: VecDeque::with_capacity(COMPLETED_OPERATION_CAPACITY),
@@ -340,6 +356,7 @@ impl ProtectionPolicyManager {
             settings,
             OffsetDateTime::now_utc(),
         )?;
+        let policy = with_client_rules(policy, lock(&self.client_rules).clone())?;
         let next = CurrentProtection {
             settings,
             policy_version: next_version,
@@ -375,6 +392,7 @@ impl ProtectionPolicyManager {
             current.settings,
             OffsetDateTime::now_utc(),
         )?;
+        let policy = with_client_rules(policy, lock(&self.client_rules).clone())?;
         let next = CurrentProtection {
             settings: current.settings,
             policy_version: next_version,
@@ -383,6 +401,81 @@ impl ProtectionPolicyManager {
         lock(&self.memory).current.policy_version = next_version;
         state.policy_version = next_version;
         Ok(state)
+    }
+
+    /// IP를 TTL 동안 거부하는 Edge client rule을 원자 적용합니다.
+    ///
+    /// # Errors
+    ///
+    /// TTL 시각, version, policy 저장 또는 read-back 실패를 반환합니다.
+    pub(crate) async fn block_client(
+        &self,
+        client_ip: std::net::IpAddr,
+        ttl_seconds: u64,
+        mode: GuardMode,
+    ) -> Result<ProtectionSnapshot, ProtectionPolicyError> {
+        if !(TEMPORARY_BLOCK_MIN_SECONDS..=TEMPORARY_BLOCK_MAX_SECONDS).contains(&ttl_seconds) {
+            return Err(ProtectionPolicyError::InvalidTemporaryBlockTtl(ttl_seconds));
+        }
+        let _writer = self.writer.lock().await;
+        let now = OffsetDateTime::now_utc();
+        let expires_at = (now
+            + time::Duration::seconds(i64::try_from(ttl_seconds).unwrap_or(i64::MAX)))
+        .format(&Rfc3339)
+        .map_err(|error| ProtectionPolicyError::Time(error.to_string()))?;
+        let mut rules = active_client_rules(&lock(&self.client_rules), now);
+        rules.retain(|rule| rule.client_ip != client_ip);
+        rules.push(ClientRule {
+            client_ip,
+            action: Decision::Deny,
+            expires_at,
+            reason_codes: vec![ReasonCode::AutomationPattern],
+        });
+        self.write_client_rules(mode, rules).await
+    }
+
+    /// IP의 임시 Edge client rule을 제거합니다.
+    ///
+    /// # Errors
+    ///
+    /// version, policy 저장 또는 read-back 실패를 반환합니다.
+    pub(crate) async fn unblock_client(
+        &self,
+        client_ip: std::net::IpAddr,
+        mode: GuardMode,
+    ) -> Result<ProtectionSnapshot, ProtectionPolicyError> {
+        let _writer = self.writer.lock().await;
+        let now = OffsetDateTime::now_utc();
+        let mut rules = active_client_rules(&lock(&self.client_rules), now);
+        rules.retain(|rule| rule.client_ip != client_ip);
+        self.write_client_rules(mode, rules).await
+    }
+
+    async fn write_client_rules(
+        &self,
+        mode: GuardMode,
+        rules: Vec<ClientRule>,
+    ) -> Result<ProtectionSnapshot, ProtectionPolicyError> {
+        let current = lock(&self.memory).current;
+        let next = CurrentProtection {
+            settings: current.settings,
+            policy_version: next_version(current.policy_version)?,
+        };
+        let policy = with_client_rules(
+            build_policy_at(
+                mode,
+                next.policy_version,
+                self.max_body_bytes,
+                self.max_tracked_clients,
+                current.settings,
+                OffsetDateTime::now_utc(),
+            )?,
+            rules.clone(),
+        )?;
+        self.write_and_read_back(policy, current, next).await?;
+        lock(&self.memory).current = next;
+        *lock(&self.client_rules) = rules;
+        snapshot_of(next)
     }
 
     async fn write_and_read_back(
@@ -417,6 +510,26 @@ impl ProtectionPolicyManager {
         }
         Ok(())
     }
+}
+
+fn active_client_rules(rules: &[ClientRule], now: OffsetDateTime) -> Vec<ClientRule> {
+    rules
+        .iter()
+        .filter(|rule| {
+            OffsetDateTime::parse(&rule.expires_at, &Rfc3339)
+                .is_ok_and(|expires_at| expires_at > now)
+        })
+        .cloned()
+        .collect()
+}
+
+fn with_client_rules(
+    mut policy: PolicySnapshot,
+    client_rules: Vec<ClientRule>,
+) -> Result<PolicySnapshot, ProtectionPolicyError> {
+    policy.client_rules = client_rules;
+    policy.content_sha256.clear();
+    Ok(policy.seal()?)
 }
 
 fn recover_current(

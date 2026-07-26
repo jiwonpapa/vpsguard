@@ -94,6 +94,61 @@ fn crawler_trust_requires_a_majority_of_edge_verified_requests() {
 }
 
 #[test]
+fn det_009_signed_session_continuity_requires_a_window_majority() {
+    let mut aggregate = TrafficAggregator::new(10);
+    let mut continuous = telemetry(1, 200, 100);
+    continuous.session_continuity = true;
+    aggregate.ingest(&continuous);
+    aggregate.ingest(&continuous);
+    aggregate.ingest(&telemetry(1, 200, 100));
+
+    assert!(
+        aggregate
+            .take_detection_input(HostPressure::available(0))
+            .is_some_and(|input| input.session_continuity)
+    );
+}
+
+#[test]
+fn det_006_learns_site_baseline_without_weakening_static_saturation() {
+    let mut aggregate = TrafficAggregator::new(10);
+    for window in 0..6 {
+        for request in 0..20 {
+            let mut sample = telemetry(1, 200, 100);
+            sample.occurred_at_unix_ms = window * 5_000 + request;
+            aggregate.ingest(&sample);
+        }
+        assert!(
+            aggregate
+                .take_detection_input(HostPressure::available(0))
+                .is_some_and(|input| input.automation == 0)
+        );
+    }
+    for request in 0..60 {
+        let mut sample = telemetry(1, 200, 100);
+        sample.occurred_at_unix_ms = 40_000 + request;
+        aggregate.ingest(&sample);
+    }
+    assert!(
+        aggregate
+            .take_detection_input(HostPressure::available(0))
+            .is_some_and(|input| input.automation == 50)
+    );
+
+    let mut cold_start = TrafficAggregator::new(10);
+    for request in 0..500 {
+        let mut sample = telemetry(1, 200, 100);
+        sample.occurred_at_unix_ms = request;
+        cold_start.ingest(&sample);
+    }
+    assert!(
+        cold_start
+            .take_detection_input(HostPressure::available(0))
+            .is_some_and(|input| input.automation == 80)
+    );
+}
+
+#[test]
 fn bounds_and_aggregates_one_second_live_ring() {
     let mut aggregate = TrafficAggregator::with_live_window(10, 2);
     let mut first = telemetry(1, 200, 100);

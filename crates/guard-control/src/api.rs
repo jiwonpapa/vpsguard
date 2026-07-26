@@ -107,6 +107,7 @@ struct StatusResponse {
     edge: &'static str,
     origin: &'static str,
     agent: CollectorState,
+    provider_policy: &'static str,
     provider: String,
     provider_drain_deadline_unix_seconds: Option<u64>,
     tls: String,
@@ -325,6 +326,10 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/clients", get(clients))
         .route("/api/v1/clients/export", post(export_clients))
         .route("/api/v1/clients/{client_ip}", get(client_detail))
+        .route(
+            "/api/v1/clients/{client_ip}/block",
+            post(protection_api::block_client).delete(protection_api::unblock_client),
+        )
         .route("/api/v1/routes", get(routes))
         .route("/api/v1/bots", get(bots))
         .route("/api/v1/incidents", get(incidents))
@@ -596,6 +601,16 @@ async fn status(State(app): State<Arc<AppState>>) -> Json<StatusResponse> {
         edge: "live",
         origin: "unknown",
         agent,
+        provider_policy: if state.manual_hold {
+            "paused"
+        } else if matches!(
+            state.current_mode,
+            GuardMode::EmergencyProxy | GuardMode::RecoveryReady
+        ) {
+            "forced_on"
+        } else {
+            "automatic"
+        },
         provider,
         provider_drain_deadline_unix_seconds,
         tls: tls_management.health.as_str().to_owned(),
@@ -857,6 +872,13 @@ fn protection_policy_error(error: ProtectionPolicyError) -> Response {
             "보호 제한값이 안전 계약을 위반했습니다.",
             "현재 policy와 Edge 동작을 변경하지 않았습니다.",
             "각 값을 1..=6000 범위로 두고 WATCH ≥ LOCAL ≥ EMERGENCY, strict ≥ upload 관계를 확인하십시오.",
+        ),
+        ProtectionPolicyError::InvalidTemporaryBlockTtl(_) => api_error(
+            StatusCode::BAD_REQUEST,
+            "TEMPORARY_BLOCK_TTL_INVALID",
+            "임시 차단 시간이 허용 범위를 벗어났습니다.",
+            "Edge client rule을 변경하지 않았습니다.",
+            "60초 이상 24시간 이하로 다시 지정하십시오.",
         ),
         ProtectionPolicyError::StalePlan => api_error(
             StatusCode::CONFLICT,
@@ -1960,6 +1982,9 @@ fn api_error_cause(code: &str) -> &'static str {
         "CORRELATION_ID_INVALID" => "식별자가 허용 길이 또는 문자 규칙을 위반했습니다.",
         "CORRELATION_NOT_FOUND" => "현재 detail·incident·audit 보존 계층에 일치값이 없습니다.",
         "CLIENT_IP_INVALID" => "path 값이 IPv4 또는 IPv6 주소로 해석되지 않습니다.",
+        "TEMPORARY_BLOCK_TTL_INVALID" => {
+            "TTL이 지원하는 60초 이상 24시간 이하 범위를 벗어났습니다."
+        }
         "CLIENT_DETAIL_NOT_FOUND" => {
             "현재 detail retention 계층에 exact client 주소와 일치하는 요청이 없습니다."
         }

@@ -282,9 +282,9 @@ async fn restart_completes_metadata_first_transaction_without_changing_edge_sche
     let path = directory.path().join("policy.json");
     let manager =
         ProtectionPolicyManager::load(path.clone(), 0, GuardMode::Normal, 1_048_576, 10_000)?;
-    let mut state = GuardState::normal("2026-07-24T00:00:00Z");
-    state.current_mode = GuardMode::Watch;
-    manager.write_for_state(state).await?;
+    manager
+        .block_client("203.0.113.44".parse()?, 300, GuardMode::Watch)
+        .await?;
     drop(manager);
 
     let candidate = ProtectionSettings {
@@ -304,9 +304,19 @@ async fn restart_completes_metadata_first_transaction_without_changing_edge_sche
     assert_eq!(recovered.snapshot()?.policy_version, 2);
     let policy = AtomicJsonStore::<PolicySnapshot>::new(path.clone()).read()?;
     assert_eq!(policy.policy_version, 2);
+    assert!(policy.client_rules.is_empty());
     assert_eq!(
         policy.route_rules,
         candidate.route_rules(GuardMode::LocalGuard)
+    );
+    let mut state = GuardState::normal("2026-07-24T00:00:00Z");
+    state.current_mode = GuardMode::Watch;
+    recovered.write_for_state(state).await?;
+    assert!(
+        AtomicJsonStore::<PolicySnapshot>::new(path.clone())
+            .read()?
+            .client_rules
+            .is_empty()
     );
     assert!(!std::fs::read_to_string(path)?.contains("protection_settings"));
     Ok(())
@@ -331,5 +341,32 @@ fn tampered_protection_metadata_is_rejected_before_policy_mutation()
         Err(ProtectionPolicyError::MetadataHashMismatch)
     ));
     assert!(!path.exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn act_005_temporary_block_and_manual_release_reach_edge_policy()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("policy.json");
+    let manager =
+        ProtectionPolicyManager::load(path.clone(), 0, GuardMode::Normal, 1_048_576, 10_000)?;
+    let client_ip = "192.0.2.44".parse()?;
+
+    let blocked = manager
+        .block_client(client_ip, 900, GuardMode::LocalGuard)
+        .await?;
+    assert_eq!(blocked.policy_version, 1);
+    let policy = AtomicJsonStore::<PolicySnapshot>::new(path.clone()).read()?;
+    assert_eq!(policy.client_rules.len(), 1);
+    assert_eq!(policy.client_rules[0].client_ip, client_ip);
+    assert_eq!(policy.client_rules[0].action, guard_core::Decision::Deny);
+
+    let released = manager
+        .unblock_client(client_ip, GuardMode::LocalGuard)
+        .await?;
+    assert_eq!(released.policy_version, 2);
+    let policy = AtomicJsonStore::<PolicySnapshot>::new(path).read()?;
+    assert!(policy.client_rules.is_empty());
     Ok(())
 }

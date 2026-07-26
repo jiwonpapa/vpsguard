@@ -27,6 +27,7 @@ fn fixture() -> RequestTelemetry {
         bot_class: BotClass::Undeclared,
         bot_provider: None,
         bot_verified: false,
+        session_continuity: true,
         bot_reason: BotReason::NotDeclared,
         user_agent_family: UserAgentFamily::Curl,
         in_flight_requests: 2,

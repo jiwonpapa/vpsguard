@@ -12,6 +12,7 @@ use super::{
     DeploymentStateError, DeploymentStateStore, PROTECTED_PATHS, PROTECTED_SERVICES, io_error,
 };
 use crate::OwnedProgram;
+use crate::listener::{ListenerTransport, deployment_listeners};
 
 impl DeploymentStateStore {
     pub(crate) fn validate_runtime_boundary(&self) -> Result<(), DeploymentStateError> {
@@ -317,20 +318,24 @@ impl DeploymentStateStore {
                 Vec::new()
             }
         } else {
-            let output = self.runner.run(
+            let tcp = self.runner.run(
                 OwnedProgram::Ss,
                 &["-H".to_owned(), "-ltn".to_owned()],
                 None,
                 &[],
             )?;
-            let lines = output
-                .stdout
-                .lines()
-                .filter_map(|line| line.split_whitespace().nth(3))
-                .filter(|address| !address.ends_with(":7727") && !address.ends_with(":18080"))
-                .map(str::to_owned)
+            let udp = self.runner.run(
+                OwnedProgram::Ss,
+                &["-H".to_owned(), "-lun".to_owned()],
+                None,
+                &[],
+            )?;
+            let lines = deployment_listeners(&tcp.stdout, ListenerTransport::Tcp)
+                .into_iter()
+                .chain(deployment_listeners(&udp.stdout, ListenerTransport::Udp))
                 .collect();
-            self.record_audit(output.audit);
+            self.record_audit(tcp.audit);
+            self.record_audit(udp.audit);
             lines
         };
         Ok(lines
