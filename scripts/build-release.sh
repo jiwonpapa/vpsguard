@@ -68,8 +68,9 @@ fi
 {
   echo "target=${target}"
   echo "version=${version}"
+  echo "commit=${VPS_GUARD_BUILD_COMMIT}"
   rustc -Vv
-  git rev-parse HEAD
+  echo "${VPS_GUARD_BUILD_COMMIT}"
 } >"${bundle}/BUILD-INFO.txt"
 
 checksums="${bundle}.SHA256SUMS.tmp"

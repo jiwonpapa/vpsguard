@@ -59,6 +59,7 @@ last_reviewed: 2026-07-26
 - [x] 고정 GnuBoard5 host·DocumentRoot·certificate를 제거한 사이트별 Nginx·Apache ingress manifest
 - [x] 기존 `OPS-003`·`OPS-011` snapshot·configtest·probe·rollback engine에 범용 manifest 연결
 - [x] x86_64·aarch64 release bundle을 설치하는 Debian package와 post-install 무편입 원칙
+- [x] release bundle checksum·현재 source commit 불일치 package 생성 거부와 package 내부 build provenance 보존
 - [x] README 첫 화면에 package 기반 quick start를 추가하고 수동 runbook과 분리
 - [x] Nginx·Apache fixture, CLI, package contract와 전체 품질 gate
 - [ ] 실제 Ubuntu 24.04 Nginx·Apache 표준 사이트 편입·원복·성능 증거

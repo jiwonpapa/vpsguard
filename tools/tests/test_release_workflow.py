@@ -45,6 +45,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("test ! -e /package/etc/vps-guard/config.toml", self.workflow)
         self.assertIn("${{ steps.package.outputs.path }}", self.workflow)
 
+    def test_bundle_commit_must_match_the_workflow_commit(self) -> None:
+        self.assertIn(
+            'grep -Fxq "commit=${GITHUB_SHA}" "${bundle}/BUILD-INFO.txt"',
+            self.workflow,
+        )
+        self.assertIn(
+            "./usr/share/doc/vpsguard/BUILD-INFO.txt",
+            self.workflow,
+        )
+
     def test_native_runners_install_bindgen_and_pam_dependencies(self) -> None:
         self.assertIn(
             "sudo apt-get update && sudo apt-get install --yes "

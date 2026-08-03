@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import tarfile
 import tempfile
@@ -14,12 +15,18 @@ from tools.vpsguard_harness.debian_package import DebianPackageError, build_pack
 class DebianPackageTests(unittest.TestCase):
     """A package must install binaries but preserve existing configuration."""
 
+    source_commit = "0123456789abcdef0123456789abcdef01234567"
+
     def test_builds_valid_ar_with_services_and_non_overwriting_postinst(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bundle = self._bundle(root, "x86_64-unknown-linux-gnu")
 
-            package = build_package(bundle, root / "vpsguard.deb")
+            package = build_package(
+                bundle,
+                root / "vpsguard.deb",
+                expected_commit=self.source_commit,
+            )
             members = self._ar_members(package.read_bytes())
 
             self.assertEqual(members["debian-binary"], b"2.0\n")
@@ -38,13 +45,18 @@ class DebianPackageTests(unittest.TestCase):
                 names = set(archive.getnames())
                 self.assertIn("./usr/local/bin/vps-guard", names)
                 self.assertIn("./etc/systemd/system/vps-guard-edge.service", names)
+                self.assertIn("./usr/share/doc/vpsguard/BUILD-INFO.txt", names)
                 self.assertNotIn("./etc/vps-guard/config.toml", names)
 
     def test_maps_arm_bundle_and_rejects_unknown_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             arm = self._bundle(root / "arm", "aarch64-unknown-linux-gnu")
-            package = build_package(arm, root / "arm.deb")
+            package = build_package(
+                arm,
+                root / "arm.deb",
+                expected_commit=self.source_commit,
+            )
             members = self._ar_members(package.read_bytes())
             with tarfile.open(fileobj=io.BytesIO(members["control.tar.gz"]), mode="r:gz") as archive:
                 control = archive.extractfile("./control")
@@ -53,7 +65,48 @@ class DebianPackageTests(unittest.TestCase):
 
             unknown = self._bundle(root / "unknown", "riscv64-unknown-linux-gnu")
             with self.assertRaises(DebianPackageError):
-                build_package(unknown, root / "unknown.deb")
+                build_package(
+                    unknown,
+                    root / "unknown.deb",
+                    expected_commit=self.source_commit,
+                )
+
+    def test_rejects_bundle_built_from_a_different_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = self._bundle(root, "x86_64-unknown-linux-gnu")
+
+            with self.assertRaises(DebianPackageError) as raised:
+                build_package(
+                    bundle,
+                    root / "stale.deb",
+                    expected_commit="f" * 40,
+                )
+
+            self.assertEqual(
+                raised.exception.code,
+                "DEBIAN_BUNDLE_COMMIT_MISMATCH",
+            )
+            self.assertFalse((root / "stale.deb").exists())
+
+    def test_rejects_a_bundle_with_modified_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = self._bundle(root, "x86_64-unknown-linux-gnu")
+            (bundle / "bin/vps-guard").write_bytes(b"tampered")
+
+            with self.assertRaises(DebianPackageError) as raised:
+                build_package(
+                    bundle,
+                    root / "tampered.deb",
+                    expected_commit=self.source_commit,
+                )
+
+            self.assertEqual(
+                raised.exception.code,
+                "DEBIAN_BUNDLE_CHECKSUM_MISMATCH",
+            )
+            self.assertFalse((root / "tampered.deb").exists())
 
     @staticmethod
     def _bundle(root: Path, target: str) -> Path:
@@ -83,7 +136,20 @@ class DebianPackageTests(unittest.TestCase):
         (bundle / "certbot/vps-guard-deploy-hook").write_text("#!/bin/sh\n", encoding="utf-8")
         (bundle / "vps-guard.example.toml").write_text("[edge]\n", encoding="utf-8")
         (bundle / "ownership-manifest.txt").write_text("owned\n", encoding="utf-8")
-        (bundle / "BUILD-INFO.txt").write_text(f"target={target}\nversion=0.1.0\n", encoding="utf-8")
+        (bundle / "BUILD-INFO.txt").write_text(
+            f"target={target}\nversion=0.1.0\ncommit={DebianPackageTests.source_commit}\n",
+            encoding="utf-8",
+        )
+        checksums = (
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  "
+            f"./{path.relative_to(bundle)}"
+            for path in sorted(bundle.rglob("*"))
+            if path.is_file()
+        )
+        (bundle / "SHA256SUMS").write_text(
+            "\n".join(checksums) + "\n",
+            encoding="utf-8",
+        )
         return bundle
 
     @staticmethod

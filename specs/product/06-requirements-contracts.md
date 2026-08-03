@@ -156,12 +156,12 @@ service 자동 발견은 읽기 전용 후보 제시까지만 허용합니다. �
 | `OPS-004` | bypass enable/disable 제공 | 실제 VPS 양방향 smoke 통과 |
 | `OPS-005` | update 전 backup과 rollback 제공 | 실패 바이너리 자동 복구 |
 | `OPS-006` | uninstall이 사이트·인증서·원본 설정을 보존 | 소유 파일만 제거 |
-| `OPS-007` | x86_64와 aarch64 artifact 제공 | checksum·SBOM과 설치 smoke |
+| `OPS-007` | x86_64와 aarch64 artifact 제공 | checksum·SBOM·source commit 일치와 설치 smoke |
 | `OPS-008` | root 변경은 공통 runner와 감사 로그 사용 | argv·exit·duration 기록, 비밀 마스킹 |
 | `OPS-009` | first install과 shadow 배포 전에 배포 소유 상태를 snapshot하고 실패·관리자 요청 시 정확히 원상복귀 | binary·unit·drop-in·config·service enable/active·소유 directory의 기존/부재 상태를 복구하고 snapshot checksum, 보호 directory identity와 non-web listener를 read-back하며 사용자 Nginx·인증서·사이트 tree를 scan·복구하지 않음 |
 | `OPS-010` | apply·restore를 단일 typed transaction으로 실행하고 단계별 timeout·진행 상태·자동 rollback을 제공 | 동시 실행은 하나의 operation lock으로 차단하고 재요청은 현재 transaction을 보고하며, 사이트 전체 tree scan 없이 VPSGuard가 변경하는 경로만 snapshot하고 file 내용·mode·uid·gid와 기존 parent mode를 보존하며, preflight 60초·public ingress 순단 5초·update 60초·rollback 10초·first-install restore 30초 hard limit을 fault test에서 검증 |
 | `OPS-011` | 기존 Apache가 public TLS를 유지하는 설치에서 Apache public -> VPSGuard loopback -> Apache loopback origin 전환과 bypass를 typed transaction으로 제공 | 공개 vhost·origin vhost·ports include·VPSGuard 설정·Apache/edge service 상태를 exact-file snapshot하고 `apache2ctl configtest`, loopback readiness, public header probe, 인증서 fingerprint와 SSH·비-web listener read-back을 통과한 경우에만 전환하며 실패 시 자동 복구하고 격리 VM에서 20회 왕복 |
-| `OPS-012` | `vps-guard setup`이 Ubuntu 24.04의 기존 Nginx·Apache HTTPS 사이트를 읽기 전용으로 탐지하고 지원 가능성·변경 계획·원복 경계를 한 번에 제시 | 기본 실행은 mutation 0건이며 exactly-one 표준 TLS site만 자동 준비 대상으로 선택하고, 양쪽 웹서버 동시 활성·다중 TLS vhost·기존 reverse proxy·동적 include·필수 경로 결손은 문제·원인·영향·다음 조치가 있는 typed 판정으로 거부한다. `setup --apply`는 사이트별 manifest에서 고정 도메인·GnuBoard 경로 없이 `OPS-003`·`OPS-011` snapshot·candidate 검사·자동 rollback transaction을 실행한다. Debian package 설치 자체는 기존 `/etc/vps-guard/config.toml`, public ingress와 service active 상태를 변경하지 않는다. |
+| `OPS-012` | `vps-guard setup`이 Ubuntu 24.04의 기존 Nginx·Apache HTTPS 사이트를 읽기 전용으로 탐지하고 지원 가능성·변경 계획·원복 경계를 한 번에 제시 | 기본 실행은 mutation 0건이며 exactly-one 표준 TLS site만 자동 준비 대상으로 선택하고, 양쪽 웹서버 동시 활성·다중 TLS vhost·기존 reverse proxy·동적 include·필수 경로 결손은 문제·원인·영향·다음 조치가 있는 typed 판정으로 거부한다. `setup --apply`는 사이트별 manifest에서 고정 도메인·GnuBoard 경로 없이 `OPS-003`·`OPS-011` snapshot·candidate 검사·자동 rollback transaction을 실행한다. Debian package는 release bundle commit과 현재 source commit이 정확히 일치할 때만 생성하며 설치 자체는 기존 `/etc/vps-guard/config.toml`, public ingress와 service active 상태를 변경하지 않는다. |
 
 ### 2.8 Security and non-functional
 

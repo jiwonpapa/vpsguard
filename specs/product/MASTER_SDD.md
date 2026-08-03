@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-24
+last_reviewed: 2026-08-03
 bounded_context: adaptive-vps-guard
 ---
 
@@ -49,6 +49,7 @@ VPS Guard 자체는 정상 상태에도 로컬 VPS 최앞단에 존재합니다.
 - Ubuntu 24.04를 1차 운영 검증 기준으로 사용
 - Nginx와 Apache를 동급 public TLS terminator·loopback origin으로 지원
 - 자동 설치는 Ubuntu 24.04의 exactly-one 표준 HTTPS site로 제한하고 복잡한 다중 vhost·기존 reverse proxy는 변경 없이 수동 검토로 분류
+- Debian package는 checksum을 검증한 release bundle에서 만들고 bundle source commit과 현재 checkout commit이 다르면 생성을 거부
 - Cloudflare DNS zone과 API token을 선택적으로 사용
 - standalone 설치의 정적 port·IP 방화벽은 Ubuntu UFW를 기준으로 사용
 - JW-agent 연동 설치는 host firewall mutation을 JW-agent에 위임하고 VPSGuard는 HTTP edge 정책만 소유

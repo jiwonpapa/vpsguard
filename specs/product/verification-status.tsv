@@ -1,7 +1,7 @@
 # requirement_id|status|implementation|automated_evidence|operational_evidence
 # status: PLANNED < CODE_ONLY < AUTO_PASS < VPS_PASS
 EDGE-001|VPS_PASS|crates/guard-edge/src/startup.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
-EDGE-002|VPS_PASS|crates/guard-edge/src/tls.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md
+EDGE-002|PLANNED|-|-|-
 EDGE-003|AUTO_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|-
 EDGE-004|AUTO_PASS|crates/guard-edge/src/policy.rs|crates/guard-edge/src/policy/tests.rs|-
 EDGE-005|VPS_PASS|crates/guard-edge/src/proxy.rs|scripts/integration-gate.sh|specs/product/evidence/g7devops-direct-tls-20260715.md

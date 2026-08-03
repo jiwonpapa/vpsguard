@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import os
+import re
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,17 +20,24 @@ class PackageMetadata:
 
     version: str
     architecture: str
+    source_commit: str
 
 
 class DebianPackageError(HarnessError):
     """The release bundle cannot be represented as a safe Debian package."""
 
 
-def build_package(bundle: Path, output: Path | None = None) -> Path:
-    """Create a `.deb` without mutating the release bundle."""
+def build_package(
+    bundle: Path,
+    output: Path | None = None,
+    *,
+    expected_commit: str,
+) -> Path:
+    """Create a `.deb` only when the bundle matches the requested source commit."""
 
     bundle = bundle.resolve(strict=True)
-    metadata = _metadata(bundle)
+    _verify_checksums(bundle)
+    metadata = _metadata(bundle, expected_commit)
     payload = _payload(bundle)
     destination = output or (
         bundle.parent.parent.parent
@@ -49,7 +58,7 @@ def build_package(bundle: Path, output: Path | None = None) -> Path:
     return destination
 
 
-def _metadata(bundle: Path) -> PackageMetadata:
+def _metadata(bundle: Path, expected_commit: str) -> PackageMetadata:
     info = _required(bundle / "BUILD-INFO.txt").read_text(encoding="utf-8")
     values = dict(
         line.split("=", maxsplit=1)
@@ -57,6 +66,21 @@ def _metadata(bundle: Path) -> PackageMetadata:
         if "=" in line
     )
     target = values.get("target", "")
+    source_commit = values.get("commit", "")
+    if not _valid_commit(expected_commit) or not _valid_commit(source_commit):
+        raise _error(
+            "DEBIAN_BUILD_COMMIT_INVALID",
+            f"expected={expected_commit!r}, bundle={source_commit!r}",
+            "어떤 source로 build한 package인지 증명할 수 없습니다.",
+            "현재 checkout에서 release bundle을 다시 생성하십시오.",
+        )
+    if source_commit != expected_commit:
+        raise _error(
+            "DEBIAN_BUNDLE_COMMIT_MISMATCH",
+            f"expected={expected_commit}, bundle={source_commit}",
+            "오래된 binary가 현재 source의 package로 배포될 수 있습니다.",
+            "현재 commit에서 release bundle을 다시 생성하십시오.",
+        )
     architecture = {
         "x86_64-unknown-linux-gnu": "amd64",
         "aarch64-unknown-linux-gnu": "arm64",
@@ -81,7 +105,11 @@ def _metadata(bundle: Path) -> PackageMetadata:
             "apt가 package version을 안정적으로 비교할 수 없습니다.",
             "vpsguard-<semver> release bundle 이름을 사용하십시오.",
         )
-    return PackageMetadata(version=version, architecture=architecture)
+    return PackageMetadata(
+        version=version,
+        architecture=architecture,
+        source_commit=source_commit,
+    )
 
 
 def _payload(bundle: Path) -> list[tuple[Path, str, int]]:
@@ -131,6 +159,11 @@ def _payload(bundle: Path) -> list[tuple[Path, str, int]]:
                 "usr/share/doc/vpsguard/ownership-manifest.txt",
                 0o644,
             ),
+            (
+                _required(bundle / "BUILD-INFO.txt"),
+                "usr/share/doc/vpsguard/BUILD-INFO.txt",
+                0o644,
+            ),
         ]
     )
     return files
@@ -143,6 +176,7 @@ def _control_archive(metadata: PackageMetadata) -> bytes:
         "Section: net\n"
         "Priority: optional\n"
         f"Architecture: {metadata.architecture}\n"
+        f"X-VPSGuard-Commit: {metadata.source_commit}\n"
         "Maintainer: VPSGuard maintainers\n"
         "Depends: ca-certificates, libc6, libgcc-s1, libpam0g, systemd\n"
         "Description: adaptive local traffic protection gateway\n"
@@ -236,6 +270,55 @@ def _required(path: Path) -> Path:
     return path
 
 
+def _verify_checksums(bundle: Path) -> None:
+    manifest = _required(bundle / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+    if not 1 <= len(manifest) <= 4_096:
+        raise _error(
+            "DEBIAN_BUNDLE_CHECKSUMS_INVALID",
+            f"entries={len(manifest)}",
+            "불완전한 release bundle이 package에 포함될 수 있습니다.",
+            "release bundle과 SHA256SUMS를 다시 생성하십시오.",
+        )
+    seen: set[str] = set()
+    for entry in manifest:
+        match = re.fullmatch(r"([0-9a-f]{64})  \./(.+)", entry)
+        if match is None or match.group(2) in seen:
+            raise _error(
+                "DEBIAN_BUNDLE_CHECKSUMS_INVALID",
+                f"entry={entry!r}",
+                "중복되거나 해석할 수 없는 파일이 package에 포함될 수 있습니다.",
+                "release bundle과 SHA256SUMS를 다시 생성하십시오.",
+            )
+        relative = match.group(2)
+        seen.add(relative)
+        source = bundle / relative
+        candidate = source.resolve()
+        if (
+            not candidate.is_relative_to(bundle)
+            or not candidate.is_file()
+            or source.is_symlink()
+        ):
+            raise _error(
+                "DEBIAN_BUNDLE_CHECKSUM_PATH_INVALID",
+                f"path={relative!r}",
+                "release bundle 경계 밖의 파일을 읽을 수 있습니다.",
+                "release bundle과 SHA256SUMS를 다시 생성하십시오.",
+            )
+        with candidate.open("rb") as source:
+            actual = hashlib.file_digest(source, "sha256").hexdigest()
+        if actual != match.group(1):
+            raise _error(
+                "DEBIAN_BUNDLE_CHECKSUM_MISMATCH",
+                f"path={relative}",
+                "변조되거나 손상된 binary가 package에 포함될 수 있습니다.",
+                "release bundle을 다시 생성하고 checksum을 검증하십시오.",
+            )
+
+
+def _valid_commit(value: str) -> bool:
+    return bool(re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value))
+
+
 def _error(code: str, cause: str, impact: str, next_action: str) -> DebianPackageError:
     return DebianPackageError(
         code=code,
@@ -252,8 +335,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--expected-commit", required=True)
     arguments = parser.parse_args()
-    print(build_package(arguments.bundle, arguments.output))
+    print(
+        build_package(
+            arguments.bundle,
+            arguments.output,
+            expected_commit=arguments.expected_commit,
+        )
+    )
     return 0
 
 

@@ -39,7 +39,9 @@ sudo vps-guard setup --apply
 - 후보 검사나 공개 read-back이 실패하면 같은 transaction에서 자동 복원합니다. rollback snapshot 경로도 출력합니다.
 - Nginx와 Apache가 동시에 active이거나, TLS site가 여러 개이거나, 기존 reverse proxy·동적 include가 있으면 추정하지 않고 수동 검토로 끝냅니다.
 
-아직 alpha이므로 `.deb`는 검증된 release bundle에서 생성합니다.
+아직 alpha이므로 `.deb`는 검증된 release bundle에서 생성합니다. 패키저는
+bundle 전체 checksum을 다시 확인하고, `BUILD-INFO.txt`의 source commit이 현재
+checkout의 `HEAD`와 다르면 오래된 binary로 판정하고 생성을 거부합니다.
 
 ```bash
 TARGET=x86_64-unknown-linux-gnu # ARM64는 aarch64-unknown-linux-gnu
@@ -47,7 +49,11 @@ cargo xtask release "$TARGET"
 scripts/build-deb.sh "target/release-bundle/$TARGET/vpsguard-0.1.0"
 ```
 
-생성물은 `target/debian/`에 놓입니다. package는 기존 `/etc/vps-guard/config.toml`을 덮어쓰지 않고, Nginx·Apache와 VPSGuard service를 자동 활성화하지 않습니다. 다중 사이트와 커스텀 ingress는 아래 수동 runbook을 사용합니다.
+생성물은 `target/debian/`에 놓입니다. package 안에도 검증한
+`/usr/share/doc/vpsguard/BUILD-INFO.txt`를 보존합니다. package는 기존
+`/etc/vps-guard/config.toml`을 덮어쓰지 않고, Nginx·Apache와 VPSGuard
+service를 자동 활성화하지 않습니다. 다중 사이트와 커스텀 ingress는 아래
+수동 runbook을 사용합니다.
 
 ## 구현 정본
 
@@ -457,7 +463,12 @@ sudo journalctl -u vps-guard-control -u vps-guard-edge --since '-10 minutes'
 
 ### 7. Apache 설치 범위
 
-Apache는 현재 **범용 공개 지원이 아니라 `gnuboard5` 격리 VM 파일럿**입니다. 검증 topology는 `Apache public TLS -> VPSGuard loopback -> Apache loopback origin`이며, 고정 Host·문서 root·인증서 경로가 포함된 [`configs/apache`](configs/apache) 파일을 다른 서버에 그대로 복사하면 안 됩니다.
+Ubuntu 24.04의 표준 단일 Apache TLS site는 `vps-guard setup` 탐지·후보 생성·
+자동 rollback을 지원하지만, 범용 공개 서버 E2E 증거는 아직 없습니다.
+실제 VPS 증거가 있는 범위는 `gnuboard5` 격리 VM의
+`Apache public TLS -> VPSGuard loopback -> Apache loopback origin`입니다.
+고정 Host·문서 root·인증서 경로가 포함된 [`configs/apache`](configs/apache)
+파일을 다른 서버에 그대로 복사하면 안 됩니다.
 
 Apache 서버는 `proxy`, `proxy_http`, `headers`, `remoteip`, `ssl` module과 별도 origin vhost가 필요합니다. ModSecurity·OWASP CRS도 자동 기본값이 아니며 `off -> detection -> app별 exclusion -> tuned_enforce` 순서로 정상 로그인·글쓰기·업로드 오탐을 검증합니다. 현재 파일럿의 exact 전환·bypass 명령은 [Apache 운영 절차](docs/OPERATIONS.md#단독-설치-관리자ufwwaf)와 [검증 증거](specs/product/evidence/gnuboard5-apache-vm-20260722.md)를 따릅니다.
 
@@ -525,12 +536,12 @@ sudo vps-guard issue-login-code
 
 ## 아직 release 인증이 필요한 기능
 
-- 단일 listener의 인증서별 multi-SNI 선택
-- Certbot HTTP-01 발급·갱신과 실제 served certificate 비교
+- 단일 listener의 인증서별 multi-SNI 선택은 아직 미구현
+- 신규 서버의 Certbot HTTP-01 발급·갱신과 실제 served certificate 비교
 - Cloudflare test zone의 실제 proxied 전환·복구와 `cf-ray` 증거
-- `g7devops` public ingress cutover·bypass 왕복
+- Ubuntu 24.04 표준 Nginx·Apache 사이트의 `setup --apply` 편입·원복·성능 증거
+- 실제 운영자의 PAM+TOTP 등록과 복구 코드 사용 증거
 - 실제 여러 source의 high-cardinality 2GB soak와 authenticated upload WAF 오탐 replay
-- multi-architecture artifact 실행 smoke
 
 ## 라이선스
 
