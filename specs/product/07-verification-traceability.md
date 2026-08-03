@@ -32,7 +32,8 @@ last_reviewed: 2026-07-24
 
 | 요구사항 | 예정 자동 증거 | 운영 증거 |
 |---|---|---|
-| `EDGE-001`, `EDGE-002` | `tests/e2e/tls_listeners.rs` | [`g7devops` 80 redirect, 443 SNI smoke](evidence/g7devops-direct-tls-20260715.md) |
+| `EDGE-001` | `scripts/integration-gate.sh` | [`g7devops` 80 redirect, 443 TLS smoke](evidence/g7devops-direct-tls-20260715.md) |
+| `EDGE-002` | `tests/e2e/tls_listeners.rs` | 서로 다른 인증서를 선택하는 multi-SNI 구현·증거 미수집. `g7devops.com`·`www.g7devops.com`은 동일 SAN 인증서이므로 이 요구사항의 증거가 아님 |
 | `EDGE-003`, `EDGE-005` | `tools/vpsguard_harness/edge_probe.py`, `tools/tests/test_edge_probe.py`, `scripts/integration-gate.sh` | byte-exact 2MiB·HTTP/1.1 chunked loopback streaming과 [`g7devops` HTTP/1.1, HTTP/2, WebSocket report](evidence/g7devops-direct-tls-20260715.md) |
 | `EDGE-004` | `crates/guard-edge/tests/forwarded_headers.rs` | spoofed header access log |
 | `EDGE-006`, `EDGE-008` | `tools/vpsguard_harness/edge_probe.py`, `tools/tests/test_edge_probe.py`, `scripts/integration-gate.sh` | 일반 1KiB·upload 4KiB body 경계와 250ms·1초 upstream timeout 분리, profile auth 보호 결과 |
@@ -107,11 +108,12 @@ last_reviewed: 2026-07-24
 | `OPS-003` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/direct-state-harness.sh` | [`g7devops` 실패 rollback과 실제 public ingress 전환 timeline](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-004` | `crates/guard-system/src/ingress_state/tests.rs`, `crates/guard-cli/tests/ingress_cli.rs`, `scripts/tests/ingress-transaction-harness.sh` | [`g7devops` edge -> Nginx -> direct edge smoke](evidence/g7devops-direct-tls-20260715.md) |
 | `OPS-005`, `OPS-006` | `tools/vpsguard_harness/release_lifecycle.py`, `tools/vpsguard_harness/uninstall_pilot.py`, `scripts/update-release.sh`, `scripts/uninstall.sh` | [`OPS-005` 2GB VM 20회 update·restore와 100ms public probe](evidence/gnuboard5-release-endurance-20260724.md); [`OPS-006` Apache direct bypass·owned-only uninstall·exact restore와 211회 무순단 probe](evidence/gnuboard5-uninstall-20260724.md) |
-| `OPS-007` | `.github/workflows/release.yml`, `crates/guard-control/tests/version_cli.rs`, `crates/guard-edge/tests/version_cli.rs`, `tools/tests/test_release_workflow.py` | [x86_64·aarch64 native bundle 실행, checksum·SBOM·attestation artifact](evidence/release-matrix-20260724.md) |
+| `OPS-007` | `.github/workflows/release.yml`, `crates/guard-control/tests/version_cli.rs`, `crates/guard-edge/tests/version_cli.rs`, `tools/tests/test_release_workflow.py` | [x86_64·aarch64 native bundle 실행, checksum·SBOM·attestation artifact](evidence/release-matrix-20260724.md); workflow commit과 bundle `BUILD-INFO.txt` source commit exact 일치 |
 | `OPS-008` | `crates/guard-system/src/command.rs`, `scripts/tests/repository-contracts.sh` | masked command log |
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
 | `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh`, `tools/tests/test_qga.py`, `tools/tests/test_release_endurance.py` | [기존 parent mode·payload mode·uid·gid 원복, guest timeout 종료와 2GB Ubuntu VM 20회 apply·restore·100ms public probe·단계별 duration](evidence/gnuboard5-release-endurance-20260724.md) |
 | `OPS-011` | `crates/guard-system/src/ingress_state/apache/tests.rs`, `crates/guard-cli/tests/apache_ingress_cli.rs` | [`gnuboard5` Apache 전환·20회 왕복·rollback report](evidence/gnuboard5-apache-vm-20260722.md) |
+| `OPS-012` | `crates/guard-system/src/site_setup/tests.rs`, `crates/guard-system/src/site_setup/apache_candidate.rs`, `crates/guard-system/src/site_setup/nginx_candidate.rs`, `crates/guard-cli/tests/setup_cli.rs`, `tools/tests/test_debian_package.py` | Ubuntu 24.04 Nginx·Apache 표준 fixture의 무변경 탐지·지원 판정, 충돌 fail-closed, 두 웹서버의 사이트별 후보·typed apply·rollback과 bundle checksum·source commit 불일치 거부·무편입 `.deb`; 실제 공개 서버 편입 증거는 미수집 |
 
 ### 3.6 UI, security and NFR
 

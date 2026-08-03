@@ -9,7 +9,10 @@ use tempfile::TempDir;
 use super::{
     ApacheIngressConfig, ApacheIngressDirection, ApacheIngressDriver, apache_ingress_plan,
 };
-use crate::{OperationEngineError, execute_operation};
+use crate::{
+    OperationEngineError, PhpRuntime, SITE_SETUP_SCHEMA_VERSION, SiteSetupManifest, WebServerKind,
+    execute_operation,
+};
 
 const ACTIVE: &str = "/etc/apache2/sites-available/gnuboard5.conf";
 const PUBLIC_LINK: &str = "/etc/apache2/sites-enabled/gnuboard5.conf";
@@ -238,6 +241,41 @@ fn apache_config_rejects_site_data_as_an_ingress_path() -> Result<(), Box<dyn st
         fixture.backup.join("rollback.json"),
     );
     assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn apache_site_manifest_builds_domain_scoped_paths_without_pilot_names()
+-> Result<(), Box<dyn std::error::Error>> {
+    let manifest = SiteSetupManifest {
+        schema_version: SITE_SETUP_SCHEMA_VERSION,
+        web_server: WebServerKind::Apache,
+        server_name: "community.example.com".to_owned(),
+        server_aliases: vec!["www.community.example.com".to_owned()],
+        active_config: PathBuf::from("/etc/apache2/sites-available/community.conf"),
+        enabled_link: PathBuf::from("/etc/apache2/sites-enabled/community.conf"),
+        document_root: PathBuf::from("/var/www/community/public"),
+        certificate: PathBuf::from("/etc/letsencrypt/live/community.example.com/fullchain.pem"),
+        certificate_key: PathBuf::from("/etc/letsencrypt/live/community.example.com/privkey.pem"),
+        php_runtime: PhpRuntime::PhpFpm,
+    };
+
+    let config = ApacheIngressConfig::for_site(&manifest, "")?;
+
+    assert_eq!(config.state.server_name, "community.example.com");
+    assert_eq!(
+        config.public_link_target,
+        Path::new("../sites-available/community.conf")
+    );
+    assert_eq!(
+        config.guarded_candidate,
+        Path::new("/etc/vps-guard/apache/community-example-com-guarded.conf")
+    );
+    assert_eq!(
+        config.origin_vhost,
+        Path::new("/etc/apache2/sites-available/vpsguard-community-example-com-origin.conf")
+    );
+    assert!(!format!("{config:?}").contains("gnuboard5"));
     Ok(())
 }
 

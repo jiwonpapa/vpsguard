@@ -26,7 +26,8 @@ use super::{
 };
 use crate::{
     AtomicJsonStore, IngressTopology, OperationDriver, OperationIssue, OperationKind,
-    OperationPhase, OperationPlan, OwnedProgram, PhaseReport, SnapshotResource,
+    OperationPhase, OperationPlan, OwnedProgram, PhaseReport, SiteSetupManifest, SnapshotResource,
+    WebServerKind,
 };
 
 const APACHE_INGRESS_SCHEMA_VERSION: u32 = 1;
@@ -47,14 +48,17 @@ const PROXY_LOAD: &str = "/etc/apache2/mods-enabled/proxy.load";
 const PROXY_CONF: &str = "/etc/apache2/mods-enabled/proxy.conf";
 const PROXY_HTTP_LOAD: &str = "/etc/apache2/mods-enabled/proxy_http.load";
 const REMOTEIP_LOAD: &str = "/etc/apache2/mods-enabled/remoteip.load";
+const HEADERS_LOAD: &str = "/etc/apache2/mods-enabled/headers.load";
 const PROXY_LOAD_SOURCE: &str = "/etc/apache2/mods-available/proxy.load";
 const PROXY_CONF_SOURCE: &str = "/etc/apache2/mods-available/proxy.conf";
 const PROXY_HTTP_LOAD_SOURCE: &str = "/etc/apache2/mods-available/proxy_http.load";
 const REMOTEIP_LOAD_SOURCE: &str = "/etc/apache2/mods-available/remoteip.load";
+const HEADERS_LOAD_SOURCE: &str = "/etc/apache2/mods-available/headers.load";
 const PROXY_LOAD_TARGET: &str = "../mods-available/proxy.load";
 const PROXY_CONF_TARGET: &str = "../mods-available/proxy.conf";
 const PROXY_HTTP_LOAD_TARGET: &str = "../mods-available/proxy_http.load";
 const REMOTEIP_LOAD_TARGET: &str = "../mods-available/remoteip.load";
+const HEADERS_LOAD_TARGET: &str = "../mods-available/headers.load";
 
 static SNAPSHOT_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 
@@ -92,6 +96,8 @@ pub struct ApacheIngressConfig {
     pub active_vhost: PathBuf,
     /// 활성 public vhost symlink입니다.
     pub public_link: PathBuf,
+    /// 활성 public vhost symlink의 승인된 상대 target입니다.
+    pub public_link_target: PathBuf,
     /// VPSGuard를 경유하는 public vhost 후보입니다.
     pub guarded_candidate: PathBuf,
     /// Apache direct bypass public vhost 후보입니다.
@@ -100,10 +106,14 @@ pub struct ApacheIngressConfig {
     pub origin_vhost: PathBuf,
     /// loopback origin enabled symlink입니다.
     pub origin_link: PathBuf,
+    /// loopback origin enabled symlink의 승인된 상대 target입니다.
+    pub origin_link_target: PathBuf,
     /// loopback listener include입니다.
     pub origin_ports: PathBuf,
     /// loopback listener enabled symlink입니다.
     pub origin_ports_link: PathBuf,
+    /// loopback listener enabled symlink의 승인된 상대 target입니다.
+    pub origin_ports_link_target: PathBuf,
     /// 활성 VPSGuard config입니다.
     pub active_guard_config: PathBuf,
     /// fingerprint만 read-back할 public certificate입니다.
@@ -116,6 +126,16 @@ pub struct ApacheIngressConfig {
     pub backup_root: PathBuf,
     /// fixture public probe 실패 주입입니다.
     pub fixture_probe_failure: bool,
+    stage_files: ApacheStageFiles,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApacheStageFiles {
+    guarded: &'static str,
+    bypass: &'static str,
+    origin: &'static str,
+    origin_ports: &'static str,
+    guard_config: &'static str,
 }
 
 impl ApacheIngressConfig {
@@ -132,6 +152,64 @@ impl ApacheIngressConfig {
             probe_url
         };
         Self::base(state, backup_root)
+    }
+
+    /// OPS-012에서 확정한 표준 Apache site manifest로 범용 경계를 만듭니다.
+    ///
+    /// # Errors
+    ///
+    /// schema, 웹서버 종류, hostname 또는 bounded path가 잘못되면 거부합니다.
+    pub fn for_site(
+        site: &SiteSetupManifest,
+        probe_url: impl Into<String>,
+    ) -> Result<Self, IngressStateError> {
+        if site.schema_version != crate::SITE_SETUP_SCHEMA_VERSION
+            || site.web_server != WebServerKind::Apache
+        {
+            return Err(IngressStateError::Contract(
+                "Apache ingress manifest schema 또는 웹서버가 다릅니다".to_owned(),
+            ));
+        }
+        let identifier = site_identifier(&site.server_name)?;
+        let backup_root = PathBuf::from("/var/lib/vps-guard/backups/apache-ingress");
+        let mut state = IngressStateConfig::production(backup_root.join("snapshots"));
+        state.server_name.clone_from(&site.server_name);
+        let probe_url = probe_url.into();
+        state.public_probe_url = if probe_url.is_empty() {
+            format!("https://{}/", site.server_name)
+        } else {
+            probe_url
+        };
+        let origin_name = format!("vpsguard-{identifier}-origin.conf");
+        let ports_name = format!("vpsguard-{identifier}-origin-ports.conf");
+        let active_name = file_name(&site.active_config, "Apache active vhost")?;
+        let config = Self {
+            state,
+            active_vhost: site.active_config.clone(),
+            public_link: site.enabled_link.clone(),
+            public_link_target: PathBuf::from("../sites-available").join(active_name),
+            guarded_candidate: PathBuf::from(format!(
+                "/etc/vps-guard/apache/{identifier}-guarded.conf"
+            )),
+            bypass_candidate: PathBuf::from(format!(
+                "/etc/vps-guard/apache/{identifier}-bypass.conf"
+            )),
+            origin_vhost: PathBuf::from("/etc/apache2/sites-available").join(&origin_name),
+            origin_link: PathBuf::from("/etc/apache2/sites-enabled").join(&origin_name),
+            origin_link_target: PathBuf::from("../sites-available").join(&origin_name),
+            origin_ports: PathBuf::from("/etc/apache2/conf-available").join(&ports_name),
+            origin_ports_link: PathBuf::from("/etc/apache2/conf-enabled").join(&ports_name),
+            origin_ports_link_target: PathBuf::from("../conf-available").join(&ports_name),
+            active_guard_config: PathBuf::from(ACTIVE_GUARD_CONFIG),
+            certificate: site.certificate.clone(),
+            probe_ca_certificate: None,
+            stage_root: None,
+            backup_root,
+            fixture_probe_failure: false,
+            stage_files: ApacheStageFiles::generic(),
+        };
+        validate_config_paths(&config)?;
+        Ok(config)
     }
 
     /// OS mutation 없는 격리 fixture 경계를 만듭니다.
@@ -152,12 +230,15 @@ impl ApacheIngressConfig {
             state,
             active_vhost: PathBuf::from(ACTIVE_VHOST),
             public_link: PathBuf::from(PUBLIC_LINK),
+            public_link_target: PathBuf::from(PUBLIC_LINK_TARGET),
             guarded_candidate: PathBuf::from(GUARDED_CANDIDATE),
             bypass_candidate: PathBuf::from(BYPASS_CANDIDATE),
             origin_vhost: PathBuf::from(ORIGIN_VHOST),
             origin_link: PathBuf::from(ORIGIN_LINK),
+            origin_link_target: PathBuf::from(ORIGIN_LINK_TARGET),
             origin_ports: PathBuf::from(ORIGIN_PORTS),
             origin_ports_link: PathBuf::from(ORIGIN_PORTS_LINK),
+            origin_ports_link_target: PathBuf::from(ORIGIN_PORTS_LINK_TARGET),
             active_guard_config: PathBuf::from(ACTIVE_GUARD_CONFIG),
             certificate: PathBuf::from(CERTIFICATE),
             probe_ca_certificate: production
@@ -165,7 +246,40 @@ impl ApacheIngressConfig {
             stage_root: None,
             backup_root,
             fixture_probe_failure: false,
+            stage_files: ApacheStageFiles::legacy(),
         }
+    }
+}
+
+impl ApacheStageFiles {
+    const fn legacy() -> Self {
+        Self {
+            guarded: "gnuboard5-guarded.conf",
+            bypass: "gnuboard5-bypass.conf",
+            origin: "vpsguard-origin.conf",
+            origin_ports: "vpsguard-origin-ports.conf",
+            guard_config: "vps-guard.ingress.toml",
+        }
+    }
+
+    const fn generic() -> Self {
+        Self {
+            guarded: "public-guarded.conf",
+            bypass: "public-bypass.conf",
+            origin: "origin.conf",
+            origin_ports: "origin-ports.conf",
+            guard_config: "vps-guard.toml",
+        }
+    }
+
+    fn names(&self) -> [&'static str; 5] {
+        [
+            self.guarded,
+            self.bypass,
+            self.origin,
+            self.origin_ports,
+            self.guard_config,
+        ]
     }
 }
 
@@ -313,41 +427,41 @@ impl ApacheIngressDriver {
         let Some(stage) = self.config.stage_root.clone() else {
             return Ok(());
         };
-        validate_stage(&stage)?;
-        for file in staged_files() {
+        validate_stage(&stage, self.config.state.test_root.as_deref())?;
+        for file in self.config.stage_files.names() {
             require_regular(&stage.join(file))?;
         }
         self.install(
-            &stage.join("gnuboard5-guarded.conf"),
+            &stage.join(self.config.stage_files.guarded),
             &self.config.guarded_candidate,
             0o644,
         )?;
         self.install(
-            &stage.join("gnuboard5-bypass.conf"),
+            &stage.join(self.config.stage_files.bypass),
             &self.config.bypass_candidate,
             0o644,
         )?;
         self.install(
-            &stage.join("vpsguard-origin.conf"),
+            &stage.join(self.config.stage_files.origin),
             &self.config.origin_vhost,
             0o644,
         )?;
         self.install(
-            &stage.join("vpsguard-origin-ports.conf"),
+            &stage.join(self.config.stage_files.origin_ports),
             &self.config.origin_ports,
             0o644,
         )?;
         self.install(
-            &stage.join("vps-guard.ingress.toml"),
+            &stage.join(self.config.stage_files.guard_config),
             &self.config.active_guard_config,
             0o640,
         )?;
         let origin_link = self.logical(&self.config.origin_link)?;
         self.store.ensure_safe_parent(&origin_link)?;
-        replace_symlink(&origin_link, Path::new(ORIGIN_LINK_TARGET))?;
+        replace_symlink(&origin_link, &self.config.origin_link_target)?;
         let ports_link = self.logical(&self.config.origin_ports_link)?;
         self.store.ensure_safe_parent(&ports_link)?;
-        replace_symlink(&ports_link, Path::new(ORIGIN_PORTS_LINK_TARGET))?;
+        replace_symlink(&ports_link, &self.config.origin_ports_link_target)?;
         for (link, target) in proxy_module_links() {
             let link = self.logical(Path::new(link))?;
             self.store.ensure_safe_parent(&link)?;
@@ -361,13 +475,16 @@ impl ApacheIngressDriver {
         if self.direction == ApacheIngressDirection::ToEdge {
             require_regular(&self.logical(&self.config.origin_vhost)?)?;
             require_regular(&self.logical(&self.config.origin_ports)?)?;
-            require_symlink(&self.logical(&self.config.origin_link)?, ORIGIN_LINK_TARGET)?;
+            require_symlink(
+                &self.logical(&self.config.origin_link)?,
+                &self.config.origin_link_target,
+            )?;
             require_symlink(
                 &self.logical(&self.config.origin_ports_link)?,
-                ORIGIN_PORTS_LINK_TARGET,
+                &self.config.origin_ports_link_target,
             )?;
             for (link, target) in proxy_module_links() {
-                require_symlink(&self.logical(Path::new(link))?, target)?;
+                require_symlink(&self.logical(Path::new(link))?, Path::new(target))?;
             }
             if self.config.state.test_root.is_none() {
                 let config = self.logical(&self.config.active_guard_config)?;
@@ -826,7 +943,10 @@ impl ApacheIngressDriver {
     }
 
     fn verify_public_link(&self) -> Result<(), IngressStateError> {
-        require_symlink(&self.logical(&self.config.public_link)?, PUBLIC_LINK_TARGET)
+        require_symlink(
+            &self.logical(&self.config.public_link)?,
+            &self.config.public_link_target,
+        )
     }
 
     fn candidate(&self) -> Result<PathBuf, IngressStateError> {
@@ -857,6 +977,7 @@ impl ApacheIngressDriver {
             PathBuf::from(PROXY_CONF),
             PathBuf::from(PROXY_HTTP_LOAD),
             PathBuf::from(REMOTEIP_LOAD),
+            PathBuf::from(HEADERS_LOAD),
         ];
         if let Some(certificate) = &self.config.probe_ca_certificate {
             paths.push(certificate.clone());
@@ -954,6 +1075,9 @@ pub fn apache_ingress_plan(
         SnapshotResource::ApacheIngressSymlink {
             path: PathBuf::from(REMOTEIP_LOAD),
         },
+        SnapshotResource::ApacheIngressSymlink {
+            path: PathBuf::from(HEADERS_LOAD),
+        },
         SnapshotResource::OwnedPath {
             path: config.active_guard_config.clone(),
         },
@@ -990,6 +1114,25 @@ pub fn apache_ingress_plan(
 }
 
 fn validate_config(config: &ApacheIngressConfig) -> Result<(), IngressStateError> {
+    validate_config_paths(config)?;
+    if let Some(stage) = &config.stage_root {
+        validate_stage(stage, config.state.test_root.as_deref())?;
+    }
+    if config.state.test_root.is_none() {
+        for source in [
+            PROXY_LOAD_SOURCE,
+            PROXY_CONF_SOURCE,
+            PROXY_HTTP_LOAD_SOURCE,
+            REMOTEIP_LOAD_SOURCE,
+            HEADERS_LOAD_SOURCE,
+        ] {
+            require_regular(Path::new(source))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_config_paths(config: &ApacheIngressConfig) -> Result<(), IngressStateError> {
     for path in [
         &config.active_vhost,
         &config.public_link,
@@ -1005,6 +1148,9 @@ fn validate_config(config: &ApacheIngressConfig) -> Result<(), IngressStateError
     ] {
         validate_absolute(path)?;
     }
+    validate_relative_link(&config.public_link_target)?;
+    validate_relative_link(&config.origin_link_target)?;
+    validate_relative_link(&config.origin_ports_link_target)?;
     if let Some(certificate) = &config.probe_ca_certificate {
         validate_absolute(certificate)?;
         if !certificate.starts_with("/etc/vps-guard/") {
@@ -1050,33 +1196,34 @@ fn validate_config(config: &ApacheIngressConfig) -> Result<(), IngressStateError
             "Apache public probe URL은 HTTPS여야 합니다".to_owned(),
         ));
     }
-    if let Some(stage) = &config.stage_root {
-        validate_stage(stage)?;
-    }
-    if config.state.test_root.is_none() {
-        for source in [
-            PROXY_LOAD_SOURCE,
-            PROXY_CONF_SOURCE,
-            PROXY_HTTP_LOAD_SOURCE,
-            REMOTEIP_LOAD_SOURCE,
-        ] {
-            require_regular(Path::new(source))?;
-        }
+    if !valid_server_name(&config.state.server_name) {
+        return Err(IngressStateError::Contract(
+            "Apache server_name이 exact DNS 이름이 아닙니다".to_owned(),
+        ));
     }
     Ok(())
 }
 
-fn validate_stage(stage: &Path) -> Result<(), IngressStateError> {
-    let text = stage.to_string_lossy();
-    let suffix = text.strip_prefix("/tmp/vpsguard-apache.").ok_or_else(|| {
-        IngressStateError::Contract("Apache stage path가 allowlist 밖입니다".to_owned())
-    })?;
-    if suffix.is_empty()
-        || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        || stage.parent() != Some(Path::new("/tmp"))
+fn validate_stage(stage: &Path, test_root: Option<&Path>) -> Result<(), IngressStateError> {
+    let expected_parents = [
+        Some(PathBuf::from("/tmp")),
+        Some(PathBuf::from("/run/vps-guard")),
+        test_root.map(|root| root.join("run/vps-guard")),
+    ];
+    let parent_allowed = stage
+        .parent()
+        .is_some_and(|parent| expected_parents.iter().flatten().any(|item| item == parent));
+    let suffix = stage
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("vpsguard-apache."));
+    if !parent_allowed
+        || suffix.is_none_or(|value| {
+            value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
     {
         return Err(IngressStateError::Contract(
-            "Apache stage path 형식이 잘못됐습니다".to_owned(),
+            "Apache stage path가 allowlist 밖입니다".to_owned(),
         ));
     }
     let metadata = fs::symlink_metadata(stage)
@@ -1117,7 +1264,7 @@ fn require_regular(path: &Path) -> Result<(), IngressStateError> {
     }
 }
 
-fn require_symlink(path: &Path, expected: &str) -> Result<(), IngressStateError> {
+fn require_symlink(path: &Path, expected: &Path) -> Result<(), IngressStateError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| io_error("apache_symlink_metadata", path, error))?;
     if !metadata.file_type().is_symlink() {
@@ -1127,7 +1274,7 @@ fn require_symlink(path: &Path, expected: &str) -> Result<(), IngressStateError>
         )));
     }
     let target = fs::read_link(path).map_err(|error| io_error("apache_read_link", path, error))?;
-    if target == Path::new(expected) {
+    if target == expected {
         Ok(())
     } else {
         Err(IngressStateError::Contract(format!(
@@ -1138,23 +1285,60 @@ fn require_symlink(path: &Path, expected: &str) -> Result<(), IngressStateError>
     }
 }
 
-fn staged_files() -> [&'static str; 5] {
-    [
-        "gnuboard5-guarded.conf",
-        "gnuboard5-bypass.conf",
-        "vpsguard-origin.conf",
-        "vpsguard-origin-ports.conf",
-        "vps-guard.ingress.toml",
-    ]
-}
-
-fn proxy_module_links() -> [(&'static str, &'static str); 4] {
+fn proxy_module_links() -> [(&'static str, &'static str); 5] {
     [
         (PROXY_LOAD, PROXY_LOAD_TARGET),
         (PROXY_CONF, PROXY_CONF_TARGET),
         (PROXY_HTTP_LOAD, PROXY_HTTP_LOAD_TARGET),
         (REMOTEIP_LOAD, REMOTEIP_LOAD_TARGET),
+        (HEADERS_LOAD, HEADERS_LOAD_TARGET),
     ]
+}
+
+fn site_identifier(server_name: &str) -> Result<String, IngressStateError> {
+    if !valid_server_name(server_name) {
+        return Err(IngressStateError::Contract(
+            "Apache manifest server_name이 exact DNS 이름이 아닙니다".to_owned(),
+        ));
+    }
+    Ok(server_name.replace('.', "-"))
+}
+
+fn valid_server_name(server_name: &str) -> bool {
+    !server_name.is_empty()
+        && server_name.len() <= 253
+        && server_name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+fn file_name(path: &Path, label: &str) -> Result<PathBuf, IngressStateError> {
+    path.file_name()
+        .filter(|name| !name.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| IngressStateError::Contract(format!("{label} file name이 없습니다")))
+}
+
+fn validate_relative_link(target: &Path) -> Result<(), IngressStateError> {
+    let components: Vec<_> = target.components().collect();
+    if components.len() == 3
+        && matches!(components[0], Component::ParentDir)
+        && matches!(components[1], Component::Normal(_))
+        && matches!(components[2], Component::Normal(_))
+    {
+        Ok(())
+    } else {
+        Err(IngressStateError::Contract(format!(
+            "Apache symlink target이 bounded 상대 경로가 아닙니다: {}",
+            target.display()
+        )))
+    }
 }
 
 fn issue(code: &str, cause: &str) -> OperationIssue {

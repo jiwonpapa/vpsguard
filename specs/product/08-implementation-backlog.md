@@ -50,6 +50,20 @@ last_reviewed: 2026-07-26
 - [x] Control API의 CSRF 이후 역할 재검증과 UI fail-closed 권한 표시
 - [x] Rust 역할 매트릭스와 desktop/mobile Playwright 8개
 
+### 현재 배치: Nginx·Apache 동급 간편 설치
+
+- 요구사항: `OPS-001`~`OPS-012`, `TLS-005`, `NFR-005`
+- [x] `vps-guard setup` 기본 실행의 mutation 0건과 Ubuntu 24.04 지원 경계
+- [x] Nginx·Apache service와 enabled HTTPS site의 bounded 자동 탐지
+- [x] 동시 활성·다중 TLS vhost·기존 reverse proxy·동적 include fail-closed 판정
+- [x] 고정 GnuBoard5 host·DocumentRoot·certificate를 제거한 사이트별 Nginx·Apache ingress manifest
+- [x] 기존 `OPS-003`·`OPS-011` snapshot·configtest·probe·rollback engine에 범용 manifest 연결
+- [x] x86_64·aarch64 release bundle을 설치하는 Debian package와 post-install 무편입 원칙
+- [x] release bundle checksum·현재 source commit 불일치 package 생성 거부와 package 내부 build provenance 보존
+- [x] README 첫 화면에 package 기반 quick start를 추가하고 수동 runbook과 분리
+- [x] Nginx·Apache fixture, CLI, package contract와 전체 품질 gate
+- [ ] 실제 Ubuntu 24.04 Nginx·Apache 표준 사이트 편입·원복·성능 증거
+
 ## 2. 제안 저장소 구조
 
 ```text
@@ -857,7 +871,6 @@ chore(release): publish multi-architecture verified artifacts
 - 머신러닝 모델
 - 다중 서버 중앙 SaaS
 - 모든 VPS provider 방화벽 API
-- 범용 Apache 공개 지원
 - packet capture와 SIEM
 - 모바일에서 정책 전체 편집
 

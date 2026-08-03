@@ -51,14 +51,31 @@ jobs:
           test -d "${bundle}"
           (cd "${bundle}" && sha256sum --check SHA256SUMS)
           grep -Fxq "target=${{ matrix.target }}" "${bundle}/BUILD-INFO.txt"
+          grep -Fxq "commit=${GITHUB_SHA}" "${bundle}/BUILD-INFO.txt"
           case "${{ matrix.target }}" in
             x86_64-unknown-linux-gnu) file "${bundle}/bin/vps-guard" | grep -Fq 'x86-64' ;;
             aarch64-unknown-linux-gnu) file "${bundle}/bin/vps-guard" | grep -Eq 'ARM aarch64|aarch64' ;;
           esac
           echo "path=${bundle}" >>"${GITHUB_OUTPUT}"
+      - name: Build and inspect Debian package
+        id: package
+        env:
+          BUNDLE: ${{ steps.bundle.outputs.path }}
+        run: |
+          package="$(bash scripts/build-deb.sh "${BUNDLE}")"
+          test -f "${package}"
+          dpkg-deb --info "${package}"
+          dpkg-deb --contents "${package}" | grep -Fq './usr/local/bin/vps-guard'
+          dpkg-deb --contents "${package}" | grep -Fq './usr/share/doc/vpsguard/BUILD-INFO.txt'
+          if dpkg-deb --contents "${package}" | grep -Fq './etc/vps-guard/config.toml'; then
+            echo "Debian package must not overwrite an existing config" >&2
+            exit 1
+          fi
+          echo "path=${package}" >>"${GITHUB_OUTPUT}"
       - name: Execute every packaged binary
         env:
           BUNDLE: ${{ steps.bundle.outputs.path }}
+          DEB: ${{ steps.package.outputs.path }}
           TARGET: ${{ matrix.target }}
         run: |
           case "${TARGET}" in
@@ -67,7 +84,9 @@ jobs:
             *) echo "unsupported release target: ${TARGET}" >&2; exit 2 ;;
           esac
           docker run --rm --platform "${platform}" \
-            --volume "${PWD}/${BUNDLE}:/bundle:ro" --workdir /bundle ubuntu:24.04 \
+            --volume "${PWD}/${BUNDLE}:/bundle:ro" \
+            --volume "${DEB}:/vpsguard.deb:ro" \
+            --workdir /bundle ubuntu:24.04 \
             sh -euc '
               version="$(sed -n "s/^version=//p" BUILD-INFO.txt)"
               test -n "${version}"
@@ -76,12 +95,20 @@ jobs:
                 echo "${output}" | grep -Fq "${binary} ${version}"
               done
               ./bin/vps-guard check-config --config ./vps-guard.example.toml
+              dpkg-deb --extract /vpsguard.deb /package
+              /package/usr/local/bin/vps-guard --version | grep -Fq "${version}"
+              cmp BUILD-INFO.txt /package/usr/share/doc/vpsguard/BUILD-INFO.txt
+              test ! -e /package/etc/vps-guard/config.toml
             '
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: ${{ steps.bundle.outputs.path }}/bin/*
+          subject-path: |
+            ${{ steps.bundle.outputs.path }}/bin/*
+            ${{ steps.package.outputs.path }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vpsguard-${{ matrix.target }}
-          path: ${{ steps.bundle.outputs.path }}/
+          path: |
+            ${{ steps.bundle.outputs.path }}/
+            ${{ steps.package.outputs.path }}
           if-no-files-found: error

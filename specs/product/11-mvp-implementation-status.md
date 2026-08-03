@@ -69,7 +69,7 @@ last_reviewed: 2026-07-26
 
 ## release gate 미완료
 
-- `EDGE-001`, `EDGE-002`, `EDGE-005`: `g7devops` public 80/443, 인증서별 multi-SNI 선택, WebSocket 실제 VPS E2E
+- `EDGE-002`: 단일 listener의 인증서별 multi-SNI 선택은 미구현. `g7devops`의 두 Host는 동일 SAN 인증서이므로 수용 증거가 아님
 - `DET-014`: 2GB 로컬 압력·회복은 통과했으나 격리 Cloudflare test zone의 실제 `EMERGENCY_PROXY`·provider read-back·승인 복구가 남음
 - `OBS-003`~`OBS-006`, `OBS-010`, `OBS-011`: semantic·cgroup과 bounded route-resource 동일축 코드는 구현됐으나 사건 상세 자동 시간창, 실제 MySQL/Redis 최소 권한 smoke, cgroup/systemd 값 대조, busy·disk-full 장애와 2GB VPS 상관 정확도 검증이 남음
 - `UI-001`: 실제 public 443 관리 Host의 인증서·접속·복구와 앱 origin 비혼선 VPS 증거

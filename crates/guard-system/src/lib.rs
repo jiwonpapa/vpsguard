@@ -11,6 +11,7 @@ pub mod nftables;
 pub mod operation;
 pub mod plan;
 pub mod secret;
+pub mod site_setup;
 pub mod tls;
 pub mod ufw;
 
@@ -36,6 +37,13 @@ pub use operation::{
 };
 pub use plan::{MutationPlan, PlanError, PlannedChange};
 pub use secret::{SecretFileError, SecretFilePolicy, load_secret_file, resolve_credential_path};
+pub use site_setup::{
+    ApacheSiteCandidates, NginxSiteCandidates, PhpRuntime, SITE_SETUP_SCHEMA_VERSION,
+    SetupCompatibility, SetupIssue, SetupIssueCode, SetupPlanStep, SiteSetupError,
+    SiteSetupManifest, SiteSetupReport, WebServerKind, build_apache_site_candidates,
+    build_nginx_site_candidates, inspect_site_setup, remove_apache_candidate_stage,
+    remove_nginx_candidate_stage, write_apache_candidate_stage, write_nginx_candidate_stage,
+};
 pub use tls::{
     CertbotAssistedPlan, CertbotPlanError, CertbotPlanStep, CertificateInspection,
     ServedCertificateProbeError, ServedCertificateReport, ServedCertificateState, TlsHealth,

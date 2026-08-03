@@ -1151,6 +1151,7 @@ dependencies = [
  "guard-provider",
  "guard-system",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
 ]
@@ -1279,6 +1280,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "time",
+ "toml",
  "x509-parser",
 ]
 

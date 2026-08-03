@@ -4,7 +4,7 @@ status: draft-implementation-ready
 doc_type: contract
 source_of_truth: true
 spec_version: 1
-last_reviewed: 2026-07-24
+last_reviewed: 2026-08-03
 bounded_context: adaptive-vps-guard
 ---
 
@@ -47,8 +47,9 @@ VPS Guard 자체는 정상 상태에도 로컬 VPS 최앞단에 존재합니다.
 
 - Linux x86_64와 aarch64
 - Ubuntu 24.04를 1차 운영 검증 기준으로 사용
-- Nginx를 첫 공개 upstream으로 지원
-- Apache는 `gnuboard5` 격리 VM에서 public TLS 유지형 loopback 체인과 20회 전환·복구 시험을 통과한 뒤 공개 지원 여부 결정
+- Nginx와 Apache를 동급 public TLS terminator·loopback origin으로 지원
+- 자동 설치는 Ubuntu 24.04의 exactly-one 표준 HTTPS site로 제한하고 복잡한 다중 vhost·기존 reverse proxy는 변경 없이 수동 검토로 분류
+- Debian package는 checksum을 검증한 release bundle에서 만들고 bundle source commit과 현재 checkout commit이 다르면 생성을 거부
 - Cloudflare DNS zone과 API token을 선택적으로 사용
 - standalone 설치의 정적 port·IP 방화벽은 Ubuntu UFW를 기준으로 사용
 - JW-agent 연동 설치는 host firewall mutation을 JW-agent에 위임하고 VPSGuard는 HTTP edge 정책만 소유
@@ -80,7 +81,8 @@ guard-edge (Pingora, public :80/:443)
   |         +-- non-blocking metrics/events
   |                    |
   v                    v
-Nginx loopback     guard-control
+Nginx/Apache       guard-control
+loopback
   |                    |-- detection/state machine
   v                    |-- Web UI/API on loopback
 PHP-FPM                 |-- Cloudflare/UFW actions or JW-agent delegation
@@ -89,7 +91,7 @@ PHP-FPM                 |-- Cloudflare/UFW actions or JW-agent delegation
 MySQL/Redis                  (OS/PHP/DB/Redis)
 ```
 
-Apache 파일럿에서는 기존 인증서와 public 80/443 소유권을 Apache에 남기고, public vhost가 loopback VPSGuard로 전달한 뒤 별도 loopback Apache origin vhost로 복귀합니다. 이 경로는 `OPS-011` 운영 증거를 얻기 위한 제한된 지원 후보이며 검증 완료 전 범용 Apache 지원으로 표시하지 않습니다.
+기존 웹서버 유지형 설치에서는 인증서와 public 80/443 소유권을 Nginx 또는 Apache에 남기고, public vhost가 loopback VPSGuard로 전달한 뒤 별도 loopback origin vhost로 복귀합니다. `vps-guard setup`은 지원 가능한 표준 단일 HTTPS site만 자동 선택하며 모호하거나 복잡한 설정은 기존 ingress를 변경하지 않습니다.
 
 ### 5.1 `guard-edge`
 
@@ -233,17 +235,17 @@ VPSGuard는 query나 request body의 공격 문자열을 정규식으로 찾았�
 
 ## 12. 비상 bypass
 
-edge가 반복 실패할 때 기존 Nginx가 public 80/443을 회수할 수 있어야 합니다.
+edge가 반복 실패할 때 기존 Nginx 또는 Apache가 public 80/443 요청 경로를 즉시 우회할 수 있어야 합니다.
 
 `vps-guard bypass enable` 계약:
 
-1. Nginx public 후보 설정 생성
+1. 선택한 웹서버의 public bypass 후보 설정 생성
 2. 후보 설정 문법 검사
 3. 기존 설정과 인증서 snapshot
 4. edge 중지
-5. Nginx public 설정 원자 적용·기동
+5. 웹서버 public 설정 원자 적용·기동
 6. HTTP/HTTPS probe
-7. 실패 시 Nginx 변경 복구 후 edge 재기동
+7. 실패 시 웹서버 변경 복구 후 edge 재기동
 
 `bypass disable`은 edge 후보를 먼저 별도 포트에서 검증한 뒤 역순으로 복귀합니다. 이 경로는 릴리스마다 실제 VPS 하네스로 검증해야 합니다.
 

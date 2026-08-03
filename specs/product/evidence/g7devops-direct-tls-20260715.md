@@ -4,7 +4,6 @@ status: verified
 doc_type: operational-evidence
 requirements:
   - EDGE-001
-  - EDGE-002
   - EDGE-005
   - TLS-003
   - TLS-005
@@ -27,7 +26,7 @@ Internet -> VPSGuard 0.0.0.0:80/443
          -> PHP-FPM Unix socket
 ```
 
-`EDGE-001`, `EDGE-002`, `EDGE-005`, `TLS-003`, `TLS-005`, `OPS-003`,
+`EDGE-001`, `EDGE-005`, `TLS-003`, `TLS-005`, `OPS-003`,
 `OPS-004`를 **VPS_PASS**로 판정합니다. 탐지 모드는 `observe`, CSP는
 `report_only`, Cloudflare provider는 비활성 상태를 유지합니다.
 
@@ -53,7 +52,7 @@ Internet -> VPSGuard 0.0.0.0:80/443
 | HTTPS / HTTP/2 | `/`, `/login`, `/robots.txt` 모두 `200` |
 | Edge read-back | `x-vps-guard: guard-edge` |
 | WebSocket | HTTP/1.1 `101 Switching Protocols` |
-| SNI | `g7devops.com`, `www.g7devops.com`에서 등록 certificate 제공 |
+| TLS Host | `g7devops.com`, `www.g7devops.com`에서 동일 SAN certificate 제공 |
 | 잘못된 Host | `400` |
 | SSH | `0.0.0.0:22`, `[::]:22` 유지 |
 | non-web listener | 전환 전 목록과 동일 |
@@ -72,3 +71,5 @@ Internet -> VPSGuard 0.0.0.0:80/443
 기존 Certbot timer와 renewal 설정은 변경하지 않았습니다. Edge private key는
 systemd `LoadCredential`로만 전달합니다. `TLS-002`의 완전한 무중단 reload와
 `TLS-006`의 미설정 서버 자동 보조 apply는 이 증거의 승인 범위가 아닙니다.
+두 Host가 같은 SAN 인증서를 사용하므로 서로 다른 인증서를 선택하는
+`EDGE-002` multi-SNI 증거에도 포함하지 않습니다.

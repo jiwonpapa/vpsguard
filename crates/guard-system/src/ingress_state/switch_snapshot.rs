@@ -106,14 +106,14 @@ pub(super) fn stage_release(
     };
     install(
         store,
-        &stage.join("g7devops-edge.conf"),
+        &stage.join(config.stage_files.edge),
         &config.edge_candidate,
         0o640,
         owner,
     )?;
     install(
         store,
-        &stage.join("g7devops-bypass.conf"),
+        &stage.join(config.stage_files.bypass),
         &config.nginx_candidate,
         0o640,
         owner,
@@ -121,7 +121,7 @@ pub(super) fn stage_release(
     if direction == IngressSwitchDirection::ToEdge {
         install(
             store,
-            &stage.join("vps-guard.ingress.toml"),
+            &stage.join(config.stage_files.guard_config),
             &config.active_guard_config,
             0o640,
             owner,
