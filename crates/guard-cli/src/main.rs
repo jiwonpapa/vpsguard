@@ -21,14 +21,15 @@ use guard_system::{
     IngressRestoreDriver, IngressStateConfig, IngressStateStore, IngressSwitchConfig,
     IngressSwitchDirection, IngressSwitchDriver, IngressTopology, MutationPlan, OperationKind,
     OperationPlan, OperationState, PlannedChange, ServedCertificateReport, ServedCertificateState,
-    SnapshotResource, UninstallReleaseStore, apache_ingress_plan, deployment_restore_plan,
-    execute_operation, ingress_apply_plan, ingress_restore_plan, ingress_switch_plan,
-    inspect_served_certificate,
+    SiteSetupManifest, SnapshotResource, UninstallReleaseStore, apache_ingress_plan,
+    deployment_restore_plan, execute_operation, ingress_apply_plan, ingress_restore_plan,
+    ingress_switch_plan, inspect_served_certificate,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
 
 mod provider;
+mod setup;
 
 use provider::ProviderCommand;
 
@@ -116,6 +117,8 @@ enum Command {
         #[command(subcommand)]
         command: OpsCommand,
     },
+    /// 기존 Nginx·Apache HTTPS site를 변경 없이 탐지하고 설치 계획을 제시합니다.
+    Setup(setup::SetupArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -269,6 +272,9 @@ enum ApacheIngressCommand {
         /// 전환 방향입니다.
         #[arg(long, value_enum)]
         direction: ApacheIngressDirectionArg,
+        /// `vps-guard setup --json`에서 확정한 선택 site manifest입니다.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
     /// 후보를 적용하고 Apache configtest 또는 probe 실패 시 자동 rollback합니다.
     Apply {
@@ -281,6 +287,9 @@ enum ApacheIngressCommand {
         /// 재개에 사용할 선택 transaction 식별자입니다.
         #[arg(long)]
         operation_id: Option<String>,
+        /// `vps-guard setup --json`에서 확정한 선택 site manifest입니다.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
 }
 
@@ -412,6 +421,8 @@ enum CliError {
     State(#[from] guard_core::StateError),
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error(transparent)]
+    Setup(#[from] setup::SetupCliError),
     #[error("Cloudflare provider가 config에서 비활성입니다")]
     CloudflareDisabled,
     #[error("Cloudflare test 점검에는 하나 이상의 운영 금지 hostname이 필요합니다")]
@@ -576,6 +587,7 @@ fn execute(cli: Cli) -> Result<String, CliError> {
         } => issue_login_code(&socket, ttl_seconds),
         Command::Provider { command } => provider::execute(command),
         Command::Ops { command } => execute_ops(command),
+        Command::Setup(arguments) => setup::execute(arguments).map_err(CliError::Setup),
     }
 }
 
@@ -693,20 +705,24 @@ fn require_uninstall_release_confirmation(expected: &'static str) -> Result<(), 
 }
 
 fn execute_apache_ingress(command: ApacheIngressCommand) -> Result<String, CliError> {
-    let (direction_arg, apply, stage, operation_id) = match command {
-        ApacheIngressCommand::Plan { direction } => (direction, false, None, None),
+    let (direction_arg, apply, stage, operation_id, manifest) = match command {
+        ApacheIngressCommand::Plan {
+            direction,
+            manifest,
+        } => (direction, false, None, None, manifest),
         ApacheIngressCommand::Apply {
             direction,
             stage,
             operation_id,
-        } => (direction, true, stage, operation_id),
+            manifest,
+        } => (direction, true, stage, operation_id, manifest),
     };
     let direction: ApacheIngressDirection = direction_arg.into();
     let expected = match direction {
         ApacheIngressDirection::ToEdge => "to-edge",
         ApacheIngressDirection::ToApache => "to-apache",
     };
-    let mut config = apache_ingress_config();
+    let mut config = apache_ingress_config(manifest.as_deref())?;
     config.stage_root = stage;
     let operation_id = operation_id.unwrap_or_else(|| {
         format!(
@@ -1054,19 +1070,38 @@ fn ingress_switch_config() -> IngressSwitchConfig {
     config
 }
 
-fn apache_ingress_config() -> ApacheIngressConfig {
+fn apache_ingress_config(manifest: Option<&Path>) -> Result<ApacheIngressConfig, CliError> {
     let probe_url = env::var("VPS_GUARD_APACHE_PROBE_URL").unwrap_or_default();
-    let mut config = match env::var_os("VPS_GUARD_TEST_ROOT") {
-        Some(root) => ApacheIngressConfig::fixture(
-            PathBuf::from(root),
-            env::var_os("VPS_GUARD_FAKE_STATE_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-fixture-state")),
-            env::var_os("VPS_GUARD_APACHE_BACKUP_ROOT")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-apache-backups")),
-        ),
-        None => ApacheIngressConfig::production(probe_url),
+    let test_root = env::var_os("VPS_GUARD_TEST_ROOT").map(PathBuf::from);
+    let state_root = env::var_os("VPS_GUARD_FAKE_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-fixture-state"));
+    let backup_root = env::var_os("VPS_GUARD_APACHE_BACKUP_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/vps-guard-apache-backups"));
+    let mut config = match manifest {
+        Some(path) => {
+            let site: SiteSetupManifest =
+                serde_json::from_str(&read(&path.to_path_buf())?).map_err(CliError::Json)?;
+            let mut config = ApacheIngressConfig::for_site(&site, probe_url)?;
+            if let Some(root) = test_root.clone() {
+                let server_name = config.state.server_name.clone();
+                let public_probe_url = config.state.public_probe_url.clone();
+                config.state = IngressStateConfig::fixture(
+                    root,
+                    state_root.clone(),
+                    backup_root.join("snapshots"),
+                );
+                config.state.server_name = server_name;
+                config.state.public_probe_url = public_probe_url;
+                config.backup_root = backup_root.clone();
+            }
+            config
+        }
+        None => match test_root {
+            Some(root) => ApacheIngressConfig::fixture(root, state_root, backup_root),
+            None => ApacheIngressConfig::production(probe_url),
+        },
     };
     if let Some(path) = env::var_os("VPS_GUARD_APACHE_ACTIVE") {
         config.active_vhost = PathBuf::from(path);
@@ -1084,7 +1119,7 @@ fn apache_ingress_config() -> ApacheIngressConfig {
         config.backup_root = PathBuf::from(path);
     }
     config.fixture_probe_failure = env::var("VPS_GUARD_FAKE_CURL_FAIL").as_deref() == Ok("1");
-    config
+    Ok(config)
 }
 
 fn ingress_operation_paths(config: &IngressStateConfig, operation_id: &str) -> (PathBuf, PathBuf) {

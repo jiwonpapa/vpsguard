@@ -17,6 +17,7 @@ use crate::{
     AtomicJsonStore, IngressTopology, OperationDriver, OperationIssue, OperationKind,
     OperationPhase, OperationPlan, PhaseReport, SnapshotResource,
 };
+use crate::{SITE_SETUP_SCHEMA_VERSION, SiteSetupManifest, WebServerKind};
 
 /// public ingress 전환 방향입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,14 @@ pub struct IngressSwitchConfig {
     pub backup_root: PathBuf,
     /// fixture public probe 실패 주입입니다.
     pub fixture_probe_failure: bool,
+    pub(super) stage_files: NginxStageFiles,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NginxStageFiles {
+    pub(super) edge: &'static str,
+    pub(super) bypass: &'static str,
+    pub(super) guard_config: &'static str,
 }
 
 impl IngressSwitchConfig {
@@ -75,7 +84,53 @@ impl IngressSwitchConfig {
             stage_root: None,
             backup_root: PathBuf::from("/var/lib/vps-guard/backups"),
             fixture_probe_failure: false,
+            stage_files: NginxStageFiles::legacy(),
         }
+    }
+
+    /// OPS-012에서 확정한 표준 Nginx site manifest로 범용 경계를 만듭니다.
+    ///
+    /// # Errors
+    ///
+    /// schema, 웹서버 종류, hostname 또는 bounded path가 잘못되면 거부합니다.
+    pub fn for_site(
+        site: &SiteSetupManifest,
+        probe_url: impl Into<String>,
+    ) -> Result<Self, IngressStateError> {
+        if site.schema_version != SITE_SETUP_SCHEMA_VERSION
+            || site.web_server != WebServerKind::Nginx
+        {
+            return Err(IngressStateError::Contract(
+                "Nginx ingress manifest schema 또는 웹서버가 다릅니다".to_owned(),
+            ));
+        }
+        let identifier = site_identifier(&site.server_name)?;
+        let backup_root = PathBuf::from("/var/lib/vps-guard/backups/nginx-ingress");
+        let mut state = IngressStateConfig::production(backup_root.join("snapshots"));
+        state.server_name.clone_from(&site.server_name);
+        let probe_url = probe_url.into();
+        state.public_probe_url = if probe_url.is_empty() {
+            format!("https://{}/", site.server_name)
+        } else {
+            probe_url
+        };
+        let config = Self {
+            state,
+            active_config: site.active_config.clone(),
+            edge_candidate: PathBuf::from(format!(
+                "/etc/vps-guard/nginx/{identifier}-guarded.conf"
+            )),
+            nginx_candidate: PathBuf::from(format!(
+                "/etc/vps-guard/nginx/{identifier}-bypass.conf"
+            )),
+            active_guard_config: PathBuf::from("/etc/vps-guard/config.toml"),
+            stage_root: None,
+            backup_root,
+            fixture_probe_failure: false,
+            stage_files: NginxStageFiles::generic(),
+        };
+        validate_switch_config(&config)?;
+        Ok(config)
     }
 
     /// OS mutation 없는 fixture 경계를 만듭니다.
@@ -95,7 +150,30 @@ impl IngressSwitchConfig {
             stage_root: None,
             backup_root,
             fixture_probe_failure: false,
+            stage_files: NginxStageFiles::legacy(),
         }
+    }
+}
+
+impl NginxStageFiles {
+    const fn legacy() -> Self {
+        Self {
+            edge: "g7devops-edge.conf",
+            bypass: "g7devops-bypass.conf",
+            guard_config: "vps-guard.ingress.toml",
+        }
+    }
+
+    const fn generic() -> Self {
+        Self {
+            edge: "public-guarded.conf",
+            bypass: "public-bypass.conf",
+            guard_config: "vps-guard.toml",
+        }
+    }
+
+    pub(super) fn names(&self) -> [&'static str; 3] {
+        [self.edge, self.bypass, self.guard_config]
     }
 }
 
@@ -359,7 +437,7 @@ impl IngressSwitchDriver {
                 "--retry-delay".to_owned(),
                 "0".to_owned(),
                 "--header".to_owned(),
-                "Host: www.g7devops.com".to_owned(),
+                format!("Host: {}", self.config.state.server_name),
                 "http://127.0.0.1:18080/health/live".to_owned(),
             ],
             None,
@@ -382,6 +460,26 @@ impl IngressSwitchDriver {
         };
         self.logical(logical)
     }
+}
+
+fn site_identifier(server_name: &str) -> Result<String, IngressStateError> {
+    if server_name.is_empty()
+        || server_name.len() > 253
+        || !server_name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return Err(IngressStateError::Contract(
+            "Nginx manifest server_name이 exact DNS 이름이 아닙니다".to_owned(),
+        ));
+    }
+    Ok(server_name.replace('.', "-"))
 }
 
 impl OperationDriver for IngressSwitchDriver {

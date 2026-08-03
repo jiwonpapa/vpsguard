@@ -112,6 +112,7 @@ last_reviewed: 2026-07-24
 | `OPS-009` | `crates/guard-system/src/deployment_state/tests.rs`, `scripts/tests/deployment-restore-harness.sh` | [`g7devops` first-install 실패 자동 복구·수동 restore·재설치 report](evidence/g7devops-shadow-roundtrip-20260715.md) |
 | `OPS-010` | `crates/guard-system/src/operation/tests.rs`, `crates/guard-system/src/deployment_state/tests.rs`, `crates/guard-system/src/ingress_state/tests.rs`, `scripts/tests/operation-harness.sh`, `tools/tests/test_qga.py`, `tools/tests/test_release_endurance.py` | [기존 parent mode·payload mode·uid·gid 원복, guest timeout 종료와 2GB Ubuntu VM 20회 apply·restore·100ms public probe·단계별 duration](evidence/gnuboard5-release-endurance-20260724.md) |
 | `OPS-011` | `crates/guard-system/src/ingress_state/apache/tests.rs`, `crates/guard-cli/tests/apache_ingress_cli.rs` | [`gnuboard5` Apache 전환·20회 왕복·rollback report](evidence/gnuboard5-apache-vm-20260722.md) |
+| `OPS-012` | `crates/guard-system/src/site_setup/tests.rs`, `crates/guard-system/src/site_setup/apache_candidate.rs`, `crates/guard-system/src/site_setup/nginx_candidate.rs`, `crates/guard-cli/tests/setup_cli.rs`, `tools/tests/test_debian_package.py` | Ubuntu 24.04 Nginx·Apache 표준 fixture의 무변경 탐지·지원 판정, 충돌 fail-closed, 두 웹서버의 사이트별 후보·typed apply·rollback과 무편입 `.deb`; 실제 공개 서버 편입 증거는 미수집 |
 
 ### 3.6 UI, security and NFR
 

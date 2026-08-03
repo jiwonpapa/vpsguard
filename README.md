@@ -11,8 +11,8 @@ HTTP/3은 초기 공개 지원 protocol이 아닙니다. 다만 배포·ingress 
 ## 제품 핵심
 
 ```text
-평상시: DNS only -> VPSGuard -> Nginx -> Application
-비상시: Cloudflare proxied -> VPSGuard -> Nginx -> Application
+평상시: DNS only -> VPSGuard -> Nginx/Apache -> Application
+비상시: Cloudflare proxied -> VPSGuard -> Nginx/Apache -> Application
 관리면: admin.example.com:443 또는 전용 7443 -> trusted TLS terminator -> loopback Control
 ```
 
@@ -23,6 +23,31 @@ HTTP/3은 초기 공개 지원 protocol이 아닙니다. 다만 배포·ingress 
 - 독립 웹 UI에서 실시간 트래픽, 외부 IP, 서버 자원과 사건을 확인합니다.
 - 단독 설치는 Linux-PAM+TOTP로 로그인하고 VPSGuard 소유 UFW 규칙만 typed transaction으로 관리합니다.
 - JW-agent 연동 설치는 방화벽 소유권을 JW-agent에 위임하고 VPSGuard의 중복 서버 유지보수 기능을 비활성화합니다.
+
+## 가장 쉬운 기존 사이트 설치
+
+Ubuntu 24.04의 **표준 단일 HTTPS 사이트**는 Nginx와 Apache를 같은 명령으로 처리합니다. 기존 TLS·Certbot, PHP-FPM, 애플리케이션 소스와 데이터는 웹서버가 계속 소유합니다. package 설치만으로 public ingress를 바꾸거나 서비스를 시작하지 않습니다.
+
+```bash
+sudo apt install ./vpsguard_0.1.0_amd64.deb
+sudo vps-guard setup
+sudo vps-guard setup --apply
+```
+
+- `setup`: 읽기 전용으로 OS, 활성 웹서버, 정확히 한 개의 TLS site, PHP handler와 인증서 경로를 판정합니다. 변경은 0건입니다.
+- `setup --apply`: 지원 판정일 때만 기존 설정과 service 상태를 snapshot하고 `웹서버 TLS -> VPSGuard loopback -> 같은 웹서버 loopback origin`으로 전환합니다.
+- 후보 검사나 공개 read-back이 실패하면 같은 transaction에서 자동 복원합니다. rollback snapshot 경로도 출력합니다.
+- Nginx와 Apache가 동시에 active이거나, TLS site가 여러 개이거나, 기존 reverse proxy·동적 include가 있으면 추정하지 않고 수동 검토로 끝냅니다.
+
+아직 alpha이므로 `.deb`는 검증된 release bundle에서 생성합니다.
+
+```bash
+TARGET=x86_64-unknown-linux-gnu # ARM64는 aarch64-unknown-linux-gnu
+cargo xtask release "$TARGET"
+scripts/build-deb.sh "target/release-bundle/$TARGET/vpsguard-0.1.0"
+```
+
+생성물은 `target/debian/`에 놓입니다. package는 기존 `/etc/vps-guard/config.toml`을 덮어쓰지 않고, Nginx·Apache와 VPSGuard service를 자동 활성화하지 않습니다. 다중 사이트와 커스텀 ingress는 아래 수동 runbook을 사용합니다.
 
 ## 구현 정본
 
@@ -53,9 +78,9 @@ VPSGuard는 G7 Installer와 독립된 유지보수·방어 제품입니다. 설�
 
 > 요구사항: `OPS-001`, `OPS-002`, `OPS-005`~`OPS-011`, `SEC-001`, `SEC-015`
 
-현재 공개 설치 기준은 **Ubuntu 24.04 + systemd + Nginx**입니다. 기존 운영 사이트에는 먼저 `observe` shadow로 설치하고, 공개 요청 편입은 origin·edge·관리자 HTTPS를 모두 검증한 뒤 수행합니다. 운영 서버에는 Rust·Bun·Python package를 설치하지 않고 외부 Linux builder 또는 CI가 만든 checksum 포함 release bundle만 배포합니다.
+현재 공개 설치 기준은 **Ubuntu 24.04 + systemd + Nginx 또는 Apache**입니다. 표준 단일 HTTPS site는 `vps-guard setup`으로 탐지하고, 기존 운영 사이트에는 먼저 `observe`로 편입합니다. 공개 요청 편입은 origin·edge·관리자 HTTPS를 모두 검증한 뒤 수행합니다. 운영 서버에는 Rust·Bun·Python 개발 도구를 설치하지 않고 외부 Linux builder 또는 CI가 만든 checksum 포함 `.deb` 또는 release bundle만 배포합니다.
 
-현재는 v0.1.0-alpha이므로 범용 `curl | sh` 설치기를 제공하지 않습니다. `scripts/deploy-g7devops.sh` 같은 원격 자동화는 파일럿 서버 전용이지만, release bundle 안의 `update-release.sh`는 일반 서버에서도 checksum 검증, 설치 전 snapshot, versioned binary 교체, health read-back과 실패 자동 복구를 담당합니다.
+현재는 v0.1.0-alpha이므로 root shell을 바로 실행하는 범용 `curl | sh` 설치기를 제공하지 않습니다. 위 `.deb`가 기본 설치 경로이고, 아래 release bundle·원격 하네스 절차는 커스텀 ingress와 파일럿 진단용입니다. `scripts/deploy-g7devops.sh` 같은 원격 자동화는 파일럿 서버 전용이지만, release bundle 안의 `update-release.sh`는 일반 서버에서도 checksum 검증, 설치 전 snapshot, versioned binary 교체, health read-back과 실패 자동 복구를 담당합니다.
 
 ### 기존 사이트에서 선택할 경로
 
@@ -63,10 +88,10 @@ VPSGuard는 G7 Installer와 독립된 유지보수·방어 제품입니다. 설�
 |---|---|---|
 | 기존 Nginx+Certbot 사이트 | `Internet -> Nginx TLS -> VPSGuard loopback -> Nginx loopback origin -> Application` | 알파 첫 적용 권장. 기존 TLS·Certbot과 public port를 유지해 즉시 원복 가능 |
 | VPSGuard 직접 TLS | `Internet -> VPSGuard :80/:443 -> Nginx loopback origin -> Application` | 전체 edge 보호 경로. 인증서 credential·renew hook·5초 cutover 하네스 검증 후 사용 |
-| 기존 Apache 사이트 | `Apache public TLS -> VPSGuard loopback -> Apache loopback origin` | 현재 GnuBoard 5 격리 VM 파일럿 범위 |
+| 기존 Apache+Certbot 사이트 | `Apache public TLS -> VPSGuard loopback -> Apache loopback origin` | 표준 단일 TLS site 자동 지원. 다중 vhost·기존 ProxyPass는 수동 검토 |
 | 웹서버 없는 PHP-FPM | 지원하지 않음 | VPSGuard는 PHP FastCGI·정적 파일 웹서버가 아니므로 Nginx 또는 검증된 Apache origin 필요 |
 
-기존 사이트 첫 적용에서는 애플리케이션 소스, PHP-FPM socket, DB와 Redis 설정을 바꾸지 않습니다. Nginx의 기존 애플리케이션 처리 block을 loopback origin으로 옮기고 public virtual host의 애플리케이션 요청만 VPSGuard로 전달합니다.
+기존 사이트 첫 적용에서는 애플리케이션 소스, PHP-FPM socket, DB와 Redis 설정을 바꾸지 않습니다. 선택한 웹서버의 기존 애플리케이션 처리 block을 loopback origin으로 옮기고 public virtual host의 애플리케이션 요청만 VPSGuard로 전달합니다.
 
 ```text
 1. 기존 상태 기록·direct bypass 보관

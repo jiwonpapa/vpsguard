@@ -43,29 +43,34 @@ pub(super) fn validate_switch_config(
         ));
     }
     if let Some(stage) = &config.stage_root {
-        validate_stage(stage)?;
-        for file in [
-            "g7devops-edge.conf",
-            "g7devops-bypass.conf",
-            "vps-guard.ingress.toml",
-        ] {
+        validate_stage(stage, config.state.test_root.as_deref())?;
+        for file in config.stage_files.names() {
             require_regular(&stage.join(file))?;
         }
     }
     Ok(())
 }
 
-fn validate_stage(stage: &Path) -> Result<(), IngressStateError> {
-    let text = stage.to_string_lossy();
-    let suffix = text.strip_prefix("/tmp/vpsguard-cutover.").ok_or_else(|| {
-        IngressStateError::Contract("cutover stage path가 allowlist 밖입니다".to_owned())
-    })?;
-    if suffix.is_empty()
-        || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        || stage.parent() != Some(Path::new("/tmp"))
+fn validate_stage(stage: &Path, test_root: Option<&Path>) -> Result<(), IngressStateError> {
+    let expected_parents = [
+        Some(Path::new("/tmp").to_path_buf()),
+        Some(Path::new("/run/vps-guard").to_path_buf()),
+        test_root.map(|root| root.join("run/vps-guard")),
+    ];
+    let parent_allowed = stage
+        .parent()
+        .is_some_and(|parent| expected_parents.iter().flatten().any(|item| item == parent));
+    let suffix = stage
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("vpsguard-cutover."));
+    if !parent_allowed
+        || suffix.is_none_or(|value| {
+            value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
     {
         return Err(IngressStateError::Contract(
-            "cutover stage path 형식이 잘못됐습니다".to_owned(),
+            "cutover stage path가 allowlist 밖입니다".to_owned(),
         ));
     }
     let metadata = fs::symlink_metadata(stage)
